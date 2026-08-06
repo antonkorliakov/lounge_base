@@ -6,13 +6,13 @@
 
 **Architecture:** Next.js App Router. Модуль `form-schema` — чистые данные без React и БД — единственный источник правды для рендера формы, валидации и (позже) выгрузки. Данные пишутся в Postgres через Drizzle: плоские поля в `field_values` как JSONB, матрица услуг в `service_values` колонками.
 
-**Tech Stack:** TypeScript, Next.js (App Router), React, Drizzle ORM, Postgres (PGlite в тестах, Docker локально, Neon в проде), Zod, Vitest, Playwright, Vercel Blob.
+**Tech Stack:** TypeScript, Next.js (App Router), React, Drizzle ORM, Postgres (PGlite в тестах, Docker локально, Neon в проде), Vitest, Playwright, Vercel Blob.
 
 ## Global Constraints
 
 - Источник требований — `/Users/antonwork/Downloads/Global Onboarding Form 1.xlsx`, листы `General Lounge Information` и `Services & Amenities`. Листы `Approuved by DF` не используются.
 - Колонка «DF form Yes/No» (`E` на первом листе, `I` на втором) не переносится в систему.
-- Объём анкеты фиксирован и проверяется тестами: **67** плоских полей, **58** позиций услуг (44 услуги + 14 F&B), **6** атрибутов у позиции, **16** списков значений, **27** блоков проверки.
+- Объём анкеты фиксирован и проверяется тестами: **67** плоских полей, **58** позиций услуг (44 услуги + 14 F&B), **6** атрибутов у позиции, **17** списков значений (16 из исходника + зоны), **27** блоков проверки.
 - TypeScript в `strict` режиме. Никаких `any` в `src/form-schema`.
 - `src/form-schema` не импортирует ни React, ни `src/db` — проверяется тестом.
 - Каждое поле и каждый вариант списка имеет обе локали: `en` и `ru`.
@@ -38,7 +38,7 @@
 cd /Users/antonwork/lounge_base
 export PATH="/opt/homebrew/bin:$PATH"
 npm init -y
-npm install next react react-dom drizzle-orm postgres zod
+npm install next react react-dom drizzle-orm postgres
 npm install -D typescript @types/node @types/react @types/react-dom \
   vitest @vitejs/plugin-react drizzle-kit @electric-sql/pglite tsx
 ```
@@ -222,8 +222,14 @@ import { describe, it, expect } from 'vitest'
 import { OPTION_LISTS } from '../option-lists'
 
 describe('списки значений', () => {
-  it('их ровно 16', () => {
-    expect(Object.keys(OPTION_LISTS)).toHaveLength(16)
+  it('их ровно 17: 16 из исходника плюс зоны', () => {
+    expect(Object.keys(OPTION_LISTS)).toHaveLength(17)
+  })
+
+  it('зоны заданы схемой, а не захардкожены в UI', () => {
+    expect(OPTION_LISTS.zone.map((o) => o.id)).toEqual([
+      'arrival', 'departure', 'transit',
+    ])
   })
 
   it('в каждом списке минимум два варианта', () => {
@@ -403,6 +409,15 @@ export const OPTION_LISTS = {
     plain('complimentary', 'Complimentary', 'Бесплатно'),
     plain('chargeable', 'Chargeable', 'Платно'),
     plain('both', 'Both', 'И то и другое'),
+  ],
+
+  // Зоны в исходнике дропдауном не заданы (III.6.6 — свободный текст с
+  // подсказкой «укажите все применимые»). Список наш, но живёт здесь же:
+  // по этим значениям фильтруются реестр и выгрузка.
+  zone: [
+    plain('arrival', 'Arrival', 'Прилёт'),
+    plain('departure', 'Departure', 'Вылет'),
+    plain('transit', 'Transit', 'Транзит'),
   ],
 
   vaping: [
@@ -621,7 +636,12 @@ describe('плоские поля', () => {
 
   it('каждый select ссылается на существующий список', () => {
     for (const field of FIELDS) {
-      if (field.type === 'select' || field.type === 'select_with_detail') {
+      const usesList =
+        field.type === 'select' ||
+        field.type === 'select_with_detail' ||
+        field.type === 'multi_select'
+
+      if (usesList) {
         expect(field.optionList, field.key).not.toBeNull()
         expect(OPTION_LISTS, field.key).toHaveProperty(field.optionList!)
       } else {
@@ -757,6 +777,7 @@ export const FIELDS: Field[] = [
     section: 'III',
     block: 'III.6',
     type: 'multi_select',
+    optionList: 'zone',
     label: {
       en: 'Arrival / Departure / Transit',
       ru: 'Прилёт / Вылет / Транзит',
@@ -1228,7 +1249,6 @@ git commit -m "feat(form-schema): add the 27 review blocks and photo slots"
 **Interfaces:**
 - Consumes: `Field`, `ServiceItem`, `OPTION_LISTS`
 - Produces:
-  - `fieldValueSchema(field: Field): ZodType<unknown>`
   - `validateField(field: Field, value: unknown): ValidationResult`
   - `validateServiceValue(item: ServiceItem, value: ServiceValueInput): ValidationResult`
   - `type ValidationResult = { ok: true } | { ok: false; error: Localized }`
@@ -3644,29 +3664,26 @@ export function FieldInput(props: {
 
     case 'multi_select': {
       const selected = Array.isArray(value) ? (value as string[]) : []
-      const zones = ['arrival', 'departure', 'transit']
-      const zoneLabel: Record<string, string> = {
-        arrival: 'Arrival', departure: 'Departure', transit: 'Transit',
-      }
+      const options = field.optionList ? OPTION_LISTS[field.optionList] : []
 
       return (
         <div className="field">
           {label}
           {hint}
-          {zones.map((zone) => (
-            <label key={zone} className="field-check">
+          {options.map((option) => (
+            <label key={option.id} className="field-check">
               <input
                 type="checkbox"
-                checked={selected.includes(zone)}
+                checked={selected.includes(option.id)}
                 onChange={(e) =>
                   onChange(
                     e.target.checked
-                      ? [...selected, zone]
-                      : selected.filter((z) => z !== zone),
+                      ? [...selected, option.id]
+                      : selected.filter((id) => id !== option.id),
                   )
                 }
               />
-              {zoneLabel[zone]}
+              {pick(option.label)}
             </label>
           ))}
         </div>

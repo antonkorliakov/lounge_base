@@ -1793,6 +1793,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import type { RegistryFilters } from '@/registry/query'
 import type { OperationalStatus, SubmissionStatus } from '@/db/schema'
 import { OPERATIONAL_STATUSES } from '@/registry/status'
+import { OPTION_LISTS } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 
 const OPERATIONAL_IDS: OperationalStatus[] = [
@@ -1898,7 +1899,7 @@ export function RegistryFiltersBar(props: {
       {select('city', locale === 'ru' ? 'Город' : 'City', props.options.cities)}
       {select('airport', locale === 'ru' ? 'Аэропорт' : 'Airport', props.options.airports)}
       {select('terminal', locale === 'ru' ? 'Терминал' : 'Terminal', props.options.terminals)}
-      {select('zone', locale === 'ru' ? 'Зона' : 'Zone', ['arrival', 'departure', 'transit'])}
+      {select('zone', locale === 'ru' ? 'Зона' : 'Zone', OPTION_LISTS.zone.map((o) => o.id))}
 
       <label className="rf">
         <span>{locale === 'ru' ? 'Статус лаунжа' : 'Lounge status'}</span>
