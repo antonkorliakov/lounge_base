@@ -1,10 +1,10 @@
 import { and, eq } from 'drizzle-orm'
-import type { Localized } from '@/form-schema'
 import { PHOTO_SLOTS } from '@/form-schema'
-import { photos, submissions } from '@/db/schema'
-import type { Db, Tx } from '@/db/types'
+import { photos } from '@/db/schema'
+import type { Db } from '@/db/types'
+import { assertEditable, fail, type SaveResult } from '@/submissions/editable'
 
-export type SaveResult = { ok: true } | { ok: false; error: Localized }
+export type { SaveResult }
 
 export type PhotoRow = {
   id: string
@@ -12,36 +12,6 @@ export type PhotoRow = {
   blobKey: string
   url: string
   caption: string | null
-}
-
-const fail = (en: string, ru: string): SaveResult => ({ ok: false, error: { en, ru } })
-
-/**
- * Правки принимаются только в состояниях, где форма открыта заполняющему —
- * то же множество, что в `submissions/values.ts`. Фотография — такой же
- * ответ анкеты, как текстовое поле, и должна подчиняться тому же правилу:
- * пока анкета на проверке (`submitted`/`approved`), заполняющий не должен
- * суметь подменить снимок из-под рецензента.
- */
-const EDITABLE = new Set(['draft', 'changes_requested'])
-
-async function assertEditable(tx: Tx, submissionId: string): Promise<SaveResult> {
-  // FOR UPDATE по той же причине, что в values.ts: проверка статуса и запись
-  // идут в разные таблицы (submissions vs photos), обычный SELECT под READ
-  // COMMITTED не берёт блокировку и не сериализует конкурентную смену статуса.
-  const rows = await tx
-    .select({ status: submissions.status })
-    .from(submissions)
-    .where(eq(submissions.id, submissionId))
-    .for('update')
-    .limit(1)
-
-  const status = rows[0]?.status
-  if (!status) return fail('Submission not found', 'Анкета не найдена')
-  if (!EDITABLE.has(status)) {
-    return fail('This submission is under review', 'Анкета сейчас на проверке')
-  }
-  return { ok: true }
 }
 
 export async function attachPhoto(

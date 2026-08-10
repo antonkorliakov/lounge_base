@@ -4,7 +4,7 @@ import * as schema from './schema'
 import type { Db } from './types'
 
 export function createDb(url: string): Db {
-  return drizzle(postgres(url), { schema }) as unknown as Db
+  return drizzle(postgres(url), { schema })
 }
 
 let cached: Db | undefined

@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm'
-import type { Localized, ServiceValueInput } from '@/form-schema'
+import type { ServiceValueInput } from '@/form-schema'
 import {
   fieldByKey,
   serviceItemByKey,
@@ -7,37 +7,11 @@ import {
   validateServiceValue,
   isOfferedAvailability,
 } from '@/form-schema'
-import { fieldValues, serviceValues, submissions } from '@/db/schema'
+import { fieldValues, serviceValues } from '@/db/schema'
 import type { Db, Tx } from '@/db/types'
+import { assertEditable, fail, type SaveResult } from './editable'
 
-export type SaveResult = { ok: true } | { ok: false; error: Localized }
-
-const fail = (en: string, ru: string): SaveResult => ({ ok: false, error: { en, ru } })
-
-/** Правки принимаются только в состояниях, где форма открыта заполняющему. */
-const EDITABLE = new Set(['draft', 'changes_requested'])
-
-async function assertEditable(tx: Tx, submissionId: string): Promise<SaveResult> {
-  // FOR UPDATE: the status check and the write land in different tables
-  // (submissions vs. field_values/service_values), so under the default
-  // READ COMMITTED isolation a plain SELECT takes no lock and does nothing
-  // to serialize against a concurrent status change. Locking this row keeps
-  // a concurrent submit/approve from committing until this transaction
-  // does — do not remove this thinking it's redundant with the transaction.
-  const rows = await tx
-    .select({ status: submissions.status })
-    .from(submissions)
-    .where(eq(submissions.id, submissionId))
-    .for('update')
-    .limit(1)
-
-  const status = rows[0]?.status
-  if (!status) return fail('Submission not found', 'Анкета не найдена')
-  if (!EDITABLE.has(status)) {
-    return fail('This submission is under review', 'Анкета сейчас на проверке')
-  }
-  return { ok: true }
-}
+export type { SaveResult }
 
 export async function saveFieldValue(
   db: Db,
