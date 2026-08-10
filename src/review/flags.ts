@@ -4,14 +4,28 @@ import type { Db, Tx } from '@/db/types'
 import { fieldFlags, blockReviews } from '@/db/schema'
 import { fail, type SaveResult } from '@/submissions/editable'
 
-export type FlagReason = 'empty' | 'needs_detail' | 'contradicts' | 'wrong_format'
+/**
+ * The array is the source of truth; `FlagReason` is derived from it rather
+ * than hand-typed alongside it. A `new Set<FlagReason>([...])` built from a
+ * separately-typed literal array only checks that everything *listed* is
+ * assignable to the union — it does not check that every union member is
+ * listed, so the union and the array could silently drift apart (add a
+ * fifth reason code to one and forget the other, and `toFlagReason` would
+ * quietly narrow the new legitimate value to `null`). Deriving the type
+ * from the array instead of listing both separately makes that drift
+ * impossible to introduce, not just something to remember to avoid — the
+ * same fix this module already applied to `SaveResult`/`fail` (reuse the
+ * one definition) and that `form-schema` applies to `detailRequiredFor`
+ * (one place both the validator and the renderer read).
+ */
+export const FLAG_REASONS = ['empty', 'needs_detail', 'contradicts', 'wrong_format'] as const
 
-const FLAG_REASONS: ReadonlySet<string> = new Set<FlagReason>([
-  'empty', 'needs_detail', 'contradicts', 'wrong_format',
-])
+export type FlagReason = (typeof FLAG_REASONS)[number]
+
+const FLAG_REASON_SET: ReadonlySet<string> = new Set(FLAG_REASONS)
 
 function isFlagReason(value: string): value is FlagReason {
-  return FLAG_REASONS.has(value)
+  return FLAG_REASON_SET.has(value)
 }
 
 export type FlagRow = {

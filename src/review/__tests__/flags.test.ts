@@ -5,7 +5,7 @@ import type { Db } from '@/db/types'
 import { lounges, submissions, blockReviews, fieldFlags } from '@/db/schema'
 import { FIELDS, SERVICE_ITEMS, SERVICE_GROUPS, BLOCKS } from '@/form-schema'
 import {
-  raiseFlag, resolveFlag, openFlags, isFlaggableKey, blockKeyOf, clearFlagsFor,
+  raiseFlag, resolveFlag, openFlags, isFlaggableKey, blockKeyOf, clearFlagsFor, FLAG_REASONS,
 } from '../flags'
 
 async function seedSubmitted(db: Db): Promise<string> {
@@ -163,6 +163,26 @@ describe('замечания', () => {
     const open = await openFlags(db, submissionId)
     expect(open).toHaveLength(1)
     expect(open[0]?.reason).toBeNull()
+  })
+
+  it('каждый код из FLAG_REASONS проходит через raiseFlag/openFlags без потери', async () => {
+    // Итерируется по самому `FLAG_REASONS`, а не по параллельно
+    // напечатанному списку кодов — так тест пристёгнут к единственному
+    // источнику правды. Если раскодирование причины (`isFlagReason`/
+    // `toFlagReason`) когда-нибудь разойдётся с этим списком — например,
+    // кто-то отдельно допишет причину в `FLAG_REASONS`, но не обновит
+    // множество, по которому проверяется допустимость — ровно этот тест
+    // получит `null` там, где ждёт код причины, и упадёт.
+    const db = await createTestDb()
+    const submissionId = await seedSubmitted(db)
+
+    for (const reason of FLAG_REASONS) {
+      const result = await raiseFlag(db, { ...flag(submissionId, 'III.2.4'), reason })
+      expect(result.ok).toBe(true)
+
+      const [open] = await openFlags(db, submissionId)
+      expect(open?.reason).toBe(reason)
+    }
   })
 })
 
