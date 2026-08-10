@@ -131,12 +131,24 @@ export async function raiseFlag(
      * completion (commit or rollback) before the other's lock acquisition
      * proceeds, so `confirmBlock`'s `NOT EXISTS` subquery is guaranteed to
      * run either strictly before this INSERT is visible or strictly after —
-     * never straddling it. This is the same lock, same reasoning,
-     * `assertEditable` (`src/submissions/editable.ts`) already uses for the
-     * filler's side and `clearFlagsFor` below uses for its own
-     * field-flags/block-reviews atomicity — lock `submissions` first, then
-     * the child table, the ordering every transaction in this codebase
-     * follows, so this introduces no new deadlock risk.
+     * never straddling it. This is the same lock, same ordering (`submissions`
+     * first, then the child table), that `confirmBlock` (`blocks.ts`) and
+     * `assertEditable` (`src/submissions/editable.ts`) already use, so this
+     * introduces no new deadlock risk.
+     *
+     * `clearFlagsFor` below does NOT take this lock, and does not need it —
+     * not merely "no deadlock," a stronger reason. `clearFlagsFor` only ever
+     * fires from the operator's edit path, when a previously-flagged
+     * field's value changes, which per `EDITABLE_STATUSES`
+     * (`src/submissions/editable.ts`) can only happen while the submission is
+     * `draft` or `changes_requested`. `confirmBlock` requires `submitted`
+     * (`REVIEW_STATUSES`, `blocks.ts`). Those two status sets are disjoint —
+     * a submission has exactly one status at a time, so it can never
+     * simultaneously satisfy both preconditions. `clearFlagsFor` and
+     * `confirmBlock` therefore cannot legally act on the same submission at
+     * the same time regardless of locking; the lock this function takes is
+     * for serializing against `confirmBlock`'s check specifically, not
+     * against every child-table writer in this module.
      *
      * Not gated on the locked row's status: that would change this
      * function's behaviour (Task 2 deliberately left `raiseFlag` ungated —

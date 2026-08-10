@@ -325,35 +325,71 @@ describe('clearFlagsFor', () => {
  * for a live concurrency test that this harness cannot run.
  */
 describe('raiseFlag: механизм блокировки', () => {
-  function raiseFlagSource(): string {
-    const file = readFileSync(join(process.cwd(), 'src/review/flags.ts'), 'utf8')
-    const start = file.indexOf('export async function raiseFlag(')
-    if (start === -1) throw new Error('raiseFlag не найден в src/review/flags.ts')
+  /**
+   * Strips `/* ... *\/` and `// ...` comments before the caller scans for
+   * `.for('update')`/`.insert(fieldFlags)`. Without this, a regression that
+   * deletes the *code* but leaves the doc comment describing it intact (the
+   * comment above `raiseFlag`'s lock literally contains the text
+   * "`.for('update')`") would still make `indexOf` find a match — inside the
+   * prose, not the statement — and the test would pass with the functional
+   * lock gone. Verified this actually matters, not just in theory: see the
+   * report's "partial deletion" verification for this exact scenario, run
+   * and confirmed to fail before this stripping was added and pass — for
+   * the wrong reason — without it.
+   */
+  function stripComments(source: string): string {
+    return source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '')
+  }
 
-    // The opening brace of the function *body*, not of the `input: { ... }`
-    // parameter type a naive `indexOf('{', start)` would land on instead —
-    // found via the return-type annotation that always immediately precedes
-    // the body in this codebase's style (`): Promise<X> {`).
-    const signatureEnd = file.indexOf('): Promise<FlagResult> {', start)
-    if (signatureEnd === -1) throw new Error('не найдена сигнатура возврата raiseFlag')
-    const braceStart = signatureEnd + '): Promise<FlagResult> {'.length - 1
-    let depth = 0
+  /**
+   * Extracts `raiseFlag`'s body by balancing delimiters rather than matching
+   * a literal signature string — `): Promise<FlagResult> {` would break (and
+   * throw, failing the whole file) on any reformatting that puts the return
+   * type or brace on its own line. Depth-counts `(`/`)` from the name to find
+   * the end of the parameter list (safe here because the parameter list
+   * itself has no nested parens — only the `input: { ... }` object type,
+   * whose braces this paren-count never looks at), then finds the function
+   * body's own `{` right after that closing paren, then depth-counts braces
+   * from there to the matching `}`.
+   */
+  function raiseFlagBody(): string {
+    const file = readFileSync(join(process.cwd(), 'src/review/flags.ts'), 'utf8')
+    const nameMatch = /export\s+async\s+function\s+raiseFlag\s*\(/.exec(file)
+    if (!nameMatch) throw new Error('raiseFlag не найден в src/review/flags.ts')
+
+    let parenDepth = 0
+    let paramsEnd = -1
+    for (let i = nameMatch.index + nameMatch[0].length - 1; i < file.length; i++) {
+      if (file[i] === '(') parenDepth++
+      else if (file[i] === ')') {
+        parenDepth -= 1
+        if (parenDepth === 0) { paramsEnd = i; break }
+      }
+    }
+    if (paramsEnd === -1) throw new Error('не удалось найти конец параметров raiseFlag')
+
+    const braceStart = file.indexOf('{', paramsEnd)
+    if (braceStart === -1) throw new Error('не удалось найти начало тела raiseFlag')
+
+    let braceDepth = 0
     for (let i = braceStart; i < file.length; i++) {
-      if (file[i] === '{') depth++
+      if (file[i] === '{') braceDepth++
       else if (file[i] === '}') {
-        depth -= 1
-        if (depth === 0) return file.slice(braceStart, i + 1)
+        braceDepth -= 1
+        if (braceDepth === 0) return stripComments(file.slice(braceStart, i + 1))
       }
     }
     throw new Error('не удалось найти конец тела raiseFlag')
   }
 
   it('оборачивает работу в транзакцию', () => {
-    expect(raiseFlagSource()).toContain('.transaction(')
+    expect(raiseFlagBody()).toContain('.transaction(')
   })
 
-  it('берёт FOR UPDATE на submissions до записи в field_flags', () => {
-    const body = raiseFlagSource()
+  it('берёт FOR UPDATE на submissions до записи в field_flags — по коду, а не по комментарию', () => {
+    const body = raiseFlagBody()
     const lockIndex = body.indexOf(".for('update')")
     const insertIndex = body.indexOf('.insert(fieldFlags)')
 
@@ -362,7 +398,7 @@ describe('raiseFlag: механизм блокировки', () => {
     expect(lockIndex).toBeLessThan(insertIndex)
   })
 
-  it('замечание всё ещё поднимается и снимается сквозным вызовом (снятие через транзакцию не сломано)', async () => {
+  it('замечание всё ещё поднимается сквозным вызовом (транзакция не сломала обычную работу)', async () => {
     const db = await createTestDb()
     const submissionId = await seedSubmitted(db)
 
