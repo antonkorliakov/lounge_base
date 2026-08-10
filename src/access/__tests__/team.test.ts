@@ -2,13 +2,18 @@ import { describe, it, expect } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { createTestDb } from '@/db/__tests__/harness'
 import type { Db } from '@/db/types'
-import { teamMembers, loginTokens } from '@/db/schema'
-import { requestLogin, consumeLoginToken, resolveSession, endSession } from '../team'
+import { teamMembers, loginTokens, sessions } from '@/db/schema'
+import {
+  addTeamMember,
+  requestLogin,
+  consumeLoginToken,
+  resolveSession,
+  endSession,
+} from '../team'
 
 async function seedMember(db: Db, email = 'a.korlyakov@easyto.travel'): Promise<string> {
-  const [member] = await db
-    .insert(teamMembers).values({ email, name: 'A. Korliakov' }).returning()
-  return member!.id
+  const { id } = await addTeamMember(db, { email, name: 'A. Korliakov' })
+  return id
 }
 
 describe('вход команды', () => {
@@ -38,6 +43,26 @@ describe('вход команды', () => {
     const result = await requestLogin(db, 'A.Korlyakov@EasyTo.Travel')
 
     expect('token' in result).toBe(true)
+  })
+
+  it('смешанный регистр адреса разрешается в того же участника, что и его нижний регистр', async () => {
+    const db = await createTestDb()
+    const memberId = await seedMember(db, 'mixed@example.com')
+
+    const issued = await requestLogin(db, 'Mixed@Example.COM')
+    if (!('token' in issued)) throw new Error('токен не выдан')
+
+    const consumed = await consumeLoginToken(db, issued.token)
+    expect(consumed?.memberId).toBe(memberId)
+  })
+
+  it('участник с адресом, отличающимся только регистром от уже существующего, не создаётся', async () => {
+    const db = await createTestDb()
+    await addTeamMember(db, { email: 'dup@example.com', name: 'Original' })
+
+    await expect(
+      addTeamMember(db, { email: 'DUP@Example.com', name: 'Duplicate' }),
+    ).rejects.toThrow()
   })
 
   it('токен обменивается на сессию', async () => {
@@ -94,10 +119,40 @@ describe('вход команды', () => {
     expect(await resolveSession(db, consumed!.sessionId)).toBeNull()
   })
 
+  it('просроченная сессия не разрешается', async () => {
+    const db = await createTestDb()
+    await seedMember(db)
+    const issued = await requestLogin(db, 'a.korlyakov@easyto.travel')
+    if (!('token' in issued)) throw new Error('токен не выдан')
+    const consumed = await consumeLoginToken(db, issued.token)
+
+    await db
+      .update(sessions)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(sessions.id, consumed!.sessionId))
+
+    expect(await resolveSession(db, consumed!.sessionId)).toBeNull()
+  })
+
   it('несуществующая сессия не разрешается', async () => {
     const db = await createTestDb()
     const missing = await resolveSession(db, '00000000-0000-0000-0000-000000000000')
     expect(missing).toBeNull()
+  })
+
+  it('удаление участника команды каскадно удаляет его токены и сессии', async () => {
+    const db = await createTestDb()
+    const memberId = await seedMember(db)
+    const issued = await requestLogin(db, 'a.korlyakov@easyto.travel')
+    if (!('token' in issued)) throw new Error('токен не выдан')
+    const consumed = await consumeLoginToken(db, issued.token)
+
+    await db.delete(teamMembers).where(eq(teamMembers.id, memberId))
+
+    expect(await db.select().from(loginTokens)).toHaveLength(0)
+    expect(await db.select().from(sessions)).toHaveLength(0)
+    expect(await resolveSession(db, consumed!.sessionId)).toBeNull()
+    expect(await consumeLoginToken(db, issued.token)).toBeNull()
   })
 
   it('одновременный обмен одного токена выдаёт ровно одну сессию', async () => {

@@ -1,5 +1,5 @@
 import { randomBytes, createHash } from 'node:crypto'
-import { and, eq, gt, isNull, sql } from 'drizzle-orm'
+import { and, eq, gt, isNull } from 'drizzle-orm'
 import type { Localized } from '@/form-schema'
 import type { Db } from '@/db/types'
 import { teamMembers, loginTokens, sessions } from '@/db/schema'
@@ -16,15 +16,48 @@ const minutesFromNow = (minutes: number): Date =>
 const daysFromNow = (days: number): Date =>
   new Date(Date.now() + days * 24 * 60 * 60 * 1000)
 
+const normalizeEmail = (email: string): string => email.trim().toLowerCase()
+
+/**
+ * The one sanctioned way to create a `teamMembers` row. Normalises
+ * (trim + lowercase) the address before it's written, so `teamMembers`'s
+ * existing `unique(email)` constraint — declared on the raw column, not a
+ * `lower(email)` functional index — is actually effective: with every stored
+ * address already lowercase, two rows differing only by case can never both
+ * exist, and `requestLogin`'s lookup can match on plain equality instead of
+ * `lower()`. Closing this at the write boundary (here) rather than only at
+ * the read boundary matters because whatever admin path later creates team
+ * members (Task 6+) must not be able to reinvent this by hand and get it
+ * wrong — this is that entry point.
+ */
+export async function addTeamMember(
+  db: Db,
+  input: { email: string; name: string },
+): Promise<{ id: string }> {
+  const [member] = await db
+    .insert(teamMembers)
+    .values({ email: normalizeEmail(input.email), name: input.name })
+    .returning({ id: teamMembers.id })
+
+  return { id: member!.id }
+}
+
 export async function requestLogin(
   db: Db,
   email: string,
 ): Promise<{ token: string } | { error: Localized }> {
-  // Почта сверяется без учёта регистра: люди пишут её как придётся.
+  // Люди пишут почту как придётся, поэтому вход сверяет её без учёта
+  // регистра — но не через `lower()` на чтении. Хранимые адреса уже
+  // нормализованы `addTeamMember`, так что здесь достаточно нормализовать
+  // только введённую строку и сравнить на точное равенство: раньше `lower()`
+  // на обеих сторонах делал уникальный индекс на сырой колонке бесполезным
+  // (`Foo@x.com` и `foo@x.com` проходили бы как два разных участника, и
+  // `.limit(1)` без `ORDER BY` выбирал произвольного из них), нормализация
+  // на записи убирает саму возможность такого дубликата.
   const rows = await db
     .select({ id: teamMembers.id })
     .from(teamMembers)
-    .where(sql`lower(${teamMembers.email}) = ${email.trim().toLowerCase()}`)
+    .where(eq(teamMembers.email, normalizeEmail(email)))
     .limit(1)
 
   const member = rows[0]
