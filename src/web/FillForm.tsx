@@ -1,7 +1,15 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { FIELDS, type Localized, type ServiceValueInput } from '@/form-schema'
+import {
+  FIELDS,
+  PHOTO_SLOTS,
+  SERVICE_ITEMS,
+  type Localized,
+  type ServiceValueInput,
+} from '@/form-schema'
+import type { SubmissionStatus } from '@/db/schema'
+import type { MissingItems } from '@/submissions/completeness'
 import { useLocale } from '@/i18n/context'
 import { saveFieldAction, saveServiceAction, submitAction } from '@/app/f/[token]/actions'
 import { useAutosave } from './useAutosave'
@@ -12,12 +20,18 @@ import { ServicesPass2 } from './ServicesPass2'
 import { PhotoSlots } from './PhotoSlots'
 import { FixesOnly, type Flag } from './FixesOnly'
 
+/** Отправить можно только из состояний, где форма остаётся открытой
+ *  заполняющему — то же множество, что `SUBMITTABLE` в transitions.ts. */
+const EDITABLE_STATUSES: ReadonlySet<SubmissionStatus> = new Set(['draft', 'changes_requested'])
+
 export function FillForm(props: {
   token: string
   submissionId: string
   /** Статус анкеты на момент открытия ссылки — решает, что показывать: весь
-   *  19-шаговый проход или экран правок по отмеченным полям (см. FixesOnly). */
-  status: string
+   *  19-шаговый проход, экран правок по отмеченным полям (см. FixesOnly), или
+   *  (для submitted/approved) закрытый экран только для просмотра статуса —
+   *  форма закрыта заполняющему, см. design spec и `EDITABLE_STATUSES` выше. */
+  status: SubmissionStatus
   /** Незакрытые отметки рецензента (`resolvedAt IS NULL`), если есть. */
   flags: Flag[]
   initialFields: Record<string, unknown>
@@ -29,6 +43,7 @@ export function FillForm(props: {
   const [services, setServices] = useState(props.initialServices)
   const [photos, setPhotos] = useState(props.initialPhotos)
   const [submitError, setSubmitError] = useState<Localized | null>(null)
+  const [submitMissing, setSubmitMissing] = useState<MissingItems | null>(null)
   const [submitted, setSubmitted] = useState(false)
 
   const fieldsByKey = useMemo(() => new Map(FIELDS.map((f) => [f.key, f])), [])
@@ -51,8 +66,22 @@ export function FillForm(props: {
 
   const statusText =
     autosave.status === 'offline' ? t('form.savingOffline')
+    : autosave.status === 'rejected' ? t('form.rejected')
     : autosave.status === 'saved' ? t('form.saved')
     : ''
+
+  // `useAutosave`'s queue keys services as `svc:<itemKey>` (see `changeService`
+  // below) so they share the same rejected-tracking map as plain fields
+  // without colliding on key namespaces. `ServicesPass2` only knows its own
+  // item keys, so the prefix is stripped back off here, at the one place that
+  // builds both namespaces.
+  const serviceErrors = useMemo(() => {
+    const out: Record<string, string> = {}
+    for (const [key, message] of Object.entries(autosave.rejected)) {
+      if (key.startsWith('svc:')) out[key.slice(4)] = message
+    }
+    return out
+  }, [autosave.rejected])
 
   // Whatever `useAutosave` found still queued in local storage when it
   // mounted (the tab died, or the page reloaded, before the 600ms debounce
@@ -97,10 +126,45 @@ export function FillForm(props: {
     const result = await submitAction(props.token)
     if (result.ok) {
       setSubmitError(null)
+      setSubmitMissing(null)
       setSubmitted(true)
     } else {
       setSubmitError(result.error)
+      setSubmitMissing(result.missing ?? null)
     }
+  }
+
+  /**
+   * Renders the bare "N item(s) still need an answer" refusal alongside an
+   * actual, readable list of which ones — using the schema's own labels via
+   * `pick()`, the same convention every other schema string in this
+   * component already goes through. On a 417-datapoint form a count alone
+   * gives the operator nothing to act on (Important finding I7). No jump-to-
+   * step navigation: a readable list is what was asked for, not a router.
+   */
+  function submitErrorNode(): React.JSX.Element | null {
+    if (!submitError) return null
+    return (
+      <div className="fix-comment">
+        <p>{pick(submitError)}</p>
+        {submitMissing && (
+          <ul>
+            {submitMissing.fieldKeys.map((key) => {
+              const field = FIELDS.find((f) => f.key === key)
+              return <li key={`field:${key}`}>{field ? pick(field.label) : key}</li>
+            })}
+            {submitMissing.serviceKeys.map((key) => {
+              const item = SERVICE_ITEMS.find((i) => i.key === key)
+              return <li key={`service:${key}`}>{item ? pick(item.label) : key}</li>
+            })}
+            {submitMissing.photoSlots.map((key) => {
+              const slot = PHOTO_SLOTS.find((s) => s.key === key)
+              return <li key={`photo:${key}`}>{slot ? pick(slot.label) : key}</li>
+            })}
+          </ul>
+        )}
+      </div>
+    )
   }
 
   if (submitted) {
@@ -108,6 +172,23 @@ export function FillForm(props: {
       <div className="shell">
         <main className="shell-body">
           <p>{t('form.submitted')}</p>
+        </main>
+      </div>
+    )
+  }
+
+  // A still-valid fill link reopened after the questionnaire moved past
+  // `draft`/`changes_requested` (i.e. it is `submitted` or `approved`) must
+  // not render the editable form at all — the design spec is explicit that
+  // the form is closed to the filler once submitted, and `saveFieldValue`/
+  // `saveServiceValue` already refuse writes in this state server-side (see
+  // `assertEditable`). Without this gate the operator got the full form back
+  // and, before Critical 2 was fixed, "Saved" for every refused write.
+  if (!EDITABLE_STATUSES.has(props.status)) {
+    return (
+      <div className="shell">
+        <main className="shell-body">
+          <p>{t('form.closed')}</p>
         </main>
       </div>
     )
@@ -142,7 +223,7 @@ export function FillForm(props: {
             values={fields}
             onChange={changeField}
           />
-          {submitError && <p className="fix-comment">{pick(submitError)}</p>}
+          {submitErrorNode()}
           <button type="button" onClick={submit}>
             {t('form.submit')}
           </button>
@@ -161,6 +242,7 @@ export function FillForm(props: {
               field={field}
               value={fields[field.key]}
               onChange={(value) => changeField(field.key, value)}
+              error={autosave.rejected[field.key]}
             />
           ))
         }
@@ -170,7 +252,7 @@ export function FillForm(props: {
         }
 
         if (step.kind === 'services2') {
-          return <ServicesPass2 values={services} onChange={changeService} />
+          return <ServicesPass2 values={services} onChange={changeService} errors={serviceErrors} />
         }
 
         if (step.kind === 'photos') {
@@ -178,16 +260,28 @@ export function FillForm(props: {
             <PhotoSlots
               token={props.token}
               uploaded={photos}
-              onUploaded={(slot, url) =>
-                setPhotos((prev) => ({ ...prev, [slot]: [...(prev[slot] ?? []), url] }))
-              }
+              onUploaded={(slotKey, url) => {
+                // A named slot (entrance, reception, landmarks) answers one
+                // specific question and holds exactly one photo — a new
+                // upload replaces it, matching what the server actually does
+                // (`attachPhoto` deletes the previous row for any non-`extra`
+                // slot; see `src/photos/store.ts`). Only the `extra` slot
+                // (`additional`) accumulates. Appending unconditionally here
+                // used to show two images for a named slot after "Replace"
+                // until the next reload — a lie about what the server holds.
+                const slotDef = PHOTO_SLOTS.find((s) => s.key === slotKey)
+                setPhotos((prev) => ({
+                  ...prev,
+                  [slotKey]: slotDef?.extra ? [...(prev[slotKey] ?? []), url] : [url],
+                }))
+              }}
             />
           )
         }
 
         return (
           <div className="review">
-            {submitError && <p className="fix-comment">{pick(submitError)}</p>}
+            {submitErrorNode()}
             <button type="button" onClick={submit}>
               {t('form.submit')}
             </button>

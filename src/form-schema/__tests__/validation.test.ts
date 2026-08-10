@@ -32,6 +32,7 @@ const fakeField = (over: Partial<Field>): Field => ({
   optionList: null,
   templateText: null,
   templateSlots: [],
+  detailRequiredFor: [],
   ...over,
 })
 

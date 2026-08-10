@@ -25,6 +25,16 @@ export type Field = {
   optionList: OptionListId | null
   templateText: Localized | null
   templateSlots: TemplateSlot[]
+  /**
+   * Option ids of this field's own `optionList` that require the clarifying
+   * `detail` text even though the option itself is `plain()` (not
+   * `requiresDetail`) in `option-lists.ts`. Lives here, not in a private map
+   * inside `validation.ts`, because both the validator and `FieldInput` need
+   * to agree on which options demand a detail — see `III.2.4`, whose
+   * `airlineAccess` options are all `plain()` yet the "specific airlines"
+   * choice is meaningless without naming them.
+   */
+  detailRequiredFor: string[]
 }
 
 const base = {
@@ -33,6 +43,7 @@ const base = {
   optionList: null,
   templateText: null,
   templateSlots: [],
+  detailRequiredFor: [],
 } satisfies Partial<Field>
 
 export const FIELDS: Field[] = [
@@ -404,7 +415,7 @@ export const FIELDS: Field[] = [
     key: 'III.2.4',
     section: 'III',
     block: 'III.2',
-    type: 'select',
+    type: 'select_with_detail',
     label: {
       en: 'Airline-Specific Access Restrictions',
       ru: 'Ограничения по авиакомпаниям',
@@ -412,6 +423,7 @@ export const FIELDS: Field[] = [
     example: 'Specific airlines passengers allowed\nFor Turkish Airlines passengers only',
     required: true,
     optionList: 'airlineAccess',
+    detailRequiredFor: ['specific'],
   },
   {
     ...base,

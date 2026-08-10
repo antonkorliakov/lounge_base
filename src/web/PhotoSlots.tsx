@@ -34,39 +34,54 @@ export function PhotoSlots(props: {
   const [errors, setErrors] = useState<Record<string, Localized>>({})
 
   async function upload(slot: string, file: File): Promise<void> {
-    const resized = await resizeToJpeg(file)
-    const body = new FormData()
-    body.set('token', props.token)
-    body.set('slot', slot)
-    body.set('file', new File([resized], `${slot}.jpg`, { type: 'image/jpeg' }))
+    // `resizeToJpeg` and `fetch` were previously called outside any `try`:
+    // a dropped connection (or a resize failure) threw an unhandled
+    // rejection instead of reaching either branch below, so the operator
+    // tapped Upload and nothing happened at all — no error, no retry
+    // prompt, silence. Photos gate submission and the stated environment is
+    // airport Wi-Fi, so this is the ordinary case, not an edge case (see
+    // Important finding I8 in the whole-branch review).
+    try {
+      const resized = await resizeToJpeg(file)
+      const body = new FormData()
+      body.set('token', props.token)
+      body.set('slot', slot)
+      body.set('file', new File([resized], `${slot}.jpg`, { type: 'image/jpeg' }))
 
-    const response = await fetch('/api/photos', { method: 'POST', body })
+      const response = await fetch('/api/photos', { method: 'POST', body })
 
-    if (!response.ok) {
-      let error: Localized = UI['photos.uploadFailed']
-      try {
-        const data: unknown = await response.json()
-        const candidate = (data as { error?: unknown }).error
-        if (isLocalized(candidate)) error = candidate
-      } catch {
-        // Тело не JSON (или пустое) — используем общее сообщение выше.
+      if (!response.ok) {
+        let error: Localized = UI['photos.uploadFailed']
+        try {
+          const data: unknown = await response.json()
+          const candidate = (data as { error?: unknown }).error
+          if (isLocalized(candidate)) error = candidate
+        } catch {
+          // Тело не JSON (или пустое) — используем общее сообщение выше.
+        }
+        setErrors((prev) => ({ ...prev, [slot]: error }))
+        return
       }
-      setErrors((prev) => ({ ...prev, [slot]: error }))
-      return
+
+      // Успешная загрузка снимает прежний отказ по этому слоту — заполняющий
+      // это увидит сам, повторно открыв слот, но чистим сразу, а не оставляем
+      // старую ошибку висеть рядом с уже загруженным фото.
+      setErrors((prev) => {
+        if (!(slot in prev)) return prev
+        const next = { ...prev }
+        delete next[slot]
+        return next
+      })
+
+      const data = (await response.json()) as { url: string }
+      props.onUploaded(slot, data.url)
+    } catch {
+      // Network drop, a `resizeToJpeg` failure (corrupt image, decode
+      // error), or anything else that throws before a response exists — all
+      // the same to the operator: the upload didn't happen and needs a
+      // visible, retryable error, not silence.
+      setErrors((prev) => ({ ...prev, [slot]: UI['photos.uploadFailed'] }))
     }
-
-    // Успешная загрузка снимает прежний отказ по этому слоту — заполняющий
-    // это увидит сам, повторно открыв слот, но чистим сразу, а не оставляем
-    // старую ошибку висеть рядом с уже загруженным фото.
-    setErrors((prev) => {
-      if (!(slot in prev)) return prev
-      const next = { ...prev }
-      delete next[slot]
-      return next
-    })
-
-    const data = (await response.json()) as { url: string }
-    props.onUploaded(slot, data.url)
   }
 
   return (
@@ -80,7 +95,7 @@ export function PhotoSlots(props: {
           {slot.required && !props.uploaded[slot.key]?.length && (
             <p className="field-hint">{t('photos.missing')}</p>
           )}
-          {errors[slot.key] && <p className="field-hint">{pick(errors[slot.key]!)}</p>}
+          {errors[slot.key] && <p className="fix-comment">{pick(errors[slot.key]!)}</p>}
           <label className="photo-upload">
             {props.uploaded[slot.key]?.length ? t('photos.replace') : t('photos.upload')}
             <input

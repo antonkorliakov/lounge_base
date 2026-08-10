@@ -5,6 +5,7 @@ import { resolveFillToken } from '@/access/tokens'
 import { saveFieldValue, saveServiceValue } from '@/submissions/values'
 import { submitSubmission } from '@/submissions/transitions'
 import type { Localized, ServiceValueInput } from '@/form-schema'
+import type { MissingItems } from '@/submissions/completeness'
 
 /**
  * `error` carries the full `Localized` pair, not a pre-picked string — a
@@ -17,7 +18,21 @@ import type { Localized, ServiceValueInput } from '@/form-schema'
  * regardless of the UI's own locale, defeating the locale switcher for an
  * English-reading operator. The client picks now.
  */
-export type ActionResult = { ok: true } | { ok: false; error: Localized }
+export type ActionResult =
+  | { ok: true }
+  | {
+      ok: false
+      error: Localized
+      /**
+       * Only ever set by `submitAction`'s "still incomplete" refusal — the
+       * actual missing field/service/photo keys behind the bare count in
+       * `error`, so the client can render a readable list instead of just
+       * "12 item(s) still need an answer" (see `submitSubmission` in
+       * `src/submissions/transitions.ts`, and Important finding I7 in the
+       * whole-branch review).
+       */
+      missing?: MissingItems
+    }
 
 const DENIED: ActionResult = {
   ok: false,
@@ -74,5 +89,5 @@ export async function submitAction(token: string): Promise<ActionResult> {
     submissionId: resolved.submissionId,
     actor: 'filler',
   })
-  return result.ok ? { ok: true } : { ok: false, error: result.error }
+  return result.ok ? { ok: true } : { ok: false, error: result.error, missing: result.missing }
 }

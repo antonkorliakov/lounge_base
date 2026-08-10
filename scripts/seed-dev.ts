@@ -93,10 +93,12 @@ function valueForField(field: Field): unknown {
       if (!first) return { option: '', detail: null }
 
       // Always fill `detail`, not only when `first.requiresDetail` is set:
-      // a couple of fields (e.g. `III.2.4`) require a detail for a specific
-      // option via validation.ts's own `DETAIL_REQUIRED_BY_OPTION`, which is
-      // a field-specific override not visible on the `Option` itself and
-      // not exported. An unneeded detail string never fails validation —
+      // a field can also require a detail for a specific option via its own
+      // `detailRequiredFor` (see `III.2.4` — every `airlineAccess` option is
+      // `plain()`, so `requiresDetail` alone would miss it; this used to be
+      // a field-specific override private to `validation.ts` and invisible
+      // here — see Critical 1 in the whole-branch review — now it lives on
+      // `Field` itself). An unneeded detail string never fails validation —
       // `validateSelect` only *reads* `detail` when it decides one is
       // required — so filling it unconditionally is a safe superset.
       const value: SelectValue = {

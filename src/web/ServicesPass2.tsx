@@ -24,6 +24,10 @@ export function offeredKeys(values: Record<string, ServiceValueInput>): string[]
 export function ServicesPass2(props: {
   values: Record<string, ServiceValueInput>
   onChange: (itemKey: string, value: ServiceValueInput) => void
+  /** The server's refusal message for an item's most recent save, keyed by
+   *  the item's own key (already stripped of the queue's `svc:` prefix by
+   *  the caller — see `FillForm`'s `serviceErrors`). */
+  errors?: Record<string, string>
 }): React.JSX.Element {
   const { pick, t } = useLocale()
   const keys = offeredKeys(props.values)
@@ -103,6 +107,8 @@ export function ServicesPass2(props: {
               value={value.details ?? ''}
               onChange={(e) => props.onChange(key, { ...value, details: e.target.value })}
             />
+
+            {props.errors?.[key] && <p className="fix-comment">{props.errors[key]}</p>}
           </div>
         )
       })}

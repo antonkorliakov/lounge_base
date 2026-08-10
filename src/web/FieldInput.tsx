@@ -35,12 +35,44 @@ export function nextSelectValue(
   return next
 }
 
+/**
+ * Converts a number `<input>`'s raw string value to what should reach
+ * `onChange`: `null` when the box is empty, the parsed number otherwise.
+ * Extracted — like `nextSelectValue` above — so the empty case is directly
+ * testable without a DOM (see `src/web/__tests__/fieldContract.test.ts`) and
+ * so all three number inputs below (plain `number` field, template slot,
+ * compound select-field slot) share one definition of "empty" instead of
+ * three copies that could drift.
+ *
+ * `Number(e.target.value)` alone — this function's entire previous form —
+ * was Important finding I4: an emptied box has `e.target.value === ''`, and
+ * `Number('') === 0`, so clearing a number field silently wrote `0` — a
+ * value indistinguishable from a genuine answer of zero, and one
+ * `validateField` happily accepts as a complete answer. `null` is the
+ * actual "nothing answered" value `validateField`'s own `isEmpty` already
+ * expects.
+ */
+export function numberFieldValue(raw: string): number | null {
+  return raw === '' ? null : Number(raw)
+}
+
 export function FieldInput(props: {
   field: Field
   value: unknown
   onChange: (value: unknown) => void
+  /**
+   * The server's own refusal message for this field's most recent save
+   * attempt, if any (`useAutosave`'s `rejected[field.key]`, threaded down
+   * through `FillForm`). Rendered with `.fix-comment` — the existing red
+   * error style — never `.field-hint`, which is muted grey and would make a
+   * genuine refusal read as a passive suggestion. Before this prop existed,
+   * a refused save was computed and then dropped on the floor: the operator
+   * saw the global "Saved" status while the database still held the old
+   * value (see `useAutosave.ts` / Critical 2 in the whole-branch review).
+   */
+  error?: string
 }): React.JSX.Element {
-  const { field, value, onChange } = props
+  const { field, value, onChange, error } = props
   const { pick, t } = useLocale()
 
   const label = (
@@ -51,6 +83,7 @@ export function FieldInput(props: {
   )
 
   const hint = field.hint && <p className="field-hint">{pick(field.hint)}</p>
+  const errorNode = error && <p className="fix-comment">{error}</p>
 
   switch (field.type) {
     case 'select':
@@ -58,6 +91,15 @@ export function FieldInput(props: {
       const options = field.optionList ? OPTION_LISTS[field.optionList] : []
       const current: SelectValue = (value ?? { option: '', detail: null }) as SelectValue
       const chosen = options.find((o) => o.id === current.option)
+      // `chosen.requiresDetail` covers options that always need a detail
+      // (see `option-lists.ts`); `field.detailRequiredFor` covers options
+      // that are `plain()` on the list itself but need one for this
+      // particular field (see `III.2.4` — every `airlineAccess` option is
+      // `plain()`, yet "specific airlines" is meaningless unqualified).
+      // Without the second check the detail textarea never renders for such
+      // a field, and `validateSelect` refuses every save forever.
+      const needsDetail =
+        chosen != null && (chosen.requiresDetail || field.detailRequiredFor.includes(chosen.id))
 
       return (
         <div className="field">
@@ -75,7 +117,7 @@ export function FieldInput(props: {
               </option>
             ))}
           </select>
-          {chosen?.requiresDetail && (
+          {needsDetail && (
             <textarea
               className="field-detail"
               value={current.detail ?? ''}
@@ -97,9 +139,7 @@ export function FieldInput(props: {
                     onChange={(e) =>
                       onChange(
                         nextSelectValue(current, {
-                          slots: {
-                            [slot.key]: e.target.value === '' ? null : Number(e.target.value),
-                          },
+                          slots: { [slot.key]: numberFieldValue(e.target.value) },
                         }),
                       )
                     }
@@ -109,6 +149,7 @@ export function FieldInput(props: {
               ))}
             </div>
           )}
+          {errorNode}
         </div>
       )
     }
@@ -137,6 +178,7 @@ export function FieldInput(props: {
               {pick(option.label)}
             </label>
           ))}
+          {errorNode}
         </div>
       )
     }
@@ -157,15 +199,13 @@ export function FieldInput(props: {
                 min={0}
                 value={slots[slot.key] ?? ''}
                 onChange={(e) =>
-                  onChange({
-                    ...slots,
-                    [slot.key]: e.target.value === '' ? null : Number(e.target.value),
-                  })
+                  onChange({ ...slots, [slot.key]: numberFieldValue(e.target.value) })
                 }
               />
               {pick(slot.unit)}
             </span>
           ))}
+          {errorNode}
         </div>
       )
     }
@@ -181,6 +221,7 @@ export function FieldInput(props: {
             onChange={(e) => onChange(e.target.value)}
           />
           {field.example && <p className="field-example">{field.example}</p>}
+          {errorNode}
         </div>
       )
 
@@ -195,10 +236,11 @@ export function FieldInput(props: {
             min={field.type === 'number' ? 0 : undefined}
             value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''}
             onChange={(e) =>
-              onChange(field.type === 'number' ? Number(e.target.value) : e.target.value)
+              onChange(field.type === 'number' ? numberFieldValue(e.target.value) : e.target.value)
             }
           />
           {field.example && <p className="field-example">{field.example}</p>}
+          {errorNode}
         </div>
       )
   }

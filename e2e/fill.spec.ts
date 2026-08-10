@@ -73,6 +73,46 @@ test('два прохода по услугам: детали спрашиваю
   await expect(page.getByRole('heading', { name: 'Runway View' })).toHaveCount(0)
 })
 
+test('отказ сервера показывает ошибку у позиции и НЕ отображается как "Saved" (Critical 2)', async ({ page }) => {
+  const url = seed()
+  await page.goto(url)
+
+  await clickNext(page, FIELD_STEP_COUNT)
+  await expect(page.getByRole('heading', { name: 'What does the lounge offer?' })).toBeVisible()
+
+  // Checking a service without also setting its charge type is refused by
+  // `validateServiceValue` (see src/form-schema/validation.ts: an "offered"
+  // item needs `chargeType`, and Pass 1 never sets it — only Pass 2 does).
+  // This is the easiest real refusal to trigger through the actual UI: no
+  // mocking, no direct DB/API calls, just the ordinary two-pass flow with
+  // the second pass not reached yet.
+  await page.getByText('Wifi Access').locator('..').getByRole('checkbox').check()
+  await clickNext(page)
+  await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
+
+  // The 600ms autosave debounce (see useAutosave.ts) plus the round trip to
+  // the server must run before the refusal comes back — `expect` here polls
+  // until it does. Before Critical 2 was fixed, `useAutosave` cleared the
+  // rejected key from its retry queue unconditionally and reported "Saved"
+  // regardless: this refusal was invisible end-to-end.
+  await expect(page.getByText('Some answers were not accepted')).toBeVisible()
+  await expect(page.getByText('Saved')).toHaveCount(0)
+
+  const wifiCard = page.getByRole('heading', { name: 'Wifi Access' }).locator('..')
+  await expect(
+    wifiCard.getByText('Specify whether the service is complimentary or chargeable'),
+  ).toBeVisible()
+
+  // Fixing the actual cause — picking a charge type — clears both the
+  // per-item error and the header status, confirming this isn't a one-way
+  // "permanently stuck" state.
+  await wifiCard.getByRole('combobox').selectOption('complimentary')
+  await expect(page.getByText('Saved')).toBeVisible()
+  await expect(
+    wifiCard.getByText('Specify whether the service is complimentary or chargeable'),
+  ).toHaveCount(0)
+})
+
 test('перезагрузка сохраняет значение, введённое до срабатывания автосохранения', async ({ page }) => {
   const url = seed()
   await page.goto(url)

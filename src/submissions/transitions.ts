@@ -3,11 +3,11 @@ import type { Localized } from '@/form-schema'
 import { submissions, events } from '@/db/schema'
 import type { SubmissionStatus } from '@/db/schema'
 import type { Db } from '@/db/types'
-import { missingItems } from './completeness'
+import { missingItems, type MissingItems } from './completeness'
 
 export type TransitionResult =
   | { ok: true; status: SubmissionStatus }
-  | { ok: false; error: Localized }
+  | { ok: false; error: Localized; missing?: MissingItems }
 
 const fail = (en: string, ru: string): TransitionResult => ({
   ok: false,
@@ -50,10 +50,22 @@ export async function submitSubmission(
     const total =
       missing.fieldKeys.length + missing.serviceKeys.length + missing.photoSlots.length
     if (total > 0) {
-      return fail(
-        `${total} item(s) still need an answer`,
-        `Осталось заполнить: ${total}`,
-      )
+      // Carry the actual missing keys, not just their count: on a
+      // 417-datapoint form, "12 item(s) still need an answer" gives the
+      // operator nothing to act on. The caller (the `submitAction` server
+      // action / `FillForm`) renders this list using the schema's own
+      // labels via `pick()` — this module has no UI-facing label lookup of
+      // its own, by design (it only knows keys, `completeness.ts` is the
+      // one place that resolves them against `FIELDS`/`SERVICE_ITEMS`/
+      // `PHOTO_SLOTS`).
+      return {
+        ok: false,
+        error: {
+          en: `${total} item(s) still need an answer`,
+          ru: `Осталось заполнить: ${total}`,
+        },
+        missing,
+      }
     }
 
     const now = new Date()

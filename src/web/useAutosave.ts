@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-export type SaveStatus = 'idle' | 'saving' | 'saved' | 'offline'
+/**
+ * `'rejected'` is distinct from `'saved'`: the queue is empty (nothing left
+ * to retry — the server answered) but at least one key's last answer was
+ * permanently refused (see `rejected`, below). Before this state existed,
+ * an empty queue after a refusal collapsed to `'saved'` — the exact bug
+ * Critical 2 of the whole-branch review names: every rejection was reported
+ * to the operator as success.
+ */
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'offline' | 'rejected'
 
 export type StorageLike = {
   getItem(key: string): string | null
@@ -289,7 +297,22 @@ export function useAutosave<T>(input: {
   const drainingRef = useRef(false)
   const rerunRef = useRef(false)
 
+  // Mirrors `rejected` state, updated in lockstep by `updateRejected` below.
+  // The `finally` block in `drain` needs the *current* rejected set the
+  // instant the drain loop ends, to decide `'saved'` vs `'rejected'` — it
+  // cannot wait for React to commit a `setRejected` update and re-render,
+  // and it cannot trust a `rejected` closed over from when `drain` was
+  // created, since that value is stale by the time an async drain finishes.
+  const rejectedRef = useRef<Record<string, string>>({})
+
   const getStorage = (): StorageLike => window.localStorage
+
+  function updateRejected(
+    updater: (prev: Record<string, string>) => Record<string, string>,
+  ): void {
+    rejectedRef.current = updater(rejectedRef.current)
+    setRejected(rejectedRef.current)
+  }
 
   const drain = useCallback((): void => {
     if (drainingRef.current) {
@@ -308,13 +331,21 @@ export function useAutosave<T>(input: {
           const result = await queueDrain(getStorage(), input.submissionId, (key, value) =>
             saveRef.current(key, value as T),
           )
-          setRejected((prev) => mergeRejected(prev, result))
+          updateRejected((prev) => mergeRejected(prev, result))
         } while (rerunRef.current)
       } finally {
         drainingRef.current = false
         const left = Object.keys(readQueue(getStorage(), input.submissionId)).length
         setPendingCount(left)
-        setStatus(left === 0 ? 'saved' : 'offline')
+        // A refusal is not a network problem: the queue can be empty (the
+        // server answered, nothing left to retry) while a key's last answer
+        // still stands rejected. `'offline'` takes priority when the queue
+        // is non-empty (still unsent — that IS a connectivity problem, and
+        // arguably more urgent to surface); otherwise any outstanding
+        // rejection must block `'saved'` from being reported at all — see
+        // Critical 2 in the whole-branch review.
+        const hasRejected = Object.keys(rejectedRef.current).length > 0
+        setStatus(left > 0 ? 'offline' : hasRejected ? 'rejected' : 'saved')
       }
     })()
   }, [input.submissionId])
@@ -330,7 +361,7 @@ export function useAutosave<T>(input: {
 
       // A fresh edit deserves a fresh attempt, even if the previous value
       // at this key was permanently rejected.
-      setRejected((prev) => {
+      updateRejected((prev) => {
         if (!(key in prev)) return prev
         const next = { ...prev }
         delete next[key]

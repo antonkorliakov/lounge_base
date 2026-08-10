@@ -55,11 +55,6 @@ const DUPLICATE_OPTION = fail(
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 
-/** Поля, где конкретный вариант обязывает заполнить уточнение. */
-const DETAIL_REQUIRED_BY_OPTION: Record<string, string[]> = {
-  'III.2.4': ['specific'],
-}
-
 /**
  * Составные поля: выбранный вариант обязывает заполнить слоты шаблона.
  * `III.3.2` — единственное такое поле в анкете: возраст нужен, только если
@@ -104,12 +99,19 @@ function isSelectValue(value: unknown): value is SelectValue {
 function validateSelect(field: Field, value: unknown): ValidationResult {
   if (!isSelectValue(value)) return field.required ? REQUIRED : ok
 
+  // A dropdown returned to its `—` placeholder emits `{ option: '' }` — a
+  // deliberate un-selection, not a malformed choice. Must be treated as
+  // "nothing answered" (and checked against `required`) BEFORE the
+  // membership lookup below, or a non-required field could never be cleared:
+  // '' never matches any real option id, so it would otherwise always fall
+  // through to UNKNOWN_OPTION regardless of `required`.
+  if (value.option === '') return field.required ? REQUIRED : ok
+
   const options = field.optionList ? OPTION_LISTS[field.optionList] : []
   const chosen = options.find((o) => o.id === value.option)
   if (!chosen) return UNKNOWN_OPTION
 
-  const byOption = DETAIL_REQUIRED_BY_OPTION[field.key] ?? []
-  const needsDetail = chosen.requiresDetail || byOption.includes(chosen.id)
+  const needsDetail = chosen.requiresDetail || field.detailRequiredFor.includes(chosen.id)
 
   if (needsDetail) {
     if (value.detail === null || value.detail === undefined) return DETAIL_REQUIRED
@@ -221,6 +223,13 @@ export function validateServiceValue(
   item: ServiceItem,
   value: ServiceValueInput,
 ): ValidationResult {
+  // Same deliberate-un-selection rule as `validateSelect`: `ServicesPass1`
+  // writes `available: ''` when the operator returns a dropdown item to its
+  // placeholder, and `offeredKeys()` on the client already treats `''` as
+  // "not offered" (see its own doc comment). The server must agree instead
+  // of refusing a value the client itself considers valid and unanswered.
+  if (value.available === '') return ok
+
   const availability = OPTION_LISTS[item.availabilityList]
   const chosen = availability.find((o) => o.id === value.available)
   if (!chosen) return UNKNOWN_OPTION

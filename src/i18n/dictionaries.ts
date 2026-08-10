@@ -11,6 +11,14 @@ export const UI = {
     en: 'No connection — saved on this device',
     ru: 'Нет связи — сохранено на устройстве',
   },
+  'form.rejected': {
+    en: 'Some answers were not accepted',
+    ru: 'Некоторые ответы не были приняты',
+  },
+  'form.closed': {
+    en: 'This questionnaire has already been submitted and can no longer be edited.',
+    ru: 'Анкета уже отправлена и больше не может быть изменена.',
+  },
   'form.submit': { en: 'Submit for review', ru: 'Отправить на проверку' },
   'form.submitted': {
     en: 'Sent for review. We will get back to you.',
