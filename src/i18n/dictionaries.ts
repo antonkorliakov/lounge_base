@@ -14,7 +14,7 @@ export const UI = {
   'form.submit': { en: 'Submit for review', ru: 'Отправить на проверку' },
   'form.submitted': {
     en: 'Sent for review. We will get back to you.',
-    ru: 'Отправлено на проверку. Мы вернёмся с ответом.',
+    ru: 'Отправлено на проверку. Сообщим о результате.',
   },
   'form.incomplete': {
     en: 'Some answers are still missing',
@@ -30,18 +30,23 @@ export const UI = {
     ru: 'Отметьте всё, что есть. Детали спросим дальше.',
   },
   'services.pass2Title': { en: 'Details', ru: 'Детали' },
-  'services.charge': { en: 'Complimentary or chargeable', ru: 'Платность' },
+  'services.charge': { en: 'Complimentary or chargeable', ru: 'Платно/бесплатно' },
   'services.price': { en: 'Price', ru: 'Цена' },
   'services.currency': { en: 'Currency', ru: 'Валюта' },
   'services.slot': { en: 'Time slot, minutes', ru: 'Длительность, минут' },
   'services.booking': { en: 'Booking required', ru: 'Нужна бронь' },
-  'services.details': { en: 'Other details', ru: 'Детали' },
+  'services.details': { en: 'Other details', ru: 'Прочее' },
+  'services.backToPass1': {
+    en: 'Back to service selection',
+    ru: 'Назад к выбору услуг',
+  },
   'photos.upload': { en: 'Upload photo', ru: 'Загрузить фото' },
   'photos.replace': { en: 'Replace', ru: 'Заменить' },
+  'photos.missing': { en: 'No photo', ru: 'Нет фото' },
   'fixes.title': { en: 'Changes requested', ru: 'Требуются правки' },
   'fixes.intro': {
     en: 'The reviewer flagged these answers. Everything else is accepted.',
-    ru: 'Ревьюер отметил эти ответы. Остальное принято.',
+    ru: 'Проверяющий отметил эти ответы. Остальное принято.',
   },
 } as const satisfies Record<string, Localized>
 
