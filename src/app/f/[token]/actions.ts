@@ -4,11 +4,25 @@ import { db } from '@/db/client'
 import { resolveFillToken } from '@/access/tokens'
 import { saveFieldValue, saveServiceValue } from '@/submissions/values'
 import { submitSubmission } from '@/submissions/transitions'
-import type { ServiceValueInput } from '@/form-schema'
+import type { Localized, ServiceValueInput } from '@/form-schema'
 
-export type ActionResult = { ok: boolean; error?: string }
+/**
+ * `error` carries the full `Localized` pair, not a pre-picked string — a
+ * server action has no reliable notion of "the caller's locale" (nothing
+ * threads one through here, by design: the client already knows its own
+ * locale and already has `pick()`, the one convention this codebase uses
+ * everywhere for schema strings; a `locale` parameter on every action would
+ * just be a second, redundant way to do the same thing). Picking `.ru` here
+ * unconditionally — the previous shape — meant every rejection was Russian
+ * regardless of the UI's own locale, defeating the locale switcher for an
+ * English-reading operator. The client picks now.
+ */
+export type ActionResult = { ok: true } | { ok: false; error: Localized }
 
-const DENIED: ActionResult = { ok: false, error: 'ссылка недействительна' }
+const DENIED: ActionResult = {
+  ok: false,
+  error: { en: 'This link is invalid or has expired', ru: 'Ссылка недействительна' },
+}
 
 /**
  * Every action resolves the fill token itself and derives the submission id
@@ -33,7 +47,7 @@ export async function saveFieldAction(
     fieldKey,
     value,
   })
-  return result.ok ? { ok: true } : { ok: false, error: result.error.ru }
+  return result.ok ? { ok: true } : { ok: false, error: result.error }
 }
 
 export async function saveServiceAction(
@@ -49,7 +63,7 @@ export async function saveServiceAction(
     itemKey,
     value,
   })
-  return result.ok ? { ok: true } : { ok: false, error: result.error.ru }
+  return result.ok ? { ok: true } : { ok: false, error: result.error }
 }
 
 export async function submitAction(token: string): Promise<ActionResult> {
@@ -60,5 +74,5 @@ export async function submitAction(token: string): Promise<ActionResult> {
     submissionId: resolved.submissionId,
     actor: 'filler',
   })
-  return result.ok ? { ok: true } : { ok: false, error: result.error.ru }
+  return result.ok ? { ok: true } : { ok: false, error: result.error }
 }

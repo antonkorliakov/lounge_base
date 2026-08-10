@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { FIELDS, type ServiceValueInput } from '@/form-schema'
+import { FIELDS, type Localized, type ServiceValueInput } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 import { saveFieldAction, saveServiceAction, submitAction } from '@/app/f/[token]/actions'
 import { useAutosave } from './useAutosave'
@@ -24,21 +24,29 @@ export function FillForm(props: {
   initialServices: Record<string, ServiceValueInput>
   initialPhotos: Record<string, string[]>
 }): React.JSX.Element {
-  const { t, locale, setLocale } = useLocale()
+  const { t, pick, locale, setLocale } = useLocale()
   const [fields, setFields] = useState(props.initialFields)
   const [services, setServices] = useState(props.initialServices)
   const [photos, setPhotos] = useState(props.initialPhotos)
-  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [submitError, setSubmitError] = useState<Localized | null>(null)
   const [submitted, setSubmitted] = useState(false)
 
   const fieldsByKey = useMemo(() => new Map(FIELDS.map((f) => [f.key, f])), [])
 
   const autosave = useAutosave({
     submissionId: props.submissionId,
-    save: (key, value) =>
-      key.startsWith('svc:')
-        ? saveServiceAction(props.token, key.slice(4), value as ServiceValueInput)
-        : saveFieldAction(props.token, key, value),
+    // `useAutosave` (untouched by this fix) expects `SaveOutcome.error` to be
+    // a plain string — it's only ever used internally for `rejected`
+    // bookkeeping, never rendered (see its own file). `ActionResult.error` is
+    // now the full `Localized` pair, so it's picked down to a string right
+    // at this boundary rather than changing `useAutosave`'s shape.
+    save: async (key, value) => {
+      const result =
+        key.startsWith('svc:')
+          ? await saveServiceAction(props.token, key.slice(4), value as ServiceValueInput)
+          : await saveFieldAction(props.token, key, value)
+      return result.ok ? result : { ok: false, error: pick(result.error) }
+    },
   })
 
   const statusText =
@@ -91,7 +99,7 @@ export function FillForm(props: {
       setSubmitError(null)
       setSubmitted(true)
     } else {
-      setSubmitError(result.error ?? t('form.incomplete'))
+      setSubmitError(result.error)
     }
   }
 
@@ -134,7 +142,7 @@ export function FillForm(props: {
             values={fields}
             onChange={changeField}
           />
-          {submitError && <p className="fix-comment">{submitError}</p>}
+          {submitError && <p className="fix-comment">{pick(submitError)}</p>}
           <button type="button" onClick={submit}>
             {t('form.submit')}
           </button>
@@ -179,7 +187,7 @@ export function FillForm(props: {
 
         return (
           <div className="review">
-            {submitError && <p className="fix-comment">{submitError}</p>}
+            {submitError && <p className="fix-comment">{pick(submitError)}</p>}
             <button type="button" onClick={submit}>
               {t('form.submit')}
             </button>

@@ -86,13 +86,25 @@ test('перезагрузка сохраняет значение, введён
   await expect(page.getByLabel(/Lounge Full Name/)).toHaveValue('Reload Survivor')
 })
 
-test('неполная анкета не отправляется и сообщает, сколько осталось заполнить', async ({ page }) => {
+test('неполная анкета не отправляется и сообщает, сколько осталось заполнить — на языке интерфейса', async ({ page }) => {
   const url = seed()
   await page.goto(url)
 
   await clickNext(page, FIELD_STEP_COUNT + 3) // 15 блоков полей + 2 прохода услуг + фото = экран отправки
   await page.getByRole('button', { name: 'Submit for review', exact: true }).click()
 
+  // Default locale is English — before this fix, `src/app/f/[token]/
+  // actions.ts` hardcoded `result.error.ru` regardless of UI locale, so an
+  // English-reading operator would see this Russian text. `ActionResult`
+  // now carries the full `Localized` pair and the client picks with the
+  // same `pick()` it already uses for every schema string.
+  await expect(page.getByText(/item\(s\) still need an answer/)).toBeVisible()
+
+  // Switching locale re-renders the *same* stored error through `pick()` —
+  // no second submit, no second server round trip. That is the whole point:
+  // the error is a `Localized` value now, not a string already committed to
+  // one language.
+  await page.getByRole('button', { name: 'RU', exact: true }).click()
   await expect(page.getByText(/Осталось заполнить/)).toBeVisible()
 })
 
