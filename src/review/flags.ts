@@ -1,10 +1,18 @@
 import { and, eq, isNull, sql } from 'drizzle-orm'
-import type { Localized } from '@/form-schema'
 import { FIELDS, SERVICE_ITEMS, SERVICE_GROUPS, PHOTO_SLOTS } from '@/form-schema'
 import type { Db, Tx } from '@/db/types'
 import { fieldFlags, blockReviews } from '@/db/schema'
+import { fail, type SaveResult } from '@/submissions/editable'
 
 export type FlagReason = 'empty' | 'needs_detail' | 'contradicts' | 'wrong_format'
+
+const FLAG_REASONS: ReadonlySet<string> = new Set<FlagReason>([
+  'empty', 'needs_detail', 'contradicts', 'wrong_format',
+])
+
+function isFlagReason(value: string): value is FlagReason {
+  return FLAG_REASONS.has(value)
+}
 
 export type FlagRow = {
   id: string
@@ -13,7 +21,16 @@ export type FlagRow = {
   comment: string
 }
 
-export type FlagResult = { ok: true } | { ok: false; error: Localized }
+/**
+ * Same shape as `submissions/editable.ts`'s `SaveResult` — a write that
+ * either succeeds or fails with a localized reason and nothing else — so
+ * it reuses that type rather than redeclaring it. This codebase just
+ * finished a task consolidating exactly this shape into one definition;
+ * a second one here would have quietly undone that. Kept as a local
+ * alias only because `FlagResult` reads better at this module's call
+ * sites than `SaveResult` does.
+ */
+export type FlagResult = SaveResult
 
 /**
  * Замечание адресует то, что заполняющий видит как один вопрос: поле,
@@ -43,15 +60,12 @@ export async function raiseFlag(
   },
 ): Promise<FlagResult> {
   if (!isFlaggableKey(input.fieldKey)) {
-    return { ok: false, error: { en: 'Unknown field', ru: 'Неизвестное поле' } }
+    return fail('Unknown field', 'Неизвестное поле')
   }
 
   const comment = input.comment.trim()
   if (comment === '') {
-    return {
-      ok: false,
-      error: { en: 'Say what is wrong', ru: 'Напишите, что не так' },
-    }
+    return fail('Say what is wrong', 'Напишите, что не так')
   }
 
   /**
@@ -236,7 +250,23 @@ export async function openFlags(db: Db | Tx, submissionId: string): Promise<Flag
   return rows.map((row) => ({
     id: row.id,
     fieldKey: row.fieldKey,
-    reason: row.reason as FlagReason | null,
+    reason: toFlagReason(row.reason),
     comment: row.comment,
   }))
+}
+
+/**
+ * `field_flags.reason` is a bare `text` column (see `db/schema.ts`) — the
+ * database has no enum to guarantee its contents match `FlagReason`, only
+ * `raiseFlag` writing exclusively through this module's own type does. A
+ * bare `as FlagReason | null` here would assert that without checking it,
+ * reintroducing the kind of unchecked cast this codebase's prep task
+ * removed the last of. Narrowing against the known reason codes and
+ * falling back to `null` for anything else means a row that somehow got a
+ * value outside the union (a manual DB edit, a future migration that
+ * doesn't update this list) is treated as "no reason given" rather than
+ * silently mistyped as one of the four codes it isn't.
+ */
+function toFlagReason(value: string | null): FlagReason | null {
+  return value !== null && isFlagReason(value) ? value : null
 }
