@@ -49,7 +49,38 @@ export function writeQueue(storage: StorageLike, submissionId: string, queue: Qu
   storage.setItem(storageKey(submissionId), JSON.stringify(queue))
 }
 
-const sameValue = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
+/**
+ * Structural equality, insensitive to object key order. `ServiceValueInput`
+ * and `SelectValue`/`TemplateValue` field values are plain (at most
+ * one-level-nested) JSON objects; two logically identical ones built by
+ * different code paths can easily end up with keys in a different order.
+ * A `JSON.stringify` comparison would treat those as different values and
+ * cause a pointless resend (or, worse inside `clearIfUnchanged`, a refusal
+ * to clear a key that was in fact confirmed saved).
+ */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true
+  if (typeof a !== typeof b || a === null || b === null) return false
+
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
+    return a.every((item, i) => sameValue(item, b[i]))
+  }
+
+  if (typeof a === 'object' && typeof b === 'object') {
+    const aKeys = Object.keys(a)
+    const bKeys = Object.keys(b)
+    if (aKeys.length !== bKeys.length) return false
+    const bRecord = b as Record<string, unknown>
+    return aKeys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(b, key) &&
+        sameValue((a as Record<string, unknown>)[key], bRecord[key]),
+    )
+  }
+
+  return false
+}
 
 /**
  * Removes exactly one key from the *live* queue, and only if it still holds
@@ -111,13 +142,25 @@ function clearIfUnchanged(
  * the UI stuck on "offline" for a value that was never a connectivity
  * problem. Its key and message are returned in `rejected` instead of being
  * silently dropped, so a caller can surface it to the operator.
+ *
+ * A rejection is only recorded if the live queue still holds the exact
+ * value that was sent — the same guard `clearIfUnchanged` uses for
+ * deletion. If the operator corrected this key while the rejected request
+ * was in flight, the rejection is stale news about a value that no longer
+ * exists anywhere (not in the queue, not on screen): recording it would
+ * mark the field invalid for an answer the operator already changed their
+ * mind about. `saved` reports every key that *did* go through this drain
+ * successfully, so a caller can drop any previously-recorded rejection for
+ * that key — a value the server just accepted is not rejected, regardless
+ * of how it got marked that way earlier.
  */
 export async function queueDrain(
   storage: StorageLike,
   submissionId: string,
   save: (key: string, value: unknown) => Promise<SaveOutcome>,
-): Promise<Record<string, string>> {
+): Promise<{ saved: string[]; rejected: Record<string, string> }> {
   const snapshot = readQueue(storage, submissionId)
+  const saved: string[] = []
   const rejected: Record<string, string> = {}
 
   for (const [key, value] of Object.entries(snapshot)) {
@@ -130,14 +173,57 @@ export async function queueDrain(
     }
 
     if (result.ok) {
-      clearIfUnchanged(storage, submissionId, key, value)
+      saved.push(key)
     } else {
-      rejected[key] = result.error ?? 'rejected'
-      clearIfUnchanged(storage, submissionId, key, value)
+      const current = readQueue(storage, submissionId)
+      const stillCurrent =
+        Object.prototype.hasOwnProperty.call(current, key) && sameValue(current[key], value)
+      if (stillCurrent) rejected[key] = result.error ?? 'rejected'
     }
+    clearIfUnchanged(storage, submissionId, key, value)
   }
 
-  return rejected
+  return { saved, rejected }
+}
+
+/**
+ * Pure merge step for the hook's `rejected` state, applied after every
+ * drain. Kept outside the hook, and exported, so this state transition is
+ * testable without rendering the hook (this suite has no DOM environment).
+ *
+ * Any key this drain saved successfully is dropped from the previous
+ * rejection set first — a value the server just accepted cannot still be
+ * "rejected", no matter when or why it was marked that way. This drain's
+ * own new rejections (already guarded by `queueDrain` against staleness)
+ * are then merged in.
+ */
+export function mergeRejected(
+  prev: Record<string, string>,
+  drain: { saved: string[]; rejected: Record<string, string> },
+): Record<string, string> {
+  if (drain.saved.length === 0 && Object.keys(drain.rejected).length === 0) return prev
+  const next = { ...prev }
+  for (const key of drain.saved) delete next[key]
+  Object.assign(next, drain.rejected)
+  return next
+}
+
+/**
+ * Whether a just-mounted hook instance should immediately attempt to drain
+ * whatever is already queued for this submission — the case of an operator
+ * reopening a fill link after their tab died mid-form. Exported and pure
+ * for the same reason as `mergeRejected`: no DOM environment is configured
+ * for this suite, so the mount effect itself stays a one-line call into
+ * this predicate rather than logic that needs a rendered hook to exercise.
+ *
+ * `queuedCount === 0` short-circuits so a fresh/empty draft never fires a
+ * pointless round trip on every mount. `isOnline === false` also defers:
+ * there is no point attempting a send the browser already knows will fail,
+ * and the existing `online` event listener will trigger the drain once
+ * connectivity actually returns.
+ */
+export function shouldDrainOnMount(queuedCount: number, isOnline: boolean): boolean {
+  return queuedCount > 0 && isOnline
 }
 
 /**
@@ -193,12 +279,10 @@ export function useAutosave<T>(input: {
       try {
         do {
           rerunRef.current = false
-          const newlyRejected = await queueDrain(getStorage(), input.submissionId, (key, value) =>
+          const result = await queueDrain(getStorage(), input.submissionId, (key, value) =>
             saveRef.current(key, value as T),
           )
-          if (Object.keys(newlyRejected).length > 0) {
-            setRejected((prev) => ({ ...prev, ...newlyRejected }))
-          }
+          setRejected((prev) => mergeRejected(prev, result))
         } while (rerunRef.current)
       } finally {
         drainingRef.current = false
@@ -240,8 +324,19 @@ export function useAutosave<T>(input: {
   }, [drain])
 
   useEffect(() => {
-    setPendingCount(Object.keys(readQueue(getStorage(), input.submissionId)).length)
-  }, [input.submissionId])
+    // Reopening a fill link after the tab died mid-form is exactly the
+    // scenario this queue exists for: whatever survived in local storage
+    // needs to actually go out, not sit there until the operator happens
+    // to touch another field or the `online` event fires. `drain()` already
+    // serializes against a concurrent first `push` (see its own guard
+    // above), so calling it directly here cannot race one.
+    const queued = readQueue(getStorage(), input.submissionId)
+    const queuedCount = Object.keys(queued).length
+    setPendingCount(queuedCount)
+
+    const isOnline = typeof navigator === 'undefined' ? true : navigator.onLine
+    if (shouldDrainOnMount(queuedCount, isOnline)) drain()
+  }, [input.submissionId, drain])
 
   useEffect(() => {
     return () => {

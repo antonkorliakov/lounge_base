@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { queueDrain, readQueue, writeQueue } from '../useAutosave'
+import {
+  queueDrain,
+  readQueue,
+  writeQueue,
+  mergeRejected,
+  shouldDrainOnMount,
+} from '../useAutosave'
 
 class MemoryStorage {
   private data = new Map<string, string>()
@@ -109,7 +115,7 @@ describe('очередь автосохранения', () => {
     writeQueue(storage, 'sub-1', { 'I.2': 'invalid' })
     const save = vi.fn().mockResolvedValue({ ok: false, error: 'плохое значение' })
 
-    const rejected = await queueDrain(storage, 'sub-1', save)
+    const { rejected } = await queueDrain(storage, 'sub-1', save)
 
     expect(readQueue(storage, 'sub-1')).toEqual({})
     expect(rejected).toEqual({ 'I.2': 'плохое значение' })
@@ -122,9 +128,97 @@ describe('очередь автосохранения', () => {
       return { ok: false, error: 'invalid' }
     })
 
-    const rejected = await queueDrain(storage, 'sub-1', save)
+    const { rejected } = await queueDrain(storage, 'sub-1', save)
 
     expect(readQueue(storage, 'sub-1')).toEqual({ net: 'x' })
     expect(rejected).toEqual({ bad: 'invalid' })
+  })
+
+  it('успешно сохранённый ключ попадает в saved', async () => {
+    writeQueue(storage, 'sub-1', { 'I.2': 'ok-value' })
+    const save = vi.fn().mockResolvedValue({ ok: true })
+
+    const { saved } = await queueDrain(storage, 'sub-1', save)
+
+    expect(saved).toEqual(['I.2'])
+  })
+
+  // --- Fix round 1: устаревший отказ не должен отмечаться как rejected, и
+  // успешное сохранение должно снимать ранее записанный отказ. ---
+
+  it('устаревший отказ (значение изменилось за время отправки) не попадает в rejected', async () => {
+    writeQueue(storage, 'sub-1', { 'I.2': 'invalid' })
+    const save = vi.fn(async () => {
+      // Оператор успевает исправить значение, пока запрос с invalid летит
+      // по сети и получает отказ.
+      writeQueue(storage, 'sub-1', { 'I.2': 'fixed' })
+      return { ok: false, error: 'плохое значение' }
+    })
+
+    const { rejected } = await queueDrain(storage, 'sub-1', save)
+
+    // Отказ относится к значению, которого больше нигде нет — ни в очереди,
+    // ни (по построению сценария) на экране. Отмечать по нему поле как
+    // невалидное — ложный сигнал.
+    expect(rejected).toEqual({})
+    // Исправленное значение остаётся в очереди для следующей досылки —
+    // отказ по старому значению не должен его стирать.
+    expect(readQueue(storage, 'sub-1')).toEqual({ 'I.2': 'fixed' })
+  })
+
+  it('mergeRejected: успешное сохранение снимает ранее записанный отказ по этому ключу', () => {
+    const next = mergeRejected(
+      { 'I.2': 'старая ошибка', 'I.3': 'другая ошибка' },
+      { saved: ['I.2'], rejected: {} },
+    )
+
+    expect(next).toEqual({ 'I.3': 'другая ошибка' })
+  })
+
+  it('mergeRejected: новые отказы добавляются, а не заменяют весь набор', () => {
+    const next = mergeRejected(
+      { 'I.2': 'старая ошибка' },
+      { saved: [], rejected: { 'I.5': 'новая ошибка' } },
+    )
+
+    expect(next).toEqual({ 'I.2': 'старая ошибка', 'I.5': 'новая ошибка' })
+  })
+
+  it('mergeRejected: пустой результат драйна не создаёт новый объект без нужды', () => {
+    const prev = { 'I.2': 'старая ошибка' }
+    const next = mergeRejected(prev, { saved: [], rejected: {} })
+
+    expect(next).toBe(prev)
+  })
+
+  // --- Fix round 1: недосланное при монтировании должно уходить сразу, а не
+  // ждать первого push или события online. ---
+
+  it('shouldDrainOnMount: непустая очередь и онлайн — досылать', () => {
+    expect(shouldDrainOnMount(2, true)).toBe(true)
+  })
+
+  it('shouldDrainOnMount: пустая очередь — не запускать бесполезный запрос', () => {
+    expect(shouldDrainOnMount(0, true)).toBe(false)
+  })
+
+  it('shouldDrainOnMount: оффлайн — ждать событие online, а не пытаться самим', () => {
+    expect(shouldDrainOnMount(3, false)).toBe(false)
+  })
+
+  // --- Minor: сравнение значений не должно зависеть от порядка ключей. ---
+
+  it('два объекта с одинаковыми полями в разном порядке ключей считаются одинаковыми', async () => {
+    writeQueue(storage, 'sub-1', { 'X.1': { available: 'yes', price: 10 } })
+    const save = vi.fn(async () => {
+      // То же самое значение, но собранное с другим порядком ключей —
+      // должно всё равно распознаваться как неизменившееся.
+      writeQueue(storage, 'sub-1', { 'X.1': { price: 10, available: 'yes' } })
+      return { ok: true }
+    })
+
+    await queueDrain(storage, 'sub-1', save)
+
+    expect(readQueue(storage, 'sub-1')).toEqual({})
   })
 })
