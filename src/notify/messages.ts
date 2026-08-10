@@ -69,14 +69,26 @@ export function approvedMail(input: {
 
 /**
  * Language: Russian, unlike the two operator mails above — and for the
- * mirror-image reason. This mail never goes to an operator of unknown
- * language; it goes to a member of `teamMembers`, and the brief for this
- * task states as fact that this team is Russian-speaking. That's a known
- * audience, not a guess, so there's nothing to hedge against by defaulting
- * to English here. If the team ever stops being uniformly Russian-speaking
- * (e.g. a non-Russian-speaking reviewer joins), this is the function to
- * revisit — at that point `teamMembers` would need its own recorded
- * language preference, the same gap noted above for operators.
+ * mirror-image reason, PROVISIONALLY. This mail never goes to an operator
+ * of unknown language; it goes to a member of `teamMembers`. The claim this
+ * rests on — that team is Russian-speaking — was given to me as an
+ * instruction from the task's coordinator, not as a fact recorded in the
+ * brief or anywhere else in the design: neither the design spec nor plan 2
+ * documents the team's language anywhere, and there is no `locale`/
+ * `language` column on `teamMembers`. The coordinator has said the claim
+ * was their own inference (from the project's working language being
+ * Russian) rather than a documented fact, and is checking it with the
+ * human partner in parallel with this fix. Treat the Russian text here as
+ * provisional pending that answer, not as settled the way the two mails
+ * above are.
+ *
+ * The underlying reasoning, if the claim holds: an operator's language is
+ * genuinely unrecorded (see above), but this mail's audience would then be
+ * actually known rather than guessed, so there would be nothing to hedge
+ * against by defaulting to English here. If the team turns out not to be
+ * uniformly Russian-speaking, or the answer changes, `teamMembers` would
+ * need its own recorded language preference before this can be answered
+ * per-recipient — the same gap noted above for operators.
  */
 export function loginMail(input: { to: string; loginUrl: string }): OutgoingMail {
   return {

@@ -4,7 +4,11 @@ import type { Localized } from '@/form-schema'
 import type { Db } from '@/db/types'
 import { teamMembers, loginTokens, sessions } from '@/db/schema'
 
-const LOGIN_TTL_MINUTES = 20
+// Exported so anything that describes this TTL to a human — currently
+// `loginMail` in `src/notify/messages.ts`, pinned by a test there — reads
+// the real number instead of repeating an invented one that can drift out
+// of sync with it.
+export const LOGIN_TTL_MINUTES = 20
 
 // Короткий: сессия открывает данные ВСЕХ лаунджей и любое действие
 // проверяющего, а не что-то одно скоуп-ограниченное. 30 дней без права
