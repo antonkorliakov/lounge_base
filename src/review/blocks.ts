@@ -104,24 +104,26 @@ export const REVIEW_STATUSES: ReadonlySet<SubmissionStatus> = new Set(['submitte
  * SELECT ... WHERE NOT EXISTS (open flag in this block)`, targeting the
  * same `block_reviews_unique` constraint via `ON CONFLICT DO UPDATE` for
  * idempotent re-confirmation. Under READ COMMITTED this closes the gap that
- * actually matters in practice — any flag already committed by the time
- * this statement runs, no matter how recently, is guaranteed to be seen,
- * because there is no second round trip for it to land in. What it cannot
- * close is the same-instant case where `raiseFlag`'s INSERT is *still
- * in-flight, uncommitted*, when this statement's snapshot is taken: MVCC
- * correctly does not show uncommitted rows from another transaction, so
- * this statement can still see zero flags and confirm, and `raiseFlag`'s
- * flag can still commit a moment later. Closing that residual instant would
- * require `raiseFlag` to also participate in a lock (e.g. the same
- * `submissions` `FOR UPDATE`) — changing an already-reviewed sibling
- * module's transaction shape for a window this narrow was judged not worth
- * it, for a concrete reason: `blockProgress` (below) always recomputes
- * `openFlagCount` live from `field_flags` rather than caching a "confirmed
- * clean" bit, so a block that lands in this state shows up honestly as
- * *both* confirmed and flagged — nothing hides it — and Task 4's approval
- * gate is documented (see the plan) to require zero open flags globally,
- * independent of any block's confirmed state, so this residual instant can
- * never let a flagged submission reach `approved`.
+ * matters in practice — any flag already committed by the time this
+ * statement runs, no matter how recently, is guaranteed to be seen, because
+ * there is no second round trip for it to land in.
+ *
+ * That alone would still leave the same-instant case open: `raiseFlag`'s
+ * INSERT *still in-flight, uncommitted*, when this statement's own MVCC
+ * snapshot is taken — READ COMMITTED correctly hides uncommitted rows from
+ * other transactions, so this statement could still see zero flags and
+ * confirm, and `raiseFlag`'s flag could still commit a moment later. This
+ * is closed too, in `flags.ts`: `raiseFlag` now takes the same `submissions`
+ * `FOR UPDATE` lock as this function, before its upsert on `field_flags`.
+ * Neither function needs anything *from* that row — the lock exists purely
+ * so the two contend on something. Once both lock the same row first,
+ * Postgres genuinely serializes them: whichever acquires the lock runs to
+ * completion (commit or rollback) before the other's acquisition proceeds,
+ * so this function's `NOT EXISTS` subquery is guaranteed to run either
+ * strictly before a concurrent `raiseFlag`'s INSERT is visible or strictly
+ * after it has committed — never straddling it. There is no longer a window,
+ * of any width, in which a block can end up confirmed while carrying a flag
+ * that was ever actually committed to `field_flags`.
  */
 export async function confirmBlock(
   db: Db,

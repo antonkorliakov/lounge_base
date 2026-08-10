@@ -1,4 +1,6 @@
 import { eq } from 'drizzle-orm'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { createTestDb } from '@/db/__tests__/harness'
 import type { Db } from '@/db/types'
@@ -290,5 +292,84 @@ describe('clearFlagsFor', () => {
 
     expect(result).toBe(true)
     expect(await confirmedBlocks(db, submissionId)).not.toContain(group.block)
+  })
+})
+
+/**
+ * `raiseFlag` locks the `submissions` row (`FOR UPDATE`) before its upsert on
+ * `field_flags`, so it serializes against `confirmBlock`'s own lock+check
+ * (`src/review/blocks.ts`) — see `raiseFlag`'s own doc comment for the full
+ * reasoning. What this test does and does not prove:
+ *
+ * It does NOT prove the race is impossible by actually racing the two
+ * functions against each other. PGlite — the driver `createTestDb` uses —
+ * is explicitly single user/connection (its own README, "PGlite is single
+ * user/connection"): there is exactly one session, so two `db.transaction`
+ * calls issued "concurrently" from JS (e.g. via `Promise.all`) cannot
+ * genuinely overlap in the first place — the underlying engine has no second
+ * session for the other call to interleave with, so both run fully
+ * sequentially regardless of whether the lock exists. A test built on
+ * `Promise.all([raiseFlag(...), confirmBlock(...)])` here would pass
+ * identically with or without the fix — it would prove nothing, while
+ * looking like it proves the race is closed. That is worse than no test, so
+ * it is not what this is.
+ *
+ * What it DOES prove: `raiseFlag`'s actual source, not a paraphrase of it,
+ * both wraps its work in a transaction and issues `.for('update')` strictly
+ * before `.insert(fieldFlags)` — the exact ordering (`submissions` lock,
+ * then the child-table write) that would make two REAL, independently
+ * connected Postgres sessions serialize correctly. It pins the mechanism,
+ * not the outcome under concurrency — the same honest scope this codebase
+ * already accepts for `unsafeDbUsagesIn`/`forbiddenImportsIn` (see their own
+ * doc comments): a textual guard against reverting the fix, not a substitute
+ * for a live concurrency test that this harness cannot run.
+ */
+describe('raiseFlag: механизм блокировки', () => {
+  function raiseFlagSource(): string {
+    const file = readFileSync(join(process.cwd(), 'src/review/flags.ts'), 'utf8')
+    const start = file.indexOf('export async function raiseFlag(')
+    if (start === -1) throw new Error('raiseFlag не найден в src/review/flags.ts')
+
+    // The opening brace of the function *body*, not of the `input: { ... }`
+    // parameter type a naive `indexOf('{', start)` would land on instead —
+    // found via the return-type annotation that always immediately precedes
+    // the body in this codebase's style (`): Promise<X> {`).
+    const signatureEnd = file.indexOf('): Promise<FlagResult> {', start)
+    if (signatureEnd === -1) throw new Error('не найдена сигнатура возврата raiseFlag')
+    const braceStart = signatureEnd + '): Promise<FlagResult> {'.length - 1
+    let depth = 0
+    for (let i = braceStart; i < file.length; i++) {
+      if (file[i] === '{') depth++
+      else if (file[i] === '}') {
+        depth -= 1
+        if (depth === 0) return file.slice(braceStart, i + 1)
+      }
+    }
+    throw new Error('не удалось найти конец тела raiseFlag')
+  }
+
+  it('оборачивает работу в транзакцию', () => {
+    expect(raiseFlagSource()).toContain('.transaction(')
+  })
+
+  it('берёт FOR UPDATE на submissions до записи в field_flags', () => {
+    const body = raiseFlagSource()
+    const lockIndex = body.indexOf(".for('update')")
+    const insertIndex = body.indexOf('.insert(fieldFlags)')
+
+    expect(lockIndex, 'ожидается вызов .for(\'update\')').toBeGreaterThan(-1)
+    expect(insertIndex, 'ожидается .insert(fieldFlags)').toBeGreaterThan(-1)
+    expect(lockIndex).toBeLessThan(insertIndex)
+  })
+
+  it('замечание всё ещё поднимается и снимается сквозным вызовом (снятие через транзакцию не сломано)', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedSubmitted(db)
+
+    const result = await raiseFlag(db, flag(submissionId, 'III.2.4'))
+    expect(result.ok).toBe(true)
+
+    const open = await openFlags(db, submissionId)
+    expect(open.map((f) => f.fieldKey)).toContain('III.2.4')
   })
 })

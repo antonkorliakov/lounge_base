@@ -1,7 +1,7 @@
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, blockKeyOf } from '@/form-schema'
 import type { Db, Tx } from '@/db/types'
-import { fieldFlags, blockReviews } from '@/db/schema'
+import { fieldFlags, blockReviews, submissions } from '@/db/schema'
 import { fail, type SaveResult } from '@/submissions/editable'
 
 /**
@@ -113,27 +113,65 @@ export async function raiseFlag(
    * fresh row — nothing about the previous open flag is "history" yet
    * (history is what `resolvedAt` marks), so there is nothing to preserve.
    */
-  await db
-    .insert(fieldFlags)
-    .values({
-      submissionId: input.submissionId,
-      fieldKey: input.fieldKey,
-      reason: input.reason,
-      comment,
-      createdBy: input.reviewer,
-    })
-    .onConflictDoUpdate({
-      target: [fieldFlags.submissionId, fieldFlags.fieldKey],
-      targetWhere: sql`${fieldFlags.resolvedAt} is null`,
-      set: {
+  return db.transaction(async (tx) => {
+    /**
+     * `FOR UPDATE` on the `submissions` row, taken before the upsert below,
+     * not because this function reads or needs anything from `submissions`
+     * itself (it doesn't check status — see the module-boundary reasoning
+     * this file already carries elsewhere), but because `confirmBlock`
+     * (`src/review/blocks.ts`, Task 3) takes the exact same lock before
+     * evaluating `WHERE NOT EXISTS (open flag in this block)`. Without this
+     * lock, `raiseFlag`'s upsert and `confirmBlock`'s check-and-insert
+     * contend on nothing at all — different tables, no shared row — so
+     * under READ COMMITTED a flag committed by this function during
+     * `confirmBlock`'s statement is invisible to it, and a block can end up
+     * confirmed while carrying the very flag this upsert just opened. Once
+     * both functions lock the same `submissions` row first, Postgres
+     * genuinely serializes them: whichever gets the lock first runs to
+     * completion (commit or rollback) before the other's lock acquisition
+     * proceeds, so `confirmBlock`'s `NOT EXISTS` subquery is guaranteed to
+     * run either strictly before this INSERT is visible or strictly after —
+     * never straddling it. This is the same lock, same reasoning,
+     * `assertEditable` (`src/submissions/editable.ts`) already uses for the
+     * filler's side and `clearFlagsFor` below uses for its own
+     * field-flags/block-reviews atomicity — lock `submissions` first, then
+     * the child table, the ordering every transaction in this codebase
+     * follows, so this introduces no new deadlock risk.
+     *
+     * Not gated on the locked row's status: that would change this
+     * function's behaviour (Task 2 deliberately left `raiseFlag` ungated —
+     * see the module's own history), which is not what this fix is for.
+     * The `.select(...).for('update')` below reads nothing from the
+     * returned row; it exists purely to take the lock.
+     */
+    await tx
+      .select({ id: submissions.id })
+      .from(submissions)
+      .where(eq(submissions.id, input.submissionId))
+      .for('update')
+
+    await tx
+      .insert(fieldFlags)
+      .values({
+        submissionId: input.submissionId,
+        fieldKey: input.fieldKey,
         reason: input.reason,
         comment,
         createdBy: input.reviewer,
-        createdAt: new Date(),
-      },
-    })
+      })
+      .onConflictDoUpdate({
+        target: [fieldFlags.submissionId, fieldFlags.fieldKey],
+        targetWhere: sql`${fieldFlags.resolvedAt} is null`,
+        set: {
+          reason: input.reason,
+          comment,
+          createdBy: input.reviewer,
+          createdAt: new Date(),
+        },
+      })
 
-  return { ok: true }
+    return { ok: true }
+  })
 }
 
 /**
