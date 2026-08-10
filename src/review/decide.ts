@@ -40,6 +40,20 @@ function optionOf(value: unknown): string | null {
 }
 
 /**
+ * Same rigor as `optionOf` above: checks every element is actually a string
+ * before returning the array, rather than asserting the shape with a bare
+ * cast. `validateMultiSelect` (`form-schema/validation.ts`) already
+ * guarantees this at write time — `saveFieldValue` never persists a
+ * `III.6.6` value with a non-string element — so this can't fail against
+ * real data, but this function has no way to see that guarantee from here,
+ * and the file's other extractor doesn't take shapes on faith either.
+ */
+function stringArrayOf(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null
+  return value.every((item): item is string => typeof item === 'string') ? value : null
+}
+
+/**
  * Характеристики, по которым фильтруются реестр и выгрузка (план 3). Копируются
  * в `lounges` только при принятии — реестр показывает подтверждённые данные,
  * а не то, что кто-то печатает в черновике (см. `db/schema.ts`'s комментарий
@@ -53,11 +67,10 @@ function optionOf(value: unknown): string | null {
 export function classifyingFieldsFrom(
   values: Record<string, unknown>,
 ): ClassifyingFields {
-  const zone = values['III.6.6']
   return {
     terminal: optionOf(values['III.6.2']),
     terminalType: optionOf(values['III.6.1']),
-    zone: Array.isArray(zone) && zone.length > 0 ? (zone as string[]) : null,
+    zone: stringArrayOf(values['III.6.6']),
     airsideLandside: optionOf(values['III.6.4']),
   }
 }

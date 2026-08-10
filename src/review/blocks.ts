@@ -176,21 +176,50 @@ export async function confirmBlock(
 /**
  * Retracts a confirmation. No flag check (a reviewer taking back a
  * confirmation is never blocked by the state it is about to leave) and no
- * status gate (see `REVIEW_STATUSES`'s doc comment above) — a plain,
- * idempotent delete matching the brief's locked `Promise<void>` signature.
+ * status gate (see `REVIEW_STATUSES`'s doc comment above) — an idempotent
+ * delete matching the brief's locked `Promise<void>` signature.
+ *
+ * Still locks the `submissions` row (`FOR UPDATE`) first, even though it
+ * reads nothing from that row and applies no status gate. Without this
+ * lock, this function's `DELETE` on `block_reviews` contends with nothing
+ * `approveSubmission` also locks, so it is free to commit in the exact
+ * window between `approveSubmission`'s own `blockProgress` read and its
+ * commit — landing an approval against a block that, at the moment
+ * `submissions.status` actually flips to `approved`, is no longer
+ * confirmed. That is precisely the "confirmed at the moment of the write,
+ * not merely when the page loaded" guarantee `approveSubmission` exists to
+ * provide. Taking the same `submissions` lock this module's own
+ * `confirmBlock` and `flags.ts`'s `raiseFlag` already take — before
+ * touching `block_reviews`, and for the same reason: to give this delete
+ * something to genuinely serialize against — closes that window: once
+ * `approveSubmission` holds the lock, this delete queues behind it and can
+ * only apply to a submission `approveSubmission` has already finished
+ * deciding on (or already committed as `approved`, in which case the
+ * unconfirm still succeeds — retracting a confirmation on a decided
+ * submission is harmless bookkeeping, not something that needs blocking).
+ * No deadlock: this is the same single lock, same "submissions first"
+ * ordering, every other writer in this module and `flags.ts` already uses.
  */
 export async function unconfirmBlock(
   db: Db,
   input: { submissionId: string; blockKey: string },
 ): Promise<void> {
-  await db
-    .delete(blockReviews)
-    .where(
-      and(
-        eq(blockReviews.submissionId, input.submissionId),
-        eq(blockReviews.blockKey, input.blockKey),
-      ),
-    )
+  await db.transaction(async (tx) => {
+    await tx
+      .select({ id: submissions.id })
+      .from(submissions)
+      .where(eq(submissions.id, input.submissionId))
+      .for('update')
+
+    await tx
+      .delete(blockReviews)
+      .where(
+        and(
+          eq(blockReviews.submissionId, input.submissionId),
+          eq(blockReviews.blockKey, input.blockKey),
+        ),
+      )
+  })
 }
 
 /**

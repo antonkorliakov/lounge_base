@@ -146,6 +146,7 @@ describe('принятие анкеты', () => {
 
     const [lounge] = await db.select().from(lounges).where(eq(lounges.id, loungeId))
     expect(lounge?.terminal).toBe('t3')
+    expect(lounge?.terminalType).toBe('both')
     expect(lounge?.zone).toEqual(['departure', 'transit'])
     expect(lounge?.airsideLandside).toBe('airside')
   })
@@ -167,12 +168,22 @@ describe('принятие анкеты', () => {
 
   it('оба решения пишутся в журнал', async () => {
     const db = await createTestDb()
-    const { submissionId } = await seedSubmitted(db)
-    await confirmAll(db, submissionId)
-    await approveSubmission(db, { submissionId, reviewer: 'r1' })
 
-    const rows = await db.select().from(events).where(eq(events.submissionId, submissionId))
-    expect(rows.map((r) => r.action)).toContain('approved')
+    const approved = await seedSubmitted(db)
+    await confirmAll(db, approved.submissionId)
+    await approveSubmission(db, { submissionId: approved.submissionId, reviewer: 'r1' })
+    const approvedRows = await db
+      .select().from(events).where(eq(events.submissionId, approved.submissionId))
+    expect(approvedRows.map((r) => r.action)).toContain('approved')
+
+    const returned = await seedSubmitted(db)
+    await raiseFlag(db, {
+      submissionId: returned.submissionId, fieldKey: 'III.2.4', reason: null, comment: 'уточните', reviewer: 'r1',
+    })
+    await requestChanges(db, { submissionId: returned.submissionId, reviewer: 'r1' })
+    const returnedRows = await db
+      .select().from(events).where(eq(events.submissionId, returned.submissionId))
+    expect(returnedRows.map((r) => r.action)).toContain('changes_requested')
   })
 
   it('принятую анкету нельзя принять повторно', async () => {
