@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { FIELDS, type ServiceValueInput } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 import { saveFieldAction, saveServiceAction, submitAction } from '@/app/f/[token]/actions'
@@ -45,6 +45,35 @@ export function FillForm(props: {
     autosave.status === 'offline' ? t('form.savingOffline')
     : autosave.status === 'saved' ? t('form.saved')
     : ''
+
+  // Whatever `useAutosave` found still queued in local storage when it
+  // mounted (the tab died, or the page reloaded, before the 600ms debounce
+  // sent it) belongs back on screen, not only back on the wire — see
+  // `recovered`'s own doc comment in useAutosave.ts. Runs once, right after
+  // mount, when `autosave.recovered` first becomes non-empty; a later edit
+  // never touches it again (`recovered` itself is never repopulated after
+  // mount), so this can never clobber a newer answer with a stale one.
+  useEffect(() => {
+    const entries = Object.entries(autosave.recovered)
+    if (entries.length === 0) return
+
+    const recoveredFields: Record<string, unknown> = {}
+    const recoveredServices: Record<string, ServiceValueInput> = {}
+    for (const [key, value] of entries) {
+      if (key.startsWith('svc:')) {
+        recoveredServices[key.slice(4)] = value as ServiceValueInput
+      } else {
+        recoveredFields[key] = value
+      }
+    }
+
+    if (Object.keys(recoveredFields).length > 0) {
+      setFields((prev) => ({ ...prev, ...recoveredFields }))
+    }
+    if (Object.keys(recoveredServices).length > 0) {
+      setServices((prev) => ({ ...prev, ...recoveredServices }))
+    }
+  }, [autosave.recovered])
 
   function changeField(key: string, value: unknown): void {
     setFields((prev) => ({ ...prev, [key]: value }))

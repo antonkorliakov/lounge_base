@@ -250,11 +250,33 @@ export function useAutosave<T>(input: {
   push: (key: string, value: T) => void
   pendingCount: number
   rejected: Record<string, string>
+  /**
+   * Whatever was still queued in local storage when this hook mounted —
+   * exposed so the caller can restore it into its own visible form state,
+   * not just resend it over the network. Populated once, at mount, from
+   * whatever `readQueue` finds; never touched again afterwards (a later
+   * `push` already lands directly in the caller's own state via its normal
+   * `onChange` path, so re-populating this on every queue change would only
+   * risk clobbering a newer edit with a stale one).
+   *
+   * Before this existed, the mount effect below only ever *resent* a
+   * surviving queue to the server — it never told the caller what was in
+   * it. That silently fixed the backend (the value did reach the database)
+   * while leaving the on-screen field blank: an operator who typed an
+   * answer and reloaded before the 600ms debounce fired would watch their
+   * own answer vanish from the form, with no error and no visible trace,
+   * recoverable only by reloading a *second* time. That gap had no unit
+   * test (this suite has no DOM — see the file-level comments below) and
+   * was only ever going to surface in a real browser; see `e2e/fill.spec.ts`
+   * ("перезагрузка сохраняет значение...").
+   */
+  recovered: Record<string, T>
 } {
   const debounceMs = input.debounceMs ?? 600
   const [status, setStatus] = useState<SaveStatus>('idle')
   const [pendingCount, setPendingCount] = useState(0)
   const [rejected, setRejected] = useState<Record<string, string>>({})
+  const [recovered, setRecovered] = useState<Record<string, T>>({})
 
   const saveRef = useRef(input.save)
   saveRef.current = input.save
@@ -333,6 +355,10 @@ export function useAutosave<T>(input: {
     const queued = readQueue(getStorage(), input.submissionId)
     const queuedCount = Object.keys(queued).length
     setPendingCount(queuedCount)
+    // Exposed regardless of `shouldDrainOnMount`: even offline, this is the
+    // operator's actual last input and belongs on screen, not just in the
+    // retry queue — see this state's own doc comment above.
+    if (queuedCount > 0) setRecovered(queued as Record<string, T>)
 
     const isOnline = typeof navigator === 'undefined' ? true : navigator.onLine
     if (shouldDrainOnMount(queuedCount, isOnline)) drain()
@@ -344,5 +370,5 @@ export function useAutosave<T>(input: {
     }
   }, [])
 
-  return { status, push, pendingCount, rejected }
+  return { status, push, pendingCount, rejected, recovered }
 }
