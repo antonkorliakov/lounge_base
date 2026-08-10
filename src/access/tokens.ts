@@ -9,6 +9,14 @@ const hash = (token: string): string =>
 const daysFromNow = (days: number): Date =>
   new Date(Date.now() + days * 24 * 60 * 60 * 1000)
 
+/**
+ * Issuing a fresh token is the only sanctioned way to restore access to a
+ * submission. There is no `extendFillToken` — only the SHA-256 hash of a
+ * token is ever stored, so a specific token (leaked or otherwise) can never
+ * be selectively identified after the fact and revived or revoked. An
+ * expired token is dead by design, permanently. On return-for-fixes (or any
+ * time a link needs to work again), call this again and send the new token.
+ */
 export async function issueFillToken(
   db: Db,
   input: { submissionId: string; ttlDays: number },
@@ -37,15 +45,4 @@ export async function resolveFillToken(
 
   const row = rows[0]
   return row ? { submissionId: row.submissionId } : null
-}
-
-export async function extendFillToken(
-  db: Db,
-  submissionId: string,
-  ttlDays: number,
-): Promise<void> {
-  await db
-    .update(fillTokens)
-    .set({ expiresAt: daysFromNow(ttlDays) })
-    .where(eq(fillTokens.submissionId, submissionId))
 }
