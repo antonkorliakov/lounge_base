@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, MIN_PHOTOS } from '@/form-schema'
 import { photos } from '@/db/schema'
-import type { Db } from '@/db/types'
+import type { Db, Tx } from '@/db/types'
 import { loadSubmissionValues } from './values'
 
 export type MissingItems = {
@@ -18,7 +18,7 @@ function isBlank(value: unknown): boolean {
 }
 
 export async function missingItems(
-  db: Db,
+  db: Db | Tx,
   submissionId: string,
 ): Promise<MissingItems> {
   const values = await loadSubmissionValues(db, submissionId)

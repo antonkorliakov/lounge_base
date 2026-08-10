@@ -7,3 +7,11 @@ import type * as schema from './schema'
  * поэтому те принимают `Db` и не знают, против чего работают.
  */
 export type Db = ReturnType<typeof drizzle<typeof schema>>
+
+/**
+ * То, что видит колбэк `db.transaction(async (tx) => ...)` — тот же набор
+ * методов построителя запросов, что и у `Db`, извлечённый прямо из сигнатуры
+ * `transaction`. Общий для всех модулей `src/submissions`, чтобы не заводить
+ * по копии на каждый файл.
+ */
+export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]

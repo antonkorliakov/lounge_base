@@ -125,4 +125,28 @@ describe('отправка анкеты', () => {
     const again = await submitSubmission(db, { submissionId, actor: 'filler' })
     expect(again.ok).toBe(false)
   })
+
+  it('отправка из changes_requested принимается, а из approved отклоняется', async () => {
+    const db = await createTestDb()
+
+    const changesRequestedId = await seedComplete(db)
+    await db
+      .update(submissions)
+      .set({ status: 'changes_requested' })
+      .where(eq(submissions.id, changesRequestedId))
+    const fromChangesRequested = await submitSubmission(db, {
+      submissionId: changesRequestedId, actor: 'filler',
+    })
+    expect(fromChangesRequested).toEqual({ ok: true, status: 'submitted' })
+
+    const approvedId = await seedComplete(db)
+    await db
+      .update(submissions)
+      .set({ status: 'approved' })
+      .where(eq(submissions.id, approvedId))
+    const fromApproved = await submitSubmission(db, {
+      submissionId: approvedId, actor: 'filler',
+    })
+    expect(fromApproved.ok).toBe(false)
+  })
 })

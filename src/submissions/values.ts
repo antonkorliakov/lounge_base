@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import type { Localized, ServiceValueInput } from '@/form-schema'
 import { fieldByKey, serviceItemByKey, validateField, validateServiceValue } from '@/form-schema'
 import { fieldValues, serviceValues, submissions } from '@/db/schema'
-import type { Db } from '@/db/types'
+import type { Db, Tx } from '@/db/types'
 
 export type SaveResult = { ok: true } | { ok: false; error: Localized }
 
@@ -10,13 +10,6 @@ const fail = (en: string, ru: string): SaveResult => ({ ok: false, error: { en, 
 
 /** Правки принимаются только в состояниях, где форма открыта заполняющему. */
 const EDITABLE = new Set(['draft', 'changes_requested'])
-
-/**
- * То, что видит колбэк `db.transaction(async (tx) => ...)` — тот же набор
- * методов построителя запросов, что и у `Db`, извлечённый прямо из сигнатуры
- * `transaction`, чтобы не заводить отдельный экспортируемый тип.
- */
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 
 async function assertEditable(tx: Tx, submissionId: string): Promise<SaveResult> {
   // FOR UPDATE: the status check and the write land in different tables
@@ -107,7 +100,7 @@ export async function saveServiceValue(
 }
 
 export async function loadSubmissionValues(
-  db: Db,
+  db: Db | Tx,
   submissionId: string,
 ): Promise<{
   fields: Record<string, unknown>
