@@ -27,8 +27,15 @@ export function ServicesPass1(props: {
             const options = OPTION_LISTS[item.availabilityList]
             const isBinary = item.availabilityList === 'yesNo'
 
+            // The whole row is a <label>, not just the <input>: on a phone,
+            // standing in a lounge thumbing through 58 items, the tappable
+            // area needs to be the entire row (finger-sized, per the mobile
+            // constraint), not the visual checkbox alone. A <label> wrapping
+            // both the item text and its control forwards a tap anywhere in
+            // the row to that control natively — toggling the checkbox, or
+            // opening the <select> — no extra JS needed.
             return (
-              <div key={item.key} className="pass1-row">
+              <label key={item.key} className="pass1-row">
                 <span>{pick(item.label)}</span>
                 {isBinary ? (
                   <input
@@ -59,7 +66,7 @@ export function ServicesPass1(props: {
                     ))}
                   </select>
                 )}
-              </div>
+              </label>
             )
           })}
         </div>

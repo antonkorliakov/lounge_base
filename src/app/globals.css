@@ -27,7 +27,10 @@ body {
 .field-required { margin-left: 6px; font-size: 12px; opacity: .6; font-weight: 400; }
 .field-hint,
 .field-example { font-size: 13px; opacity: .7; margin: 4px 0 0; }
-.field-check { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+/* min-height: 44px everywhere a finger has to hit something — the pass-1
+   list, checkboxes, and the photo upload control below all rely on this
+   same floor. */
+.field-check { display: flex; gap: 8px; align-items: center; margin: 4px 0; min-height: 44px; }
 
 .field input,
 .field select,
@@ -36,26 +39,36 @@ body {
 .pass2-card select,
 .pass2-card textarea {
   width: 100%;
+  min-height: 44px;
   padding: 10px;
   font: inherit;
   border: 1px solid #c9ced6;
   border-radius: 8px;
 }
+.field textarea,
+.pass2-card textarea { min-height: 88px; }
 
 .field-compound { margin-top: 10px; }
 .field-slot { display: inline-flex; align-items: center; gap: 6px; }
 .field-slot input { width: auto; min-width: 4rem; }
 
+/* The row itself is a <label> (see ServicesPass1.tsx) so the whole thing —
+   not just the 22px checkbox — is the tap target; min-height plus flex-wrap
+   keeps that true, and keeps long two-language labels from ever forcing
+   horizontal scroll on a phone. */
 .pass1-row {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
   align-items: center;
+  min-height: 44px;
   padding: 10px 0;
   border-bottom: 1px solid #f0f1f3;
 }
-.pass1-row input[type='checkbox'] { width: 22px; height: 22px; }
-.pass1-row select { width: auto; }
+.pass1-row span { min-width: 0; flex: 1 1 auto; }
+.pass1-row input[type='checkbox'] { width: 22px; height: 22px; flex: 0 0 auto; }
+.pass1-row select { width: auto; min-height: 44px; }
 
 .pass2-card,
 .fix-card {
@@ -67,6 +80,22 @@ body {
 .fix-comment { margin: 0 0 10px; color: #991b1b; }
 
 .photo-slot img { max-width: 100%; border-radius: 8px; }
+
+/* Was a bare line of text with no sizing rule at all — the tap target was
+   whatever the font's line-height happened to be. Styled to both look and
+   behave like the button it is. */
+.photo-upload {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 18px;
+  margin-top: 8px;
+  font: inherit;
+  border: 1px solid #c9ced6;
+  border-radius: 8px;
+  cursor: pointer;
+}
 .photo-upload input { display: none; }
 
 .review,
@@ -93,6 +122,7 @@ button:disabled { opacity: .4; }
   .pass2-card input,
   .pass2-card select,
   .pass2-card textarea,
+  .photo-upload,
   button {
     background: #1a1c21;
     color: #f0f1f3;

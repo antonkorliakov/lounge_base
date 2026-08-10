@@ -3,10 +3,21 @@
 import { OPTION_LISTS, serviceItemByKey, type ServiceValueInput } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 
-/** Детали спрашиваются только там, где на первом проходе ответили «есть». */
-function offeredKeys(values: Record<string, ServiceValueInput>): string[] {
+/**
+ * Детали спрашиваются только там, где на первом проходе ответили «есть».
+ *
+ * `''` is excluded alongside `null`: it's what `ServicesPass1`'s `<select>`
+ * writes as `available` when the operator deliberately reverts a choice
+ * back to the placeholder `<option value="">—</option>` — a real path, not
+ * a hypothetical one. Without this, an item the operator un-selected would
+ * reappear here demanding charge/price/slot/booking/details for a service
+ * they just said the lounge doesn't have.
+ */
+export function offeredKeys(values: Record<string, ServiceValueInput>): string[] {
   return Object.entries(values)
-    .filter(([, v]) => v.available !== null && !['no', 'not_allowed'].includes(v.available))
+    .filter(
+      ([, v]) => v.available !== null && v.available !== '' && !['no', 'not_allowed'].includes(v.available),
+    )
     .map(([key]) => key)
 }
 
