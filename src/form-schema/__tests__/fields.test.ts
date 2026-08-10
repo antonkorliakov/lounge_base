@@ -80,6 +80,47 @@ describe('плоские поля', () => {
     expect(earliest?.templateSlots).toHaveLength(1)
   })
 
+  // III.3.2 ("Unaccompanied Children Policy") is the questionnaire's one
+  // compound field: it is a plain select (Allowed / Not allowed) over
+  // optionList 'allowedNotAllowed', but the minimum age is only meaningful —
+  // and only collectable — when "Allowed" is chosen, and the source encodes
+  // that age as a fill-in-the-blank template ("Children from (  ) years old
+  // can enter unaccompanied.") in the workbook's hint column rather than as
+  // its own select option. So this field carries select-family data
+  // (type/optionList) AND template data (templateText/templateSlots) at
+  // once — a deliberate shape, not a data error left over from indecision
+  // between 'select' and 'template'. Nothing else in the earlier tests
+  // inspects templateText/templateSlots for a non-template field (the
+  // "select references a list" test only checks optionList, and the
+  // "template has text and a slot" test filters on type === 'template',
+  // which this field never matches), so without this test a refactor could
+  // silently drop the age slot — the suite would stay green while the
+  // minimum-age field became uncollectable in the UI.
+  it('III.3.2 — составное поле: select + шаблон с возрастным слотом', () => {
+    const unaccompanied = FIELDS.find((f) => f.key === 'III.3.2')
+    expect(unaccompanied).toBeDefined()
+    expect(unaccompanied?.type).toBe('select')
+    expect(unaccompanied?.optionList).toBe('allowedNotAllowed')
+    expect(unaccompanied?.templateText).not.toBeNull()
+    expect(unaccompanied?.templateText?.en.trim()).not.toBe('')
+    expect(unaccompanied?.templateText?.ru.trim()).not.toBe('')
+    expect(unaccompanied?.templateSlots.map((s) => s.key)).toEqual(['age'])
+  })
+
+  // Mirror image of the test above, checked over all of FIELDS rather than
+  // hardcoded to III.3.2: if someone later gives a different non-template
+  // field template slots (say, while modeling another "select + blank-to-
+  // fill-in" question), this must fail and force an explicit decision about
+  // how that field renders and is tested — exactly as III.3.2's shape was
+  // decided and pinned above — instead of quietly accumulating a second,
+  // untested compound field.
+  it('III.3.2 — единственное не-template поле с непустыми templateSlots', () => {
+    const nonTemplateFieldsWithSlots = FIELDS.filter(
+      (f) => f.type !== 'template' && f.templateSlots.length > 0,
+    ).map((f) => f.key)
+    expect(nonTemplateFieldsWithSlots).toEqual(['III.3.2'])
+  })
+
   // Structural checks (counts, uniqueness) can't catch a transcription typo
   // in a label, and a reviewer with no access to the workbook has no way to
   // verify the English strings at all. The fixture closes that gap: it was
