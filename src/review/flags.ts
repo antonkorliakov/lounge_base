@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from 'drizzle-orm'
-import { FIELDS, SERVICE_ITEMS, SERVICE_GROUPS, PHOTO_SLOTS } from '@/form-schema'
+import { FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, blockKeyOf } from '@/form-schema'
 import type { Db, Tx } from '@/db/types'
 import { fieldFlags, blockReviews } from '@/db/schema'
 import { fail, type SaveResult } from '@/submissions/editable'
@@ -169,18 +169,19 @@ export async function resolveFlag(db: Db, flagId: string): Promise<void> {
     .where(and(eq(fieldFlags.id, flagId), isNull(fieldFlags.resolvedAt)))
 }
 
-/** Блок, за который отвечает отмеченный ключ. Обрабатывает все три вида
- * ключей: плоское поле, позицию услуг (через её группу) и слот фотографии.
+/**
+ * Re-exported, not recomputed. `blockKeyOf` used to be its own scan over
+ * `FIELDS`/`SERVICE_ITEMS`/`SERVICE_GROUPS`/`PHOTO_SLOTS` here, independent
+ * of `keysOfBlock` (`src/review/blocks.ts`, Task 3), which needs the exact
+ * inverse mapping over the same three arrays. Two independent
+ * implementations of one mapping is the defect class this codebase keeps
+ * finding (see `form-schema/blocks.ts`'s doc comment on `register` for the
+ * full account) — Task 3 moved both directions into `form-schema` as a
+ * single construction, since block↔key membership is questionnaire
+ * structure, not a review-module concern. This re-export keeps every
+ * existing caller and this module's own `clearFlagsFor` unchanged.
  */
-export function blockKeyOf(key: string): string | null {
-  const field = FIELDS.find((f) => f.key === key)
-  if (field) return field.block
-
-  const item = SERVICE_ITEMS.find((i) => i.key === key)
-  if (item) return SERVICE_GROUPS.find((g) => g.key === item.group)?.block ?? null
-
-  return PHOTO_SLOTS.some((s) => s.key === key) ? 'photos' : null
-}
+export { blockKeyOf }
 
 /**
  * Снимает открытое замечание по ключу и подтверждение его блока: раз
