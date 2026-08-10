@@ -118,6 +118,51 @@ test('полностью заполненная анкета отправляе�
   await expect(page.getByText('Sent for review. We will get back to you.')).toBeVisible()
 })
 
+test('отказ при загрузке фото виден рядом со слотом и рендерится на языке интерфейса', async ({ page }) => {
+  const url = seed()
+  await page.goto(url)
+
+  await clickNext(page, FIELD_STEP_COUNT + 2) // 15 блоков полей + 2 прохода услуг = экран фото
+  await expect(page.getByRole('heading', { name: 'Photos', exact: true })).toBeVisible()
+
+  // `/api/photos` checks token, size, MIME, and slot BEFORE it ever touches
+  // Vercel Blob (see src/app/api/photos/route.ts) — CI has no blob token, so
+  // a rejection reachable at that stage is the only one this test can drive
+  // through the real route rather than a mock.
+  //
+  // An invalid-MIME file does NOT reach that check through the real UI: the
+  // client (src/photos/resize.ts + PhotoSlots.tsx) unconditionally declares
+  // the outgoing file as `image/jpeg` regardless of what was actually
+  // attached — confirmed by hand in a real browser before writing this test
+  // (a .txt file attached this way still arrives at the route typed as
+  // `image/jpeg`, sails past the MIME check, and only fails later at
+  // `put()`, as a 500, because there's no blob token — not the graceful
+  // rejection this test needs). The size check runs *before* the MIME check
+  // and *before* blob storage, and it's the file's actual byte length, not
+  // its declared type — so an oversized file is the one validation-stage
+  // rejection that is both real (hits the actual route) and reachable here.
+  // `.first()` (Entrance, first in PHOTO_SLOTS) rather than filtering by its
+  // heading text: a `has: getByRole('heading', { name: 'Entrance' })` filter
+  // re-evaluates against the *current* DOM every time it's queried, and the
+  // heading itself becomes "Вход" once the locale switch below happens — a
+  // locale-text-based filter would then match zero slots and the assertion
+  // after switching locale would fail for a reason that has nothing to do
+  // with the fix being tested.
+  const entranceSlot = page.locator('.photo-slot').first()
+  await entranceSlot.locator('input[type="file"]').setInputFiles({
+    name: 'too-big.bin',
+    mimeType: 'application/octet-stream',
+    buffer: Buffer.alloc(16 * 1024 * 1024), // over MAX_PHOTO_BYTES (15MB)
+  })
+
+  await expect(entranceSlot.getByText('The file is too large')).toBeVisible()
+
+  // Switching locale re-renders the same stored (Localized) error, exactly
+  // like the submit-error assertion above — no second upload attempt.
+  await page.getByRole('button', { name: 'RU', exact: true }).click()
+  await expect(entranceSlot.getByText('Файл слишком велик')).toBeVisible()
+})
+
 test('III.3.2: повторный выбор «allowed» не стирает возраст', async ({ page }) => {
   const url = seed()
   await page.goto(url)

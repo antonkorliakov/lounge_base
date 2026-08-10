@@ -1,9 +1,29 @@
 import { del, put } from '@vercel/blob'
 import { NextResponse } from 'next/server'
+import type { Localized } from '@/form-schema'
 import { PHOTO_SLOTS } from '@/form-schema'
 import { db } from '@/db/client'
 import { resolveFillToken } from '@/access/tokens'
 import { attachPhoto } from '@/photos/store'
+
+/**
+ * Every rejection below carries both locales, same shape as `ActionResult`
+ * in `src/app/f/[token]/actions.ts` — the client (`PhotoSlots.tsx`) picks
+ * with `pick()`, same as every other `Localized` value in this codebase.
+ * Before this, every one of these was a bare Russian string, so an
+ * English-locale operator got Russian text on any rejection here too.
+ */
+const NO_FILE: Localized = { en: 'No file was provided', ru: 'Файл не передан' }
+const INVALID_TOKEN: Localized = {
+  en: 'This link is invalid or has expired',
+  ru: 'Ссылка недействительна',
+}
+const FILE_TOO_LARGE: Localized = { en: 'The file is too large', ru: 'Файл слишком велик' }
+const UNSUPPORTED_FILE_TYPE: Localized = {
+  en: 'This file type is not supported',
+  ru: 'Недопустимый тип файла',
+}
+const UNKNOWN_SLOT: Localized = { en: 'Unknown photo slot', ru: 'Неизвестный слот фото' }
 
 // Клиент (resize.ts) уменьшает снимок и всегда шлёт JPEG, но этот маршрут
 // принимает то, что ему пришлют напрямую — обращение к нему не ограничено
@@ -31,7 +51,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const file = form.get('file')
 
   if (!(file instanceof File)) {
-    return NextResponse.json({ error: 'файл не передан' }, { status: 400 })
+    return NextResponse.json({ error: NO_FILE }, { status: 400 })
   }
 
   // Токен проверяется раньше остальной валидации: submissionId в маршруте
@@ -39,21 +59,21 @@ export async function POST(request: Request): Promise<NextResponse> {
   // бы писать фото в чужую анкету, просто подставив её id в форму.
   const resolved = await resolveFillToken(db(), token)
   if (!resolved) {
-    return NextResponse.json({ error: 'ссылка недействительна' }, { status: 403 })
+    return NextResponse.json({ error: INVALID_TOKEN }, { status: 403 })
   }
 
   if (file.size > MAX_PHOTO_BYTES) {
-    return NextResponse.json({ error: 'файл слишком велик' }, { status: 413 })
+    return NextResponse.json({ error: FILE_TOO_LARGE }, { status: 413 })
   }
   const extension = EXTENSION_BY_TYPE[file.type]
   if (!extension) {
-    return NextResponse.json({ error: 'недопустимый тип файла' }, { status: 400 })
+    return NextResponse.json({ error: UNSUPPORTED_FILE_TYPE }, { status: 400 })
   }
   // Слот проверяем здесь же, а не только внутри attachPhoto: иначе на
   // заведомо неверный слот мы сначала закачаем файл в blob и лишь потом
   // откажем — лишний трафик и висящий (orphaned) блоб на пустом месте.
   if (!PHOTO_SLOTS.some((s) => s.key === slot)) {
-    return NextResponse.json({ error: 'неизвестный слот' }, { status: 400 })
+    return NextResponse.json({ error: UNKNOWN_SLOT }, { status: 400 })
   }
 
   const key = `${resolved.submissionId}/${slot}-${Date.now()}.${extension}`
@@ -78,7 +98,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     if (!result.ok) {
       await del(blob.url).catch(() => {})
-      return NextResponse.json({ error: result.error.ru }, { status: 400 })
+      return NextResponse.json({ error: result.error }, { status: 400 })
     }
 
     return NextResponse.json({ url: blob.url })

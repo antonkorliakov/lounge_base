@@ -43,6 +43,10 @@ export const UI = {
   'photos.upload': { en: 'Upload photo', ru: 'Загрузить фото' },
   'photos.replace': { en: 'Replace', ru: 'Заменить' },
   'photos.missing': { en: 'No photo', ru: 'Нет фото' },
+  'photos.uploadFailed': {
+    en: 'Upload failed. Please try again.',
+    ru: 'Не удалось загрузить. Попробуйте ещё раз.',
+  },
   'fixes.title': { en: 'Changes requested', ru: 'Требуются правки' },
   'fixes.intro': {
     en: 'The reviewer flagged these answers. Everything else is accepted.',

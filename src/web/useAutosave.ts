@@ -12,8 +12,12 @@ export type StorageLike = {
 
 /**
  * Shape returned by a save attempt. Deliberately loose (`ok: boolean`, not a
- * discriminated union) to structurally match `ActionResult` in
- * `src/app/f/[token]/actions.ts` without either module importing the other.
+ * discriminated union), and deliberately a plain `string` rather than the
+ * `Localized` pair `ActionResult` in `src/app/f/[token]/actions.ts` actually
+ * carries: this `error` is only ever used internally, for this hook's own
+ * `rejected` bookkeeping, and is never rendered — so the caller's `save`
+ * callback picks a locale down to a string at that boundary (see
+ * `FillForm.tsx`) before it ever reaches here.
  */
 export type SaveOutcome = { ok: boolean; error?: string }
 
