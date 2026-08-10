@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { validateField, validateServiceValue } from '../validation'
 import { fieldByKey, serviceItemByKey } from '../index'
+import type { Field } from '../index'
 
 const field = (key: string) => {
   const found = fieldByKey(key)
@@ -13,6 +14,26 @@ const item = (key: string) => {
   if (!found) throw new Error(`нет позиции ${key}`)
   return found
 }
+
+// FIELDS has no non-required select / number / multi_select field to exercise
+// the "not required + empty" branch against real data (every field of those
+// three types in the questionnaire happens to be required). These minimal
+// fakes exist only to reach that branch; they are never written back to
+// fields.ts.
+const fakeField = (over: Partial<Field>): Field => ({
+  key: 'fake.field',
+  section: 'III',
+  block: 'III.1',
+  type: 'text',
+  label: { en: 'Fake field', ru: 'Тестовое поле' },
+  hint: null,
+  example: null,
+  required: false,
+  optionList: null,
+  templateText: null,
+  templateSlots: [],
+  ...over,
+})
 
 const serviceValue = (over: Partial<Parameters<typeof validateServiceValue>[1]>) => ({
   available: 'yes',
@@ -122,5 +143,97 @@ describe('валидация позиции услуг', () => {
 
     const bad = serviceValue({ available: 'yes' })
     expect(validateServiceValue(item('8.3'), bad).ok).toBe(false)
+  })
+})
+
+// Fix round 1: the brief's own transcribed code threw instead of failing on
+// several kinds of malformed client JSON, and let two forms of bad data
+// (whitespace-as-zero, unknown/duplicate multi-select ids) through as valid.
+// Every case below asserts the function RETURNS { ok: false }, not that it
+// merely doesn't throw — a test that only wrapped the call in
+// `expect(() => …).not.toThrow()` would pass even if validation silently
+// approved garbage.
+describe('устойчивость к некорректным данным (fix round 1)', () => {
+  it('нестроковый detail не бросает исключение, а проваливает валидацию', () => {
+    // III.6.2, option 'other' has requiresDetail: true, so detail is
+    // actually read — this is exactly the path that used to call
+    // `value.detail.trim()` on a number and throw.
+    const f = field('III.6.2')
+    let result: ReturnType<typeof validateField> | undefined
+    expect(() => {
+      result = validateField(f, { option: 'other', detail: 42 })
+    }).not.toThrow()
+    expect(result?.ok).toBe(false)
+  })
+
+  it('нестроковая currency не бросает исключение, а проваливает валидацию', () => {
+    let result: ReturnType<typeof validateServiceValue> | undefined
+    expect(() => {
+      result = validateServiceValue(
+        item('7.2'),
+        serviceValue({ chargeType: 'chargeable', price: 15, currency: 42 as unknown as string }),
+      )
+    }).not.toThrow()
+    expect(result?.ok).toBe(false)
+  })
+
+  it('обязательное числовое поле не принимает значения без реального number', () => {
+    const f = field('I.14') // Tax Chargeable (%) — required, type 'number'
+    const badValues: unknown[] = [true, [5], '3', '   ', NaN, Infinity]
+    for (const bad of badValues) {
+      expect(validateField(f, bad).ok, JSON.stringify(bad)).toBe(false)
+    }
+    // A real, valid number still passes — the tightened rule isn't just
+    // rejecting everything.
+    expect(validateField(f, 18).ok).toBe(true)
+  })
+
+  it('обязательное текстовое поле не принимает строку из одних пробелов', () => {
+    expect(validateField(field('I.2'), '   ').ok).toBe(false)
+  })
+
+  it('мультивыбор отвергает значение не из своего списка', () => {
+    const f = field('III.6.6') // optionList 'zone': arrival/departure/transit
+    expect(validateField(f, ['nonsense']).ok).toBe(false)
+    expect(validateField(f, ['departure', 'also-fake']).ok).toBe(false)
+  })
+
+  it('мультивыбор отвергает повторяющиеся значения', () => {
+    const f = field('III.6.6')
+    expect(validateField(f, ['departure', 'departure']).ok).toBe(false)
+  })
+
+  it('некорректное значение обязательного select отвергается, а не проходит как валидное', () => {
+    const f = field('III.5.2') // Floor — required, type 'select'
+    let r1: ReturnType<typeof validateField> | undefined
+    let r2: ReturnType<typeof validateField> | undefined
+    let r3: ReturnType<typeof validateField> | undefined
+    expect(() => {
+      r1 = validateField(f, 'ground') // bare string, not a SelectValue
+      r2 = validateField(f, null)
+      r3 = validateField(f, [])
+    }).not.toThrow()
+    expect(r1?.ok).toBe(false)
+    expect(r2?.ok).toBe(false)
+    expect(r3?.ok).toBe(false)
+  })
+
+  it('необязательный select с пустым значением валиден', () => {
+    const f = fakeField({ type: 'select', optionList: 'yesNo', required: false })
+    expect(validateField(f, null).ok).toBe(true)
+    expect(validateField(f, undefined).ok).toBe(true)
+  })
+
+  it('необязательное числовое поле с пустым значением валидно', () => {
+    const f = fakeField({ type: 'number', required: false })
+    expect(validateField(f, null).ok).toBe(true)
+    expect(validateField(f, '').ok).toBe(true)
+    expect(validateField(f, undefined).ok).toBe(true)
+  })
+
+  it('необязательный мультивыбор с пустым значением валиден', () => {
+    const f = fakeField({ type: 'multi_select', optionList: 'zone', required: false })
+    expect(validateField(f, []).ok).toBe(true)
+    expect(validateField(f, undefined).ok).toBe(true)
   })
 })
