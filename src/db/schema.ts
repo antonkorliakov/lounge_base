@@ -149,5 +149,35 @@ export const fillTokens = pgTable(
   (table) => [unique('fill_tokens_hash_unique').on(table.tokenHash)],
 )
 
+export const teamMembers = pgTable(
+  'team_members',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull(),
+    name: text('name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique('team_members_email_unique').on(table.email)],
+)
+
+export const loginTokens = pgTable(
+  'login_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    memberId: uuid('member_id').notNull().references(() => teamMembers.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+  },
+  (table) => [unique('login_tokens_hash_unique').on(table.tokenHash)],
+)
+
+export const sessions = pgTable('sessions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  memberId: uuid('member_id').notNull().references(() => teamMembers.id, { onDelete: 'cascade' }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 export type SubmissionStatus = (typeof submissionStatus.enumValues)[number]
 export type OperationalStatus = (typeof operationalStatus.enumValues)[number]
