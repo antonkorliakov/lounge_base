@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { createTestDb } from '@/db/__tests__/harness'
 import type { Db } from '@/db/types'
@@ -110,5 +110,50 @@ describe('сохранение значений', () => {
       submissionId, fieldKey: 'I.2', value: 'Поздно',
     })
     expect(result.ok).toBe(false)
+  })
+
+  it('не даёт править одобренную анкету', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+    await db
+      .update(submissions).set({ status: 'approved' })
+      .where(eq(submissions.id, submissionId))
+
+    const result = await saveFieldValue(db, {
+      submissionId, fieldKey: 'I.2', value: 'Поздно',
+    })
+    expect(result.ok).toBe(false)
+  })
+
+  it('позволяет править анкету, отправленную на исправление', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+    await db
+      .update(submissions).set({ status: 'changes_requested' })
+      .where(eq(submissions.id, submissionId))
+
+    const result = await saveFieldValue(db, {
+      submissionId, fieldKey: 'I.2', value: 'Исправлено',
+    })
+    expect(result.ok).toBe(true)
+  })
+
+  it('проверка статуса и запись выполняются в одной транзакции', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+    const transactionSpy = vi.spyOn(db, 'transaction')
+
+    const result = await saveFieldValue(db, {
+      submissionId, fieldKey: 'I.2', value: 'Атомарно',
+    })
+
+    // Доказывает, что запись проходит через db.transaction (то есть статус
+    // и запись — один атомарный шаг), а не через две отдельные операции.
+    // Это НЕ доказывает отсутствие гонки при настоящей параллельной нагрузке
+    // (unit-тест не может интерливить конкурентные соединения к PGlite) —
+    // только то, что механизм на месте и его нельзя случайно откатить назад
+    // к раздельным SELECT + INSERT без провала этого теста.
+    expect(result.ok).toBe(true)
+    expect(transactionSpy).toHaveBeenCalledTimes(1)
   })
 })

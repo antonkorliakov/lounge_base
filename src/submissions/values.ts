@@ -11,8 +11,15 @@ const fail = (en: string, ru: string): SaveResult => ({ ok: false, error: { en, 
 /** Правки принимаются только в состояниях, где форма открыта заполняющему. */
 const EDITABLE = new Set(['draft', 'changes_requested'])
 
-async function assertEditable(db: Db, submissionId: string): Promise<SaveResult> {
-  const rows = await db
+/**
+ * То, что видит колбэк `db.transaction(async (tx) => ...)` — тот же набор
+ * методов построителя запросов, что и у `Db`, извлечённый прямо из сигнатуры
+ * `transaction`, чтобы не заводить отдельный экспортируемый тип.
+ */
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
+
+async function assertEditable(tx: Tx, submissionId: string): Promise<SaveResult> {
+  const rows = await tx
     .select({ status: submissions.status })
     .from(submissions)
     .where(eq(submissions.id, submissionId))
@@ -33,21 +40,25 @@ export async function saveFieldValue(
   const field = fieldByKey(input.fieldKey)
   if (!field) return fail('Unknown field', 'Неизвестное поле')
 
-  const editable = await assertEditable(db, input.submissionId)
-  if (!editable.ok) return editable
+  // Статус и запись — одна транзакция, иначе автосохранение может
+  // проскочить между проверкой и записью в момент отправки анкеты.
+  return db.transaction(async (tx) => {
+    const editable = await assertEditable(tx, input.submissionId)
+    if (!editable.ok) return editable
 
-  const validation = validateField(field, input.value)
-  if (!validation.ok) return { ok: false, error: validation.error }
+    const validation = validateField(field, input.value)
+    if (!validation.ok) return { ok: false, error: validation.error }
 
-  await db
-    .insert(fieldValues)
-    .values({ submissionId: input.submissionId, fieldKey: input.fieldKey, value: input.value })
-    .onConflictDoUpdate({
-      target: [fieldValues.submissionId, fieldValues.fieldKey],
-      set: { value: input.value, updatedAt: new Date() },
-    })
+    await tx
+      .insert(fieldValues)
+      .values({ submissionId: input.submissionId, fieldKey: input.fieldKey, value: input.value })
+      .onConflictDoUpdate({
+        target: [fieldValues.submissionId, fieldValues.fieldKey],
+        set: { value: input.value, updatedAt: new Date() },
+      })
 
-  return { ok: true }
+    return { ok: true }
+  })
 }
 
 export async function saveServiceValue(
@@ -57,33 +68,35 @@ export async function saveServiceValue(
   const item = serviceItemByKey(input.itemKey)
   if (!item) return fail('Unknown service item', 'Неизвестная позиция услуг')
 
-  const editable = await assertEditable(db, input.submissionId)
-  if (!editable.ok) return editable
+  return db.transaction(async (tx) => {
+    const editable = await assertEditable(tx, input.submissionId)
+    if (!editable.ok) return editable
 
-  const validation = validateServiceValue(item, input.value)
-  if (!validation.ok) return { ok: false, error: validation.error }
+    const validation = validateServiceValue(item, input.value)
+    if (!validation.ok) return { ok: false, error: validation.error }
 
-  const row = {
-    submissionId: input.submissionId,
-    itemKey: input.itemKey,
-    available: input.value.available,
-    chargeType: input.value.chargeType,
-    price: input.value.price === null ? null : String(input.value.price),
-    currency: input.value.currency,
-    slotMinutes: input.value.slotMinutes,
-    bookingRequired: input.value.bookingRequired,
-    details: input.value.details,
-  }
+    const row = {
+      submissionId: input.submissionId,
+      itemKey: input.itemKey,
+      available: input.value.available,
+      chargeType: input.value.chargeType,
+      price: input.value.price === null ? null : String(input.value.price),
+      currency: input.value.currency,
+      slotMinutes: input.value.slotMinutes,
+      bookingRequired: input.value.bookingRequired,
+      details: input.value.details,
+    }
 
-  await db
-    .insert(serviceValues)
-    .values(row)
-    .onConflictDoUpdate({
-      target: [serviceValues.submissionId, serviceValues.itemKey],
-      set: { ...row, updatedAt: new Date() },
-    })
+    await tx
+      .insert(serviceValues)
+      .values(row)
+      .onConflictDoUpdate({
+        target: [serviceValues.submissionId, serviceValues.itemKey],
+        set: { ...row, updatedAt: new Date() },
+      })
 
-  return { ok: true }
+    return { ok: true }
+  })
 }
 
 export async function loadSubmissionValues(
