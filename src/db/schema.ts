@@ -137,5 +137,17 @@ export const events = pgTable('events', {
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+export const fillTokens = pgTable(
+  'fill_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    submissionId: uuid('submission_id').notNull().references(() => submissions.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique('fill_tokens_hash_unique').on(table.tokenHash)],
+)
+
 export type SubmissionStatus = (typeof submissionStatus.enumValues)[number]
 export type OperationalStatus = (typeof operationalStatus.enumValues)[number]
