@@ -3,24 +3,62 @@
  * guard (`src/review/__tests__/lock-order.test.ts`). Lives outside the
  * scanned tree on purpose, mirroring `src/form-schema/__tests__/import-guard.ts`
  * and `src/db/__tests__/unsafe-db-usage-guard.ts`: the scan walks
- * `src/review` and `src/submissions` but skips `__tests__` subdirectories,
- * so a helper that necessarily contains the literal patterns it looks for
- * (`.insert(fieldFlags)`, `.for('update')`, …) must live inside `__tests__`
- * or it would trip its own rule.
+ * `src/review`, `src/submissions`, and `src/photos`, but skips `__tests__`
+ * subdirectories, so a helper that necessarily contains the literal
+ * patterns it looks for (`.insert(fieldFlags)`, `.for('update')`, …) must
+ * live inside `__tests__` or it would trip its own rule.
  *
- * Why this guard exists: five check-then-write races have been found and
+ * Why this guard exists: seven check-then-write races have been found and
  * fixed on this branch by review, not by a test — the value-save path
  * (`assertEditable`), `submitSubmission`, the magic-link consume
- * (`access/team.ts`), `raiseFlag`, and `unconfirmBlock` (this fix round).
- * Every one was the identical shape: a write to a child table that isn't
- * serialized against a concurrent status-changing transaction because
- * nothing makes the two contend for the same lock. The fix was always the
- * same one line — lock `submissions` (`FOR UPDATE`) before the write — so
- * this makes that line's presence, and its position relative to the write,
- * a structural property of every exported function in these two
- * directories that touches one of the five tables a review decision's
- * validity depends on, rather than something the next reviewer has to
- * rediscover by re-deriving the same race.
+ * (`access/team.ts`), `raiseFlag`, `unconfirmBlock`, and `resolveFlag`
+ * (both from this task's own fix rounds — `resolveFlag` needed the lock
+ * for a direction-dependent reason `raiseFlag`/`unconfirmBlock` didn't:
+ * see `EXEMPTIONS`'s history below, or `resolveFlag`'s own doc comment in
+ * `flags.ts`, for why "shrinking the open-flag set is always safe" was
+ * true for two callers and false for a third). Every one was the
+ * identical shape: a write to a child table that isn't serialized against
+ * a concurrent status-changing transaction because nothing makes the two
+ * contend for the same lock. The fix was always the same one line — lock
+ * `submissions` (`FOR UPDATE`) before the write — so this makes that
+ * line's presence, and its position relative to the write, a structural
+ * property of every exported function in these three directories that
+ * touches one of the five tables a review decision's validity depends on,
+ * rather than something the next reviewer has to rediscover by
+ * re-deriving the same race by hand, per caller, which is exactly the
+ * failure mode that produced `resolveFlag`'s stale exemption in the first
+ * place: a direction-dependent safety argument in a hand-maintained
+ * exemption list is something a future caller or reader can misapply.
+ * Uniform locking removes the need for that reasoning; this guard exists
+ * so removing the need is actually enforced, not just recommended.
+ *
+ * Accepted gaps, inherited from the regex-based approach (the same
+ * trade-off `import-guard.ts`/`unsafe-db-usage-guard.ts` already accept,
+ * not new here):
+ *  - **Helper indirection.** A write hidden behind a helper NOT listed in
+ *    `LOCK_DELEGATES` — including a *legitimately* locked one this list
+ *    simply hasn't been told about yet — is invisible to `writeHitsIn`
+ *    (which only sees literal `.insert/.update/.delete(TABLE)` text in the
+ *    scanned function's own body) and would be silently skipped rather
+ *    than flagged. `LOCK_DELEGATES` closes this for the two delegates that
+ *    exist today; a third one would need a conscious edit to this file.
+ *  - **Table aliasing.** The scan matches the literal identifiers
+ *    `fieldFlags`/`blockReviews`/`fieldValues`/`serviceValues`/`photos` as
+ *    imported from `@/db/schema` under their real names. A local rename
+ *    (`import { fieldFlags as ff } from '@/db/schema'`, then
+ *    `.insert(ff)`) would not match `WRITE_RE` and would pass unseen. No
+ *    file in the scanned roots renames a schema table import today.
+ *  - **Raw SQL / `.execute()`.** Neither this guard nor its write/lock
+ *    detectors understand `sql\`...\`` template bodies at all — a write
+ *    expressed as raw SQL rather than the query builder would not match
+ *    `WRITE_RE`. This is accepted specifically because `.execute()` itself
+ *    is already forbidden outside `src/db` by a separate, dedicated guard
+ *    (`src/db/__tests__/unsafe-db-usage-guard.ts`), so a raw-SQL write
+ *    escaping *this* guard's notice would already have been caught by
+ *    *that* one before it could exist outside `src/db` in the first place.
+ * None of these are silently assumed away: they are true limits of a
+ * text-based scanner that does not parse TypeScript, the same limit every
+ * other guard in this codebase already lives with.
  */
 
 export const GUARDED_TABLES = ['fieldFlags', 'blockReviews', 'fieldValues', 'serviceValues', 'photos'] as const
@@ -57,34 +95,36 @@ export const LOCK_DELEGATES = ['assertEditable', 'lockSubmission'] as const
  * NOT required to lock `submissions` first, because the write cannot
  * invalidate a decision (`requestChanges`/`approveSubmission`) that was
  * valid when that decision's own locked transaction read the relevant
- * state. Each reason below is the actual argument for that specific
- * function, not a copy of another exemption's reasoning — the two
- * currently listed are safe for two different reasons.
+ * state, REGARDLESS of which way that decision's check runs (open-flags-
+ * must-be-empty, or open-flags-must-be-nonzero, or block-must-be-
+ * confirmed). That "regardless of direction" qualifier is load-bearing —
+ * it used to also list `resolveFlag` here, reasoned as safe because it
+ * only shrinks the open-flag set. That was true for `approveSubmission`
+ * and `confirmBlock` (both refuse when flags ARE open, so shrinking the
+ * set can only make their refusal more conservative) and false for
+ * `requestChanges` (which refuses when flags are NOT open — for it,
+ * shrinking the set is the dangerous direction: a concurrent, unlocked
+ * `resolveFlag` could empty the set between `requestChanges`'s read and
+ * its commit, sending the operator a "changes requested" submission with
+ * nothing marked). `resolveFlag` now locks `submissions` like everything
+ * else (`src/review/flags.ts`) and is not exempted; see its own doc
+ * comment there for the fix. `clearFlagsFor` remains exempted below for a
+ * genuinely different, direction-independent reason: it cannot run
+ * concurrently with ANY review decision at all, not merely one whose
+ * check happens to point the safe way.
  */
 export const EXEMPTIONS: Readonly<Record<string, string>> = {
   clearFlagsFor:
     "src/review/flags.ts — fires only on an operator's edit of a " +
     'previously-flagged field, which EDITABLE_STATUSES limits to `draft`/' +
-    '`changes_requested`. confirmBlock (the only thing this write could ' +
-    "race against approveSubmission's benefit of protecting) requires " +
-    '`submitted` (REVIEW_STATUSES). Those status sets are disjoint and a ' +
-    'submission has exactly one status at a time, so clearFlagsFor and a ' +
-    'review decision can never legally run against the same submission at ' +
-    'the same time regardless of locking — there is no window for this ' +
-    'write to land in.',
-  resolveFlag:
-    'src/review/flags.ts — only moves a flag from open to resolved, never ' +
-    'the other way; it can only shrink the open-flag set. approveSubmission ' +
-    "refuses when open flags are non-zero AT THE MOMENT IT READS THEM inside " +
-    'its own locked transaction — that read is accurate regardless of what ' +
-    "resolveFlag does concurrently, because resolveFlag cannot make a flag " +
-    "that was genuinely open at read time appear resolved retroactively, and " +
-    'it cannot manufacture a NEW open flag the read would have needed to ' +
-    'see. The dangerous direction is raising a flag (which raiseFlag locks ' +
-    'for) or unconfirming a block (which unconfirmBlock now locks for) — ' +
-    'both move a submission from "approvable" to "not approvable" and so ' +
-    'can race a decision that already checked. Resolving only moves the ' +
-    'other way, so there is nothing for this write to invalidate.',
+    '`changes_requested`. Every review decision (`requestChanges`, ' +
+    '`approveSubmission`) and `confirmBlock` require `submitted` ' +
+    '(REVIEW_STATUSES). Those status sets are disjoint and a submission ' +
+    'has exactly one status at a time, so clearFlagsFor and a review ' +
+    'action can never legally run against the same submission at the same ' +
+    'time regardless of locking, and regardless of which direction either ' +
+    "side's check points — there is no window for this write to land in, " +
+    'full stop, not just no window for one particular direction of harm.',
 }
 
 /**
@@ -171,22 +211,35 @@ function matchingClose(text: string, openIndex: number): number | null {
 type FunctionSpan = { name: string; body: string }
 
 /**
+ * Given the index of a parameter list's closing `)`, returns the index of
+ * the `{` that opens the function body — for a `function` declaration,
+ * that is simply the first `{` found (see the caller's own doc comment for
+ * why: no scanned signature uses an inline object-literal return type).
+ * Shared by both the `function NAME(...)` and `const NAME = (...) =>`
+ * matchers below, which differ only in what precedes the parameter list.
+ */
+function bodyBraceAfterParams(text: string, paramsEnd: number): number {
+  return text.indexOf('{', paramsEnd + 1)
+}
+
+/**
  * Finds every top-level `export [async] function NAME(...) { ... }` in
  * (already comment-stripped) `text` and returns each one's name and full
  * body text (the `{ … }` span, inclusive). Relies on none of this
- * project's exported functions in `src/review`/`src/submissions` having an
- * inline object-literal *type* in their signature (e.g. a return type
- * written as `Promise<{ ok: boolean }>` rather than a named alias) — every
- * one uses a named type (`SaveResult`, `ConfirmResult`, `TransitionResult`,
- * `FlagRow[]`, `BlockState[]`, `void`, …), so the first `{` after the
- * parameter list's closing `)` is always the real function body, not a
- * return-type literal. This is a documented limitation, not a silent gap:
- * a future function that violates it would have its whole body
- * mis-detected, which the guard's own "at least one file scanned" sanity
- * check cannot catch — reviewers adding a new exported function with an
- * inline object return type should notice this comment.
+ * project's exported functions in `src/review`/`src/submissions`/
+ * `src/photos` having an inline object-literal *type* in their signature
+ * (e.g. a return type written as `Promise<{ ok: boolean }>` rather than a
+ * named alias) — every one uses a named type (`SaveResult`,
+ * `ConfirmResult`, `TransitionResult`, `FlagRow[]`, `BlockState[]`,
+ * `PhotoRow[]`, `void`, …), so the first `{` after the parameter list's
+ * closing `)` is always the real function body, not a return-type literal.
+ * This is a documented limitation, not a silent gap: a future function
+ * that violates it would have its whole body mis-detected, which the
+ * guard's own "at least one file scanned" sanity check cannot catch —
+ * reviewers adding a new exported function with an inline object return
+ * type should notice this comment.
  */
-function exportedFunctionSpans(text: string): FunctionSpan[] {
+function functionDeclarationSpans(text: string): FunctionSpan[] {
   const spans: FunctionSpan[] = []
   const headerRe = /export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g
   let m: RegExpExecArray | null
@@ -196,13 +249,108 @@ function exportedFunctionSpans(text: string): FunctionSpan[] {
     const paramsOpen = m.index + m[0].length - 1
     const paramsEnd = matchingClose(text, paramsOpen)
     if (paramsEnd === null) continue
-    const bodyOpen = text.indexOf('{', paramsEnd + 1)
+    const bodyOpen = bodyBraceAfterParams(text, paramsEnd)
     if (bodyOpen === -1) continue
     const bodyEnd = matchingClose(text, bodyOpen)
     if (bodyEnd === null) continue
     spans.push({ name, body: text.slice(bodyOpen, bodyEnd + 1) })
   }
   return spans
+}
+
+/**
+ * Given the index right after a parameter list's closing `)`, returns the
+ * index of the `=` of the arrow function's `=>`, skipping over an optional
+ * return-type annotation in between (`: Promise<SaveResult> =>`, matching
+ * the style every `function` declaration in this codebase already uses).
+ * Tracks bracket depth over `(){}[]` AND `<>` together in this one
+ * narrow window only — safe here specifically because a return-type
+ * annotation is pure type syntax with no runtime expressions, so a `<`/`>`
+ * appearing before the arrow can only be a generic delimiter, never a
+ * comparison operator (which could only appear once actual code starts,
+ * i.e. after the arrow this function is searching for). Returns `null` if
+ * no top-level `=>` is found before the text ends.
+ */
+function findArrowAfterParams(text: string, afterParamsClose: number): number | null {
+  let depth = 0
+  for (let i = afterParamsClose; i < text.length - 1; i++) {
+    const ch = text[i] ?? ''
+    if ('([{<'.includes(ch)) depth++
+    else if (')]}>'.includes(ch)) depth--
+    else if (depth === 0 && ch === '=' && text[i + 1] === '>') return i
+  }
+  return null
+}
+
+/**
+ * Finds every top-level `export const NAME = [async] (...) [: ReturnType]
+ * => ...` in (already comment-stripped) `text`. Nothing in the scanned
+ * roots is written this way today (every writer is `export async
+ * function`), but the shape is common enough elsewhere that a future
+ * writer using it must not be invisible to this guard — including one
+ * with an explicit return-type annotation, the style every `function`
+ * declaration here already uses (`findArrowAfterParams` skips exactly
+ * that).
+ *
+ * Two body shapes are handled:
+ *  - Block body (`=> { ... }`): body is the brace-matched span, same
+ *    technique as `functionDeclarationSpans`.
+ *  - Expression body (`=> someExpression`, no immediate `{`): there is no
+ *    brace to match, so the span is bounded heuristically — from right
+ *    after `=>` to the next top-level (bracket-depth-zero) `;`, or to the
+ *    next `export` keyword at depth zero, or to the end of the file,
+ *    whichever comes first. This is a heuristic, not a parse: it is
+ *    documented here rather than silently assumed, and is the reason this
+ *    function's own tests exercise the expression-body shape directly
+ *    rather than trusting it by construction.
+ */
+function arrowConstSpans(text: string): FunctionSpan[] {
+  const spans: FunctionSpan[] = []
+  const headerRe = /export\s+const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(/g
+  let m: RegExpExecArray | null
+  while ((m = headerRe.exec(text))) {
+    const name = m[1]
+    if (!name) continue
+    const paramsOpen = m.index + m[0].length - 1
+    const paramsEnd = matchingClose(text, paramsOpen)
+    if (paramsEnd === null) continue
+
+    const arrowAt = findArrowAfterParams(text, paramsEnd + 1)
+    if (arrowAt === null) continue
+    let afterArrow = arrowAt + 2
+    while (/\s/.test(text[afterArrow] ?? '')) afterArrow++
+
+    if (text[afterArrow] === '{') {
+      const bodyEnd = matchingClose(text, afterArrow)
+      if (bodyEnd === null) continue
+      spans.push({ name, body: text.slice(afterArrow, bodyEnd + 1) })
+      continue
+    }
+
+    // Expression body: bound the span at the next top-level `;`/`export`/EOF.
+    let depth = 0
+    let end = text.length
+    for (let i = afterArrow; i < text.length; i++) {
+      const ch = text[i] ?? ''
+      if ('([{'.includes(ch)) depth++
+      else if (')]}'.includes(ch)) depth--
+      else if (depth === 0 && ch === ';') {
+        end = i + 1
+        break
+      } else if (depth === 0 && ch !== '' && !/\s/.test(ch) && i > afterArrow) {
+        if (/^export\b/.test(text.slice(i))) {
+          end = i
+          break
+        }
+      }
+    }
+    spans.push({ name, body: text.slice(afterArrow, end) })
+  }
+  return spans
+}
+
+function exportedFunctionSpans(text: string): FunctionSpan[] {
+  return [...functionDeclarationSpans(text), ...arrowConstSpans(text)]
 }
 
 type WriteHit = { index: number; table: string }
@@ -221,6 +369,26 @@ function writeHitsIn(body: string): WriteHit[] {
     if (table) hits.push({ index: m.index, table })
   }
   return hits
+}
+
+/**
+ * Every `GUARDED_TABLES` entry `writeHitsIn` matches anywhere in
+ * (comment-stripped) `fileText` — not scoped to a particular function,
+ * unlike `writeHitsIn` above. Backs the "the guard actually found a real
+ * write for every table it claims to guard" sanity check in
+ * `lock-order.test.ts`: without it, a `GUARDED_TABLES` entry that drifted
+ * from the real schema identifier (a rename, a typo) would make `WRITE_RE`
+ * silently stop matching anything for that table, and
+ * `lockOrderViolationsIn` would report zero violations for a reason that
+ * has nothing to do with every writer being correctly locked — the same
+ * "passes because it never actually looked" failure mode this project has
+ * already hit more than once. A table with a real positive match here is
+ * proof the regex still lines up with a real, live call site, not just an
+ * absence of complaints.
+ */
+export function tablesWrittenIn(fileText: string): Set<string> {
+  const text = stripComments(fileText)
+  return new Set(writeHitsIn(text).map((hit) => hit.table))
 }
 
 /**
