@@ -56,6 +56,70 @@ describe('полнота анкеты', () => {
     expect(missing.serviceKeys).not.toContain('1.2')
   })
 
+  // R1, whole-branch review second round: `validateServiceValue` no longer
+  // requires a chargeType on save (that's what let Pass 1's own answer —
+  // available only, no chargeType — save at all). This is the test that
+  // proves the requirement didn't just vanish: it moved here, to
+  // completeness, which is what actually gates submission now.
+  it('предложенная позиция без chargeType остаётся недостающей — R1', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+
+    await saveServiceValue(db, {
+      submissionId,
+      itemKey: '2.1', // Wifi Access
+      value: {
+        available: 'yes', chargeType: null, price: null, currency: null,
+        slotMinutes: null, bookingRequired: null, details: null,
+      },
+    })
+
+    const missing = await missingItems(db, submissionId)
+    expect(missing.serviceKeys).toContain('2.1')
+  })
+
+  it('не предложенная позиция (available «нет») не требует chargeType для полноты', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+
+    await saveServiceValue(db, {
+      submissionId,
+      itemKey: '2.1',
+      value: {
+        available: 'no', chargeType: null, price: null, currency: null,
+        slotMinutes: null, bookingRequired: null, details: null,
+      },
+    })
+
+    const missing = await missingItems(db, submissionId)
+    expect(missing.serviceKeys).not.toContain('2.1')
+  })
+
+  it('добавление chargeType к уже предложенной позиции убирает её из недостающих', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+
+    await saveServiceValue(db, {
+      submissionId,
+      itemKey: '2.1',
+      value: {
+        available: 'yes', chargeType: null, price: null, currency: null,
+        slotMinutes: null, bookingRequired: null, details: null,
+      },
+    })
+    expect((await missingItems(db, submissionId)).serviceKeys).toContain('2.1')
+
+    await saveServiceValue(db, {
+      submissionId,
+      itemKey: '2.1',
+      value: {
+        available: 'yes', chargeType: 'complimentary', price: null, currency: null,
+        slotMinutes: null, bookingRequired: null, details: null,
+      },
+    })
+    expect((await missingItems(db, submissionId)).serviceKeys).not.toContain('2.1')
+  })
+
   it('необязательные поля не попадают в список недостающих', async () => {
     const db = await createTestDb()
     const submissionId = await seedDraft(db)

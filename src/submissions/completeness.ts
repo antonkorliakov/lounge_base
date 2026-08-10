@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm'
-import { FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, MIN_PHOTOS } from '@/form-schema'
+import { FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, MIN_PHOTOS, serviceItemAnswered } from '@/form-schema'
 import { photos } from '@/db/schema'
 import type { Db, Tx } from '@/db/types'
 import { loadSubmissionValues } from './values'
@@ -28,9 +28,16 @@ export async function missingItems(
   ).map((field) => field.key)
 
   // Позиция считается заполненной, как только на неё дан любой ответ,
-  // включая «нет» — это осознанное решение заполняющего, а не пропуск.
+  // включая «нет» — это осознанное решение заполняющего, а не пропуск. Но
+  // если позиция ЕСТЬ (available offered), пройденности одной этой отметки
+  // не хватает — нужен ещё и chargeType (второй проход по услугам). Раньше
+  // это требовалось прямо в validateServiceValue, из-за чего первый проход
+  // никогда не сохранялся (R1, второй круг сквозного ревью); теперь это
+  // требование живёт только тут, в полноте, а не в форме значения.
+  // `serviceItemAnswered` — общая точка правды с `validateServiceValue` и
+  // с контрактным тестом.
   const serviceKeys = SERVICE_ITEMS.filter(
-    (item) => values.services[item.key]?.available == null,
+    (item) => !serviceItemAnswered(item, values.services[item.key]),
   ).map((item) => item.key)
 
   const uploaded = await db

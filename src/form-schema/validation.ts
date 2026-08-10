@@ -1,6 +1,7 @@
 import type { Localized } from './types'
 import type { Field } from './fields'
 import type { ServiceItem } from './services'
+import { isOfferedAvailability, requiresPrice } from './services'
 import { OPTION_LISTS } from './option-lists'
 
 export type ValidationResult = { ok: true } | { ok: false; error: Localized }
@@ -96,6 +97,26 @@ function isSelectValue(value: unknown): value is SelectValue {
   )
 }
 
+/**
+ * True when choosing `optionId` on `field` requires the clarifying `detail`
+ * text — either because the option itself is `requiresDetail` in
+ * `option-lists.ts`, or because this particular field overrides it via
+ * `field.detailRequiredFor` (see Critical 1, whole-branch review: `III.2.4`'s
+ * `airlineAccess` options are both `plain()`, yet "specific airlines" is
+ * meaningless unqualified).
+ *
+ * The single source both `validateSelect` and `FieldInput.tsx` call —
+ * before the second review round this exact expression was written out in
+ * both places (plus a third time in the contract test), agreeing only by
+ * accident.
+ */
+export function needsDetail(field: Field, optionId: string): boolean {
+  const options = field.optionList ? OPTION_LISTS[field.optionList] : []
+  const option = options.find((o) => o.id === optionId)
+  if (!option) return false
+  return option.requiresDetail || field.detailRequiredFor.includes(option.id)
+}
+
 function validateSelect(field: Field, value: unknown): ValidationResult {
   if (!isSelectValue(value)) return field.required ? REQUIRED : ok
 
@@ -111,9 +132,7 @@ function validateSelect(field: Field, value: unknown): ValidationResult {
   const chosen = options.find((o) => o.id === value.option)
   if (!chosen) return UNKNOWN_OPTION
 
-  const needsDetail = chosen.requiresDetail || field.detailRequiredFor.includes(chosen.id)
-
-  if (needsDetail) {
+  if (needsDetail(field, chosen.id)) {
     if (value.detail === null || value.detail === undefined) return DETAIL_REQUIRED
     const detail = asText(value.detail)
     if (detail === null) return EXPECTED_TEXT
@@ -234,30 +253,37 @@ export function validateServiceValue(
   const chosen = availability.find((o) => o.id === value.available)
   if (!chosen) return UNKNOWN_OPTION
 
-  /** «Нет» и «не разрешено» закрывают позицию: остальные атрибуты не нужны. */
-  const isOffered = !['no', 'not_allowed'].includes(chosen.id)
-  if (!isOffered) return ok
+  if (!isOfferedAvailability(item, value.available)) return ok
 
-  const charge = OPTION_LISTS.chargeType.find((o) => o.id === value.chargeType)
-  if (!charge) {
-    return fail(
-      'Specify whether the service is complimentary or chargeable',
-      'Укажите, бесплатная услуга или платная',
-    )
-  }
+  // From here on this is an OFFERED item. Everything below is an
+  // internal-consistency rule — "if you gave me a chargeType, and it's one
+  // that needs a price, the price/currency must actually be there" — not a
+  // completeness rule. Whether a chargeType must be present AT ALL is no
+  // longer checked here: `ServicesPass1` only ever sets `available` (it has
+  // no chargeType control), so requiring one at save time made it
+  // impossible to ever save the first of the two passes through the
+  // services matrix — Pass 1's answer was refused forever and survived only
+  // in React state (R1, whole-branch review second round). `chargeType:
+  // null` on an offered item is now a valid, well-formed, INCOMPLETE
+  // answer; `serviceItemAnswered`/`missingItems` is what later requires it
+  // before the questionnaire can be submitted.
+  if (value.chargeType !== null && value.chargeType !== undefined) {
+    const charge = OPTION_LISTS.chargeType.find((o) => o.id === value.chargeType)
+    if (!charge) return UNKNOWN_OPTION
 
-  if (charge.id === 'chargeable' || charge.id === 'both') {
-    if (!isNonNegativeNumber(value.price)) {
-      return fail('Price is required for a chargeable service', 'Для платной услуги нужна цена')
-    }
+    if (requiresPrice(charge.id)) {
+      if (!isNonNegativeNumber(value.price)) {
+        return fail('Price is required for a chargeable service', 'Для платной услуги нужна цена')
+      }
 
-    if (value.currency === null || value.currency === undefined) {
-      return fail('Specify the currency', 'Укажите валюту')
-    }
-    const currency = asText(value.currency)
-    if (currency === null) return EXPECTED_TEXT
-    if (currency === '') {
-      return fail('Specify the currency', 'Укажите валюту')
+      if (value.currency === null || value.currency === undefined) {
+        return fail('Specify the currency', 'Укажите валюту')
+      }
+      const currency = asText(value.currency)
+      if (currency === null) return EXPECTED_TEXT
+      if (currency === '') {
+        return fail('Specify the currency', 'Укажите валюту')
+      }
     }
   }
 

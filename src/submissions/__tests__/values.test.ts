@@ -84,6 +84,89 @@ describe('сохранение значений', () => {
     expect(loaded.services['7.2']?.currency).toBe('EUR')
   })
 
+  it('пишет предложенную позицию без chargeType — неполный, но валидный ответ (R1)', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+
+    const result = await saveServiceValue(db, {
+      submissionId,
+      itemKey: '2.1',
+      value: {
+        available: 'yes', chargeType: null, price: null,
+        currency: null, slotMinutes: null, bookingRequired: null, details: null,
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    const loaded = await loadSubmissionValues(db, submissionId)
+    expect(loaded.services['2.1']?.available).toBe('yes')
+    expect(loaded.services['2.1']?.chargeType).toBeNull()
+  })
+
+  // R2, whole-branch review second round: `''` (deliberate un-selection,
+  // written by `ServicesPass1` when the operator returns a dropdown item to
+  // its placeholder) must not persist as the literal empty string — it has
+  // to normalise to `null`, the value `missingItems`'s availability check
+  // actually recognises as unanswered.
+  it('нормализует available: "" в null при записи', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+
+    const result = await saveServiceValue(db, {
+      submissionId,
+      itemKey: '2.1',
+      value: {
+        available: '', chargeType: null, price: null,
+        currency: null, slotMinutes: null, bookingRequired: null, details: null,
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    const loaded = await loadSubmissionValues(db, submissionId)
+    expect(loaded.services['2.1']?.available).toBeNull()
+  })
+
+  // R2: once an item stops being offered (cleared, or reverted to "no"),
+  // its old chargeType/price/currency/slotMinutes/bookingRequired must not
+  // survive in the row — otherwise a not-offered item still carries a price
+  // that plan 3's export would read as if it still applied.
+  it('снятие ранее платной позиции обратно до «—» стирает цену/валюту/прочие атрибуты', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+
+    await saveServiceValue(db, {
+      submissionId,
+      itemKey: '7.2',
+      value: {
+        available: 'yes', chargeType: 'chargeable', price: 15,
+        currency: 'EUR', slotMinutes: 30, bookingRequired: true, details: 'note',
+      },
+    })
+    expect((await loadSubmissionValues(db, submissionId)).services['7.2']?.price).toBe(15)
+
+    const result = await saveServiceValue(db, {
+      submissionId,
+      itemKey: '7.2',
+      // The operator reverts the dropdown to its placeholder — the client
+      // still sends the stale attributes alongside `available: ''` (nothing
+      // clears them locally until Pass 2 re-renders), exactly like a real
+      // `ServicesPass1` round trip.
+      value: {
+        available: '', chargeType: 'chargeable', price: 15,
+        currency: 'EUR', slotMinutes: 30, bookingRequired: true, details: 'note',
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    const loaded = await loadSubmissionValues(db, submissionId)
+    expect(loaded.services['7.2']?.available).toBeNull()
+    expect(loaded.services['7.2']?.chargeType).toBeNull()
+    expect(loaded.services['7.2']?.price).toBeNull()
+    expect(loaded.services['7.2']?.currency).toBeNull()
+    expect(loaded.services['7.2']?.slotMinutes).toBeNull()
+    expect(loaded.services['7.2']?.bookingRequired).toBeNull()
+  })
+
   it('отклоняет платную услугу без цены', async () => {
     const db = await createTestDb()
     const submissionId = await seedDraft(db)

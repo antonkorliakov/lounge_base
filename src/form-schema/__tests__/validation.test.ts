@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { validateField, validateServiceValue } from '../validation'
+import { validateField, validateServiceValue, needsDetail } from '../validation'
 import { fieldByKey, serviceItemByKey } from '../index'
 import type { Field } from '../index'
 
@@ -110,14 +110,50 @@ describe('валидация полей', () => {
   })
 })
 
+// `needsDetail` is the one place `validateSelect` and `FieldInput.tsx` now
+// both read to decide whether an option needs a detail — see its own doc
+// comment. Tested directly here so a future edit to either consumer can't
+// quietly restate the rule instead of calling this.
+describe('needsDetail', () => {
+  it('вариант с requiresDetail на самом списке', () => {
+    const f = field('III.1.2') // yesSpecifyNo — 'yes' has requiresDetail: true
+    expect(needsDetail(f, 'yes')).toBe(true)
+    expect(needsDetail(f, 'no')).toBe(false)
+  })
+
+  it('вариант, требующий детали только для этого конкретного поля (III.2.4)', () => {
+    const f = field('III.2.4')
+    expect(needsDetail(f, 'specific')).toBe(true)
+    expect(needsDetail(f, 'all')).toBe(false)
+  })
+
+  it('неизвестный id варианта — false, а не исключение', () => {
+    const f = field('III.2.4')
+    expect(needsDetail(f, 'nonsense')).toBe(false)
+  })
+})
+
 describe('валидация позиции услуг', () => {
   it('недоступная услуга не требует остальных атрибутов', () => {
     const value = serviceValue({ available: 'no', chargeType: null })
     expect(validateServiceValue(item('2.1'), value).ok).toBe(true)
   })
 
-  it('доступная услуга требует указания платности', () => {
+  // R1, whole-branch review second round: an offered item with no chargeType
+  // yet is a well-formed, INCOMPLETE answer, not an invalid one — this is
+  // exactly `ServicesPass1`'s output (it only ever sets `available`; there
+  // is no chargeType control until Pass 2). Requiring a chargeType here
+  // made it impossible to ever save the first pass. Completeness
+  // (`serviceItemAnswered`/`missingItems`) is what now enforces that an
+  // offered item eventually needs one before submission — see
+  // completeness.test.ts.
+  it('доступная услуга без указания платности всё ещё сохраняется — это неполный, но валидный ответ', () => {
     const value = serviceValue({ chargeType: null })
+    expect(validateServiceValue(item('2.1'), value).ok).toBe(true)
+  })
+
+  it('но неизвестный chargeType всё ещё отклоняется — это вопрос формы значения, не полноты', () => {
+    const value = serviceValue({ chargeType: 'nonsense' })
     expect(validateServiceValue(item('2.1'), value).ok).toBe(false)
   })
 

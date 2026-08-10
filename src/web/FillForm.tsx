@@ -222,6 +222,7 @@ export function FillForm(props: {
             fields={fieldsByKey}
             values={fields}
             onChange={changeField}
+            errors={autosave.rejected}
           />
           {submitErrorNode()}
           <button type="button" onClick={submit}>

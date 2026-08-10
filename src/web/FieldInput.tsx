@@ -1,7 +1,7 @@
 'use client'
 
 import type { Field, SelectValue } from '@/form-schema'
-import { OPTION_LISTS } from '@/form-schema'
+import { OPTION_LISTS, needsDetail } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 
 /**
@@ -91,15 +91,11 @@ export function FieldInput(props: {
       const options = field.optionList ? OPTION_LISTS[field.optionList] : []
       const current: SelectValue = (value ?? { option: '', detail: null }) as SelectValue
       const chosen = options.find((o) => o.id === current.option)
-      // `chosen.requiresDetail` covers options that always need a detail
-      // (see `option-lists.ts`); `field.detailRequiredFor` covers options
-      // that are `plain()` on the list itself but need one for this
-      // particular field (see `III.2.4` — every `airlineAccess` option is
-      // `plain()`, yet "specific airlines" is meaningless unqualified).
-      // Without the second check the detail textarea never renders for such
-      // a field, and `validateSelect` refuses every save forever.
-      const needsDetail =
-        chosen != null && (chosen.requiresDetail || field.detailRequiredFor.includes(chosen.id))
+      // Shared with `validateSelect` (see `needsDetail`'s own doc comment
+      // in `src/form-schema/validation.ts`) — this used to be a second,
+      // independently-written copy of that rule, which is exactly how
+      // Critical 1 happened: the two copies silently drifted apart.
+      const showDetail = chosen != null && needsDetail(field, chosen.id)
 
       return (
         <div className="field">
@@ -117,7 +113,7 @@ export function FieldInput(props: {
               </option>
             ))}
           </select>
-          {needsDetail && (
+          {showDetail && (
             <textarea
               className="field-detail"
               value={current.detail ?? ''}

@@ -1,23 +1,35 @@
 'use client'
 
-import { OPTION_LISTS, serviceItemByKey, type ServiceValueInput } from '@/form-schema'
+import {
+  OPTION_LISTS,
+  serviceItemByKey,
+  isOfferedAvailability,
+  requiresPrice,
+  type ServiceValueInput,
+} from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 
 /**
  * Детали спрашиваются только там, где на первом проходе ответили «есть».
  *
- * `''` is excluded alongside `null`: it's what `ServicesPass1`'s `<select>`
- * writes as `available` when the operator deliberately reverts a choice
- * back to the placeholder `<option value="">—</option>` — a real path, not
- * a hypothetical one. Without this, an item the operator un-selected would
- * reappear here demanding charge/price/slot/booking/details for a service
- * they just said the lounge doesn't have.
+ * Delegates to `isOfferedAvailability`, the schema's own predicate, rather
+ * than restating "'no'/'not_allowed' close the item" here — that duplicate
+ * copy (in agreement with `validation.ts`'s only by accident) is exactly
+ * the shape of bug Critical 1 was, per the whole-branch review's second
+ * round. `isOfferedAvailability` already treats `''` the same as `null`:
+ * `''` is what `ServicesPass1`'s `<select>` writes as `available` when the
+ * operator deliberately reverts a choice back to the placeholder
+ * `<option value="">—</option>` — a real path, not a hypothetical one.
+ * Without this, an item the operator un-selected would reappear here
+ * demanding charge/price/slot/booking/details for a service they just said
+ * the lounge doesn't have.
  */
 export function offeredKeys(values: Record<string, ServiceValueInput>): string[] {
   return Object.entries(values)
-    .filter(
-      ([, v]) => v.available !== null && v.available !== '' && !['no', 'not_allowed'].includes(v.available),
-    )
+    .filter(([key, v]) => {
+      const item = serviceItemByKey(key)
+      return item != null && isOfferedAvailability(item, v.available)
+    })
     .map(([key]) => key)
 }
 
@@ -39,7 +51,7 @@ export function ServicesPass2(props: {
         const item = serviceItemByKey(key)
         const value = props.values[key]
         if (!item || !value) return null
-        const needsPrice = value.chargeType === 'chargeable' || value.chargeType === 'both'
+        const needsPrice = requiresPrice(value.chargeType)
 
         return (
           <div key={key} className="pass2-card">

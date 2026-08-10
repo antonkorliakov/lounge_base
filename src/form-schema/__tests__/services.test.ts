@@ -5,6 +5,10 @@ import {
   SERVICE_GROUPS,
   SERVICE_ITEMS,
   SERVICE_ATTRIBUTES,
+  serviceItemByKey,
+  isOfferedAvailability,
+  requiresPrice,
+  serviceItemAnswered,
 } from '../services'
 
 // Golden fixture: item key -> exact English label as read from the source
@@ -112,5 +116,69 @@ describe('матрица услуг', () => {
     for (const item of SERVICE_ITEMS) {
       expect(item.label.en, item.key).toBe(sourceLabels[item.key])
     }
+  })
+})
+
+// These three predicates are the single source of truth `validation.ts`,
+// `ServicesPass2.tsx`, `completeness.ts`, and the contract test all now call
+// instead of each restating the same rule — see R1/R2 in the whole-branch
+// review's second round, and Critical 1 in the first: a rule the renderer
+// and the validator each hold separately is exactly the bug class this
+// extraction closes.
+describe('isOfferedAvailability', () => {
+  const wifi = serviceItemByKey('2.1')! // yesNo
+  const vaping = serviceItemByKey('8.3')! // own list
+
+  it('null/undefined/пустая строка — не предложено', () => {
+    expect(isOfferedAvailability(wifi, null)).toBe(false)
+    expect(isOfferedAvailability(wifi, undefined)).toBe(false)
+    expect(isOfferedAvailability(wifi, '')).toBe(false)
+  })
+
+  it('закрывающие id ("no"/"not_allowed") — не предложено', () => {
+    expect(isOfferedAvailability(wifi, 'no')).toBe(false)
+    expect(isOfferedAvailability(vaping, 'not_allowed')).toBe(false)
+  })
+
+  it('настоящий положительный ответ — предложено', () => {
+    expect(isOfferedAvailability(wifi, 'yes')).toBe(true)
+    expect(isOfferedAvailability(vaping, 'throughout')).toBe(true)
+    expect(isOfferedAvailability(vaping, 'smoking_room')).toBe(true)
+  })
+
+  it('id не из списка этой позиции — не предложено (не бросает исключение)', () => {
+    expect(isOfferedAvailability(wifi, 'throughout')).toBe(false)
+  })
+})
+
+describe('requiresPrice', () => {
+  it('chargeable и both требуют цену; complimentary и null — нет', () => {
+    expect(requiresPrice('chargeable')).toBe(true)
+    expect(requiresPrice('both')).toBe(true)
+    expect(requiresPrice('complimentary')).toBe(false)
+    expect(requiresPrice(null)).toBe(false)
+    expect(requiresPrice(undefined)).toBe(false)
+  })
+})
+
+describe('serviceItemAnswered', () => {
+  const wifi = serviceItemByKey('2.1')!
+
+  it('не отвечено (available отсутствует) — не отвечено', () => {
+    expect(serviceItemAnswered(wifi, undefined)).toBe(false)
+    expect(serviceItemAnswered(wifi, { available: null, chargeType: null })).toBe(false)
+    expect(serviceItemAnswered(wifi, { available: '', chargeType: null })).toBe(false)
+  })
+
+  it('закрывающий ответ ("нет") — отвечено, chargeType не нужен', () => {
+    expect(serviceItemAnswered(wifi, { available: 'no', chargeType: null })).toBe(true)
+  })
+
+  it('предложено, но без chargeType — ЕЩЁ НЕ отвечено (это и есть R1)', () => {
+    expect(serviceItemAnswered(wifi, { available: 'yes', chargeType: null })).toBe(false)
+  })
+
+  it('предложено и с chargeType — отвечено', () => {
+    expect(serviceItemAnswered(wifi, { available: 'yes', chargeType: 'complimentary' })).toBe(true)
   })
 })

@@ -15,6 +15,12 @@ export function FixesOnly(props: {
   fields: Map<string, Field>
   values: Record<string, unknown>
   onChange: (fieldKey: string, value: unknown) => void
+  /** The server's refusal message for a flagged field's most recent save,
+   *  keyed by field key (see `FillForm`'s `autosave.rejected`). Without this,
+   *  a refusal on this screen only ever showed in the header status banner —
+   *  not next to the specific answer that caused it, unlike the main form's
+   *  `FieldInput` calls. */
+  errors?: Record<string, string>
 }): React.JSX.Element {
   const { t } = useLocale()
 
@@ -33,6 +39,7 @@ export function FixesOnly(props: {
                 field={field}
                 value={props.values[flag.fieldKey]}
                 onChange={(value) => props.onChange(flag.fieldKey, value)}
+                error={props.errors?.[flag.fieldKey]}
               />
             )}
           </div>

@@ -1,6 +1,12 @@
 import { eq } from 'drizzle-orm'
 import type { Localized, ServiceValueInput } from '@/form-schema'
-import { fieldByKey, serviceItemByKey, validateField, validateServiceValue } from '@/form-schema'
+import {
+  fieldByKey,
+  serviceItemByKey,
+  validateField,
+  validateServiceValue,
+  isOfferedAvailability,
+} from '@/form-schema'
 import { fieldValues, serviceValues, submissions } from '@/db/schema'
 import type { Db, Tx } from '@/db/types'
 
@@ -75,15 +81,34 @@ export async function saveServiceValue(
     const validation = validateServiceValue(item, input.value)
     if (!validation.ok) return { ok: false, error: validation.error }
 
+    // Normalise the deliberate-un-selection sentinel (`''`) to the DB's own
+    // "unanswered" value (`null`) at the write boundary. `validateServiceValue`
+    // accepts `''` (matching the client's `offeredKeys()`), but persisting
+    // the literal `''` made `missingItems`'s availability check miss it —
+    // `'' == null` is `false` — so a deliberately cleared item silently
+    // counted as answered from then on (R2, whole-branch review second
+    // round).
+    const available = input.value.available === '' ? null : input.value.available
+
+    // Whenever the item is not offered — cleared, or a closing "no"/
+    // "not_allowed" answer — none of the offered-only attributes are
+    // meaningful, so they're blanked here rather than carried over from
+    // whatever they were before. Without this, un-checking (or reverting)
+    // a previously-chargeable item would leave its old chargeType/price/
+    // currency/slotMinutes/bookingRequired sitting in the row for plan 3's
+    // export to read as if they still applied to an item the operator just
+    // said the lounge doesn't have.
+    const offered = isOfferedAvailability(item, available)
+
     const row = {
       submissionId: input.submissionId,
       itemKey: input.itemKey,
-      available: input.value.available,
-      chargeType: input.value.chargeType,
-      price: input.value.price === null ? null : String(input.value.price),
-      currency: input.value.currency,
-      slotMinutes: input.value.slotMinutes,
-      bookingRequired: input.value.bookingRequired,
+      available,
+      chargeType: offered ? input.value.chargeType : null,
+      price: offered && input.value.price !== null ? String(input.value.price) : null,
+      currency: offered ? input.value.currency : null,
+      slotMinutes: offered ? input.value.slotMinutes : null,
+      bookingRequired: offered ? input.value.bookingRequired : null,
       details: input.value.details,
     }
 

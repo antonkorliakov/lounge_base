@@ -1,15 +1,36 @@
 import { describe, it, expect } from 'vitest'
 import {
   FIELDS,
+  SERVICE_ITEMS,
   OPTION_LISTS,
   validateField,
   validateServiceValue,
+  needsDetail,
   fieldByKey,
-  serviceItemByKey,
   type Field,
   type SelectValue,
+  type ServiceValueInput,
 } from '@/form-schema'
 import { numberFieldValue } from '../FieldInput'
+
+/**
+ * Mirrors `ServicesPass1`'s `EMPTY` constant (`src/web/ServicesPass1.tsx`):
+ * every attribute a first-pass answer can possibly carry, before Pass 2 has
+ * ever touched it. Both of Pass 1's controls (the binary checkbox and the
+ * own-list `<select>`) build their emitted value as `{ ...EMPTY, ...current,
+ * available: <the chosen id> }` — so this, plus an `available`, is exactly
+ * what reaches the server for the FIRST answer to any service item. This is
+ * the value that Critical/R1 made unsaveable: `chargeType: null` on an
+ * offered item used to be refused outright.
+ */
+const EMPTY_SERVICE_ATTRS: Omit<ServiceValueInput, 'available'> = {
+  chargeType: null,
+  price: null,
+  currency: null,
+  slotMinutes: null,
+  bookingRequired: null,
+  details: null,
+}
 
 /**
  * The whole-branch review's central finding: every task-scoped review looked
@@ -65,18 +86,16 @@ describe('контракт FieldInput ↔ validateField', () => {
       for (const field of selectFields) {
         const options = field.optionList ? OPTION_LISTS[field.optionList] : []
         for (const option of options) {
-          // Exactly the condition `FieldInput.tsx` uses to decide whether it
-          // renders a detail `<textarea>` at all: `option.requiresDetail`
-          // (the list's own flag) OR `field.detailRequiredFor` (this
-          // field's own override — see Critical 1). If neither is true, the
-          // UI never offers a way to type a detail, so `detail` can only
-          // ever be `null` for this option — that must still be enough.
-          const needsDetail =
-            option.requiresDetail || field.detailRequiredFor.includes(option.id)
-
+          // `needsDetail` is the exact predicate `FieldInput.tsx` calls to
+          // decide whether it renders a detail `<textarea>` at all — shared
+          // with `validateSelect`, not reimplemented here (see Critical 1,
+          // and the second review round's point that this expression used
+          // to be written out three times independently). If it's false,
+          // the UI never offers a way to type a detail, so `detail` can
+          // only ever be `null` for this option — that must still be enough.
           const value: SelectValue = {
             option: option.id,
-            detail: needsDetail ? 'operator-entered detail' : null,
+            detail: needsDetail(field, option.id) ? 'operator-entered detail' : null,
           }
           // The compound-slot UI (`field-compound`) renders unconditionally
           // whenever the field has template slots, regardless of which
@@ -124,27 +143,40 @@ describe('контракт FieldInput ↔ validateField', () => {
     })
   })
 
-  describe('очистка позиции услуг до «—» (I3, серверная сторона)', () => {
-    const cleared = {
-      available: '',
-      chargeType: null,
-      price: null,
-      currency: null,
-      slotMinutes: null,
-      bookingRequired: null,
-      details: null,
-    }
-
-    it('бинарная позиция (yesNo), снятая обратно до «—», проходит валидацию', () => {
-      const item = serviceItemByKey('2.1') // Wifi Access
-      if (!item) throw new Error('нет позиции 2.1')
-      expect(validateServiceValue(item, cleared).ok).toBe(true)
+  describe('позиции услуг: каждый вариант списка доступности (R1)', () => {
+    it('в матрице действительно есть позиции услуг (иначе тест ничего не проверяет)', () => {
+      expect(SERVICE_ITEMS.length).toBeGreaterThan(0)
     })
 
-    it('позиция со своим списком (vaping), снятая обратно до «—», проходит валидацию', () => {
-      const item = serviceItemByKey('8.3') // Vaping policy — own list
-      if (!item) throw new Error('нет позиции 8.3')
-      expect(validateServiceValue(item, cleared).ok).toBe(true)
+    // This is the test that would have caught R1 before it shipped: for
+    // EVERY service item and EVERY option of its own availability list,
+    // build exactly what `ServicesPass1` emits for that option — `{
+    // ...EMPTY_SERVICE_ATTRS, available: option.id }`, i.e. `chargeType:
+    // null` and every other attribute unset — and check the schema accepts
+    // it. Before the R1 fix, any option that wasn't a closing "no"/
+    // "not_allowed" id failed this: `validateServiceValue` refused an
+    // offered item with no chargeType, so the FIRST answer to any of the
+    // 58 items in Pass 1 was unsaveable and survived only in React state.
+    it('для каждого варианта списка доступности — значение, которое реально может отправить ServicesPass1, проходит валидацию', () => {
+      for (const item of SERVICE_ITEMS) {
+        const options = OPTION_LISTS[item.availabilityList]
+        for (const option of options) {
+          const value: ServiceValueInput = { ...EMPTY_SERVICE_ATTRS, available: option.id }
+          const result = validateServiceValue(item, value)
+          expect(result.ok, `${item.key} / available "${option.id}"`).toBe(true)
+        }
+      }
+    })
+  })
+
+  describe('очистка позиции услуг до «—» (I3, серверная сторона)', () => {
+    const cleared = (): ServiceValueInput => ({ ...EMPTY_SERVICE_ATTRS, available: '' })
+
+    it('каждая позиция услуг, снятая обратно до «—», проходит валидацию', () => {
+      for (const item of SERVICE_ITEMS) {
+        const result = validateServiceValue(item, cleared())
+        expect(result.ok, item.key).toBe(true)
+      }
     })
   })
 
@@ -188,6 +220,25 @@ describe('контракт FieldInput ↔ validateField', () => {
       for (const field of FIELDS.filter((f) => f.type === 'multi_select')) {
         const result = validateField(field, [])
         expect(result.ok, field.key).toBe(!field.required)
+      }
+    })
+
+    // The empty-array case above is the "cleared" end of the contract; this
+    // is the other end — every individual checkbox `FieldInput.tsx` can
+    // actually tick, one at a time (`[...selected, option.id]` from an empty
+    // start). Previously only `[]` was walked, leaving every one of the
+    // field's real options untested from the UI-emission side.
+    it('multi_select: каждый отдельный вариант списка проходит валидацию', () => {
+      const multiSelectFields = FIELDS.filter((f) => f.type === 'multi_select')
+      expect(multiSelectFields.length).toBeGreaterThan(0)
+
+      for (const field of multiSelectFields) {
+        const options = field.optionList ? OPTION_LISTS[field.optionList] : []
+        expect(options.length, field.key).toBeGreaterThan(0)
+        for (const option of options) {
+          const result = validateField(field, [option.id])
+          expect(result.ok, `${field.key} / option "${option.id}"`).toBe(true)
+        }
       }
     })
 

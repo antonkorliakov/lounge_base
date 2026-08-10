@@ -73,6 +73,35 @@ test('два прохода по услугам: детали спрашиваю
   await expect(page.getByRole('heading', { name: 'Runway View' })).toHaveCount(0)
 })
 
+// R1, whole-branch review second round: checking a service in Pass 1 used
+// to be refused outright (`validateServiceValue` required a `chargeType`
+// that Pass 1 has no control to set), so the answer survived only in React
+// state and a reload between passes lost every Pass-1 decision. This test
+// is what that round exists to fix: it never reaches Pass 2 at all, and
+// still expects the checkbox to be checked, saved, and to survive a reload.
+test('выбор в первом проходе по услугам сохраняется и переживает перезагрузку (R1)', async ({ page }) => {
+  const url = seed()
+  await page.goto(url)
+
+  await clickNext(page, FIELD_STEP_COUNT)
+  await expect(page.getByRole('heading', { name: 'What does the lounge offer?' })).toBeVisible()
+
+  const wifiRow = page.getByText('Wifi Access').locator('..')
+  await wifiRow.getByRole('checkbox').check()
+
+  // Wait for the 600ms autosave debounce plus the round trip to actually
+  // persist this — before the fix, `validateServiceValue` refused it, so
+  // the header would have stuck on "Some answers were not accepted", never
+  // "Saved".
+  await expect(page.getByText('Saved')).toBeVisible()
+
+  await page.reload()
+  await clickNext(page, FIELD_STEP_COUNT)
+  await expect(page.getByRole('heading', { name: 'What does the lounge offer?' })).toBeVisible()
+
+  await expect(page.getByText('Wifi Access').locator('..').getByRole('checkbox')).toBeChecked()
+})
+
 test('отказ сервера показывает ошибку у позиции и НЕ отображается как "Saved" (Critical 2)', async ({ page }) => {
   const url = seed()
   await page.goto(url)
@@ -80,15 +109,18 @@ test('отказ сервера показывает ошибку у позиц�
   await clickNext(page, FIELD_STEP_COUNT)
   await expect(page.getByRole('heading', { name: 'What does the lounge offer?' })).toBeVisible()
 
-  // Checking a service without also setting its charge type is refused by
-  // `validateServiceValue` (see src/form-schema/validation.ts: an "offered"
-  // item needs `chargeType`, and Pass 1 never sets it — only Pass 2 does).
-  // This is the easiest real refusal to trigger through the actual UI: no
-  // mocking, no direct DB/API calls, just the ordinary two-pass flow with
-  // the second pass not reached yet.
+  // Checking a service in Pass 1 no longer causes a refusal by itself (R1
+  // fixed that — see the persistence test above). The natural refusal
+  // reachable through the real UI now lives in Pass 2: `validateServiceValue`
+  // still enforces that a "chargeable" answer needs a price — R1 only
+  // removed the "must have SOME chargeType at all" gate, not this
+  // internal-consistency rule.
   await page.getByText('Wifi Access').locator('..').getByRole('checkbox').check()
   await clickNext(page)
   await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
+
+  const wifiCard = page.getByRole('heading', { name: 'Wifi Access' }).locator('..')
+  await wifiCard.getByRole('combobox').selectOption('chargeable')
 
   // The 600ms autosave debounce (see useAutosave.ts) plus the round trip to
   // the server must run before the refusal comes back — `expect` here polls
@@ -97,20 +129,24 @@ test('отказ сервера показывает ошибку у позиц�
   // regardless: this refusal was invisible end-to-end.
   await expect(page.getByText('Some answers were not accepted')).toBeVisible()
   await expect(page.getByText('Saved')).toHaveCount(0)
+  await expect(wifiCard.getByText('Price is required for a chargeable service')).toBeVisible()
 
-  const wifiCard = page.getByRole('heading', { name: 'Wifi Access' }).locator('..')
-  await expect(
-    wifiCard.getByText('Specify whether the service is complimentary or chargeable'),
-  ).toBeVisible()
+  // Fixing the actual cause — entering a price AND a currency, both of
+  // which `validateServiceValue` requires once `chargeType` is "chargeable"
+  // — clears both the per-item error and the header status, confirming
+  // this isn't a one-way "permanently stuck" state. The price input is the
+  // first number input that appears once "chargeable" makes `needsPrice`
+  // true (see ServicesPass2.tsx); the currency input is the only `<input>`
+  // in this card with no `type` attribute (it sits right after price, and
+  // is otherwise indistinguishable from the details/booking fields except
+  // by that absence).
+  const priceInput = wifiCard.locator('input[type="number"]').first()
+  await priceInput.fill('10')
+  const currencyInput = wifiCard.locator('input:not([type])')
+  await currencyInput.fill('EUR')
 
-  // Fixing the actual cause — picking a charge type — clears both the
-  // per-item error and the header status, confirming this isn't a one-way
-  // "permanently stuck" state.
-  await wifiCard.getByRole('combobox').selectOption('complimentary')
   await expect(page.getByText('Saved')).toBeVisible()
-  await expect(
-    wifiCard.getByText('Specify whether the service is complimentary or chargeable'),
-  ).toHaveCount(0)
+  await expect(wifiCard.getByText('Price is required for a chargeable service')).toHaveCount(0)
 })
 
 test('перезагрузка сохраняет значение, введённое до срабатывания автосохранения', async ({ page }) => {

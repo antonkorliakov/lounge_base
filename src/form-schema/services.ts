@@ -1,5 +1,6 @@
 import type { Localized } from './types'
 import type { OptionListId } from './option-lists'
+import { OPTION_LISTS } from './option-lists'
 
 /**
  * Матрица услуг и питания листа `Services & Amenities` исходного xlsx.
@@ -187,4 +188,73 @@ export const SERVICE_ITEMS: ServiceItem[] = [
 
 export function serviceItemByKey(key: string): ServiceItem | undefined {
   return SERVICE_ITEMS.find((i) => i.key === key)
+}
+
+/**
+ * Availability answer ids that close a service item without offering it —
+ * "no" (the `yesNo` list) and "not_allowed" (every other availability list
+ * a service item currently uses, e.g. `vaping`). Kept as the one place this
+ * convention is spelled out — see `isOfferedAvailability` below, the
+ * predicate every consumer should call instead of restating this list.
+ */
+const CLOSING_AVAILABILITY_IDS = ['no', 'not_allowed']
+
+/**
+ * True when `available` means "the lounge has this" — as opposed to
+ * unanswered (`null`/`''`), an id that doesn't belong to this item's own
+ * `availabilityList`, or a closing "no"/"not allowed" answer. Only an
+ * offered item needs the pass-2 attributes (`chargeType`, `price`, ...) —
+ * see `serviceItemAnswered` and `requiresPrice` below, and
+ * `ServicesPass2.tsx`'s `offeredKeys` on the render side.
+ *
+ * This is the single place that rule lives now. Before the whole-branch
+ * review's second round, the exact same `!['no', 'not_allowed'].includes
+ * (...)` check was written out separately in `validation.ts` and in
+ * `ServicesPass2.tsx` — in agreement only by accident, the same shape of
+ * bug as Critical 1 (a rule the renderer and the validator each held
+ * separately).
+ */
+export function isOfferedAvailability(
+  item: ServiceItem,
+  available: string | null | undefined,
+): boolean {
+  if (available == null || available === '') return false
+  const options = OPTION_LISTS[item.availabilityList]
+  const chosen = options.find((o) => o.id === available)
+  if (!chosen) return false
+  return !CLOSING_AVAILABILITY_IDS.includes(chosen.id)
+}
+
+/**
+ * True for the two `chargeType` ids that require a price and currency —
+ * "chargeable" and "both". `requiresPrice(chargeType)` being false covers
+ * both "complimentary" and "not yet answered" (`null`) alike — this
+ * predicate says nothing about whether a price is *missing*, only whether
+ * one would ever be required once the rest of the answer is complete.
+ */
+export function requiresPrice(chargeType: string | null | undefined): boolean {
+  return chargeType === 'chargeable' || chargeType === 'both'
+}
+
+/**
+ * Whether a service item counts as "answered" for completeness purposes —
+ * used by both `missingItems` (`src/submissions/completeness.ts`) and the
+ * contract test, so the two can never quietly disagree the way
+ * `validation.ts`'s old "chargeType required" save-time gate and the
+ * two-pass matrix's actual save path once did (Critical/R1, whole-branch
+ * review second round).
+ *
+ * An item is answered once its availability is set at all; if it's also
+ * *offered*, its `chargeType` must be set too. An offered item with no
+ * chargeType yet is a well-formed, saveable, but INCOMPLETE answer — that
+ * split (shape vs. readiness) is exactly `validateServiceValue` vs.
+ * `missingItems`.
+ */
+export function serviceItemAnswered(
+  item: ServiceItem,
+  value: { available: string | null; chargeType: string | null } | null | undefined,
+): boolean {
+  if (value == null || value.available == null || value.available === '') return false
+  if (!isOfferedAvailability(item, value.available)) return true
+  return value.chargeType != null && value.chargeType !== ''
 }
