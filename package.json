@@ -29,6 +29,7 @@
   },
   "homepage": "https://github.com/antonkorliakov/lounge_base#readme",
   "dependencies": {
+    "@vercel/blob": "^2.7.0",
     "drizzle-orm": "^0.45.2",
     "next": "^16.3.0",
     "postgres": "^3.4.9",
