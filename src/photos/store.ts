@@ -104,6 +104,28 @@ export async function listPhotos(db: Db, submissionId: string): Promise<PhotoRow
   return rows
 }
 
-export async function removePhoto(db: Db, photoId: string): Promise<void> {
-  await db.delete(photos).where(eq(photos.id, photoId))
+export async function removePhoto(db: Db, photoId: string): Promise<SaveResult> {
+  // Удаление — такая же правка анкеты, как attachPhoto, и должна подчиняться
+  // тому же правилу editable. photoId не несёт submissionId, поэтому сперва
+  // читаем его из строки photos, а уже потом (в той же транзакции) берём
+  // блокировку на submissions — родитель блокируется до того, как транзакция
+  // пишет что-либо, порядок тот же, что в attachPhoto. Если строки с таким
+  // id нет — отказ, а не тихий no-op: вызывающий не должен решить, что фото
+  // удалено, когда на самом деле не было и что удалять.
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ submissionId: photos.submissionId })
+      .from(photos)
+      .where(eq(photos.id, photoId))
+      .limit(1)
+
+    const submissionId = rows[0]?.submissionId
+    if (!submissionId) return fail('Photo not found', 'Фото не найдено')
+
+    const editable = await assertEditable(tx, submissionId)
+    if (!editable.ok) return editable
+
+    await tx.delete(photos).where(eq(photos.id, photoId))
+    return { ok: true }
+  })
 }

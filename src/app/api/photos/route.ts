@@ -14,7 +14,15 @@ import { attachPhoto } from '@/photos/store'
 // проверка содержимого (антивирус, точная проверка магических байт) избыточна
 // для этой задачи — этого достаточно, чтобы закрыть очевидный путь абьюза.
 const MAX_PHOTO_BYTES = 15 * 1024 * 1024
-const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+// Тип файла определяет одновременно и то, разрешён ли он, и то, каким
+// расширением заканчивается ключ в блоб-хранилище — один источник истины
+// вместо белого списка типов и отдельного (и как оказалось, всегда
+// неверного для PNG/WebP) хардкода расширения.
+const EXTENSION_BY_TYPE: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+}
 
 export async function POST(request: Request): Promise<NextResponse> {
   const form = await request.formData()
@@ -37,7 +45,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (file.size > MAX_PHOTO_BYTES) {
     return NextResponse.json({ error: 'файл слишком велик' }, { status: 413 })
   }
-  if (!ALLOWED_TYPES.has(file.type)) {
+  const extension = EXTENSION_BY_TYPE[file.type]
+  if (!extension) {
     return NextResponse.json({ error: 'недопустимый тип файла' }, { status: 400 })
   }
   // Слот проверяем здесь же, а не только внутри attachPhoto: иначе на
@@ -47,7 +56,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'неизвестный слот' }, { status: 400 })
   }
 
-  const key = `${resolved.submissionId}/${slot}-${Date.now()}.jpg`
+  const key = `${resolved.submissionId}/${slot}-${Date.now()}.${extension}`
   const blob = await put(key, file, { access: 'public', contentType: file.type })
 
   // Блоб пишется раньше строки в БД, так что между ними есть окно, где
