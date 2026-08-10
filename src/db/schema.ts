@@ -1,6 +1,7 @@
+import { sql } from 'drizzle-orm'
 import {
   boolean, date, index, integer, jsonb, numeric, pgEnum, pgTable,
-  text, timestamp, unique, uuid,
+  text, timestamp, unique, uniqueIndex, uuid,
 } from 'drizzle-orm/pg-core'
 
 export const submissionStatus = pgEnum('submission_status', [
@@ -124,7 +125,21 @@ export const fieldFlags = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   },
-  (table) => [index('field_flags_submission_idx').on(table.submissionId)],
+  (table) => [
+    index('field_flags_submission_idx').on(table.submissionId),
+    // Enforces "one open flag per (submission, field)" in the database
+    // itself, not just in raiseFlag's application logic. Partial (only over
+    // still-open rows) so resolved history for the same key doesn't
+    // conflict. This turns raiseFlag's replace-if-open into a single
+    // `INSERT ... ON CONFLICT ... DO UPDATE` targeting this index, the same
+    // shape as the delete-then-write races already fixed elsewhere on this
+    // branch (see `access/team.ts`'s `consumeLoginToken`) — one atomic
+    // statement instead of a read followed by a write that a concurrent
+    // caller can interleave with.
+    uniqueIndex('field_flags_open_unique')
+      .on(table.submissionId, table.fieldKey)
+      .where(sql`${table.resolvedAt} is null`),
+  ],
 )
 
 export const events = pgTable('events', {
