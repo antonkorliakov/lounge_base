@@ -19,10 +19,17 @@ const EDITABLE = new Set(['draft', 'changes_requested'])
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 
 async function assertEditable(tx: Tx, submissionId: string): Promise<SaveResult> {
+  // FOR UPDATE: the status check and the write land in different tables
+  // (submissions vs. field_values/service_values), so under the default
+  // READ COMMITTED isolation a plain SELECT takes no lock and does nothing
+  // to serialize against a concurrent status change. Locking this row keeps
+  // a concurrent submit/approve from committing until this transaction
+  // does — do not remove this thinking it's redundant with the transaction.
   const rows = await tx
     .select({ status: submissions.status })
     .from(submissions)
     .where(eq(submissions.id, submissionId))
+    .for('update')
     .limit(1)
 
   const status = rows[0]?.status

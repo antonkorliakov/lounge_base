@@ -136,6 +136,8 @@ describe('сохранение значений', () => {
       submissionId, fieldKey: 'I.2', value: 'Исправлено',
     })
     expect(result.ok).toBe(true)
+    const loaded = await loadSubmissionValues(db, submissionId)
+    expect(loaded.fields['I.2']).toBe('Исправлено')
   })
 
   it('проверка статуса и запись выполняются в одной транзакции', async () => {
@@ -155,5 +157,39 @@ describe('сохранение значений', () => {
     // к раздельным SELECT + INSERT без провала этого теста.
     expect(result.ok).toBe(true)
     expect(transactionSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('запрашивает блокировку строки анкеты (FOR UPDATE) при проверке статуса', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+
+    // `.for` живёт на прототипе, общем для любого select-построителя,
+    // включая тот, что assertEditable создаёт внутри db.transaction —
+    // поэтому шпион, поставленный здесь через отдельный "пробный" select,
+    // перехватывает и настоящий вызов внутри saveFieldValue, без
+    // дублирования кода запроса из values.ts.
+    const probe = db.select({ status: submissions.status }).from(submissions)
+    const forSpy = vi.spyOn(Object.getPrototypeOf(probe), 'for')
+
+    try {
+      const result = await saveFieldValue(db, {
+        submissionId, fieldKey: 'I.2', value: 'Под блокировкой',
+      })
+
+      // Доказывает, что assertEditable реально вызывает `.for('update')` и
+      // что получившийся SQL содержит `for update` — то есть блокировка
+      // строки запрошена. Это НЕ доказывает, что конкурентная транзакция
+      // на самом деле заблокируется и будет ждать: unit-тест с одним
+      // подключением к PGlite не может интерливить два реальных
+      // одновременных соединения, поэтому семантика блокировки на уровне
+      // движка (что именно делает Postgres/PGlite с FOR UPDATE) здесь не
+      // проверяется — только то, что наш код её запрашивает.
+      expect(result.ok).toBe(true)
+      expect(forSpy).toHaveBeenCalledWith('update')
+      const locked = forSpy.mock.results.at(-1)?.value
+      expect(locked?.toSQL().sql.toLowerCase()).toContain('for update')
+    } finally {
+      forSpy.mockRestore()
+    }
   })
 })
