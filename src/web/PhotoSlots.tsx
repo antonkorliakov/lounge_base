@@ -23,12 +23,36 @@ function isLocalized(value: unknown): value is Localized {
   )
 }
 
+/**
+ * `slotKeys` narrows which of `PHOTO_SLOTS` this renders; omitted, it renders
+ * all four, as the photos step of the main form does.
+ *
+ * This is how the fixes screen (`FixesOnly`) reuses the upload control for a
+ * flagged slot instead of getting its own copy. Everything that makes an
+ * upload work — `resizeToJpeg`, the `FormData` shape `/api/photos` expects,
+ * the per-slot error state, the success path that calls `onUploaded` — is
+ * already per-slot here and keyed by slot, so the only thing the fixes screen
+ * actually needed was "render one of these, not all four". A second component
+ * would have had to restate every one of those, and the failure mode of
+ * restating them is silent (an upload that posts a slightly different body,
+ * or swallows a rejection) — the defect class this branch keeps hitting.
+ *
+ * Filtering `PHOTO_SLOTS` by key rather than accepting `PhotoSlot[]` objects
+ * keeps the schema the single source of a slot's `label`/`required`/`extra`:
+ * a caller cannot hand in a fabricated slot whose `extra` disagrees with what
+ * `attachPhoto` will actually do on the server.
+ */
 export function PhotoSlots(props: {
   token: string
   uploaded: Record<string, string[]>
   onUploaded: (slot: string, url: string) => void
+  slotKeys?: readonly string[]
 }): React.JSX.Element {
   const { pick, t } = useLocale()
+  const slots =
+    props.slotKeys === undefined
+      ? PHOTO_SLOTS
+      : PHOTO_SLOTS.filter((slot) => props.slotKeys?.includes(slot.key))
   // Per-slot, not a single form-wide error: a rejection on one slot must
   // not blank out or get confused with whatever another slot is showing.
   const [errors, setErrors] = useState<Record<string, Localized>>({})
@@ -86,7 +110,7 @@ export function PhotoSlots(props: {
 
   return (
     <section className="photos">
-      {PHOTO_SLOTS.map((slot) => (
+      {slots.map((slot) => (
         <div key={slot.key} className="photo-slot">
           <h3>{pick(slot.label)}</h3>
           {(props.uploaded[slot.key] ?? []).map((url) => (

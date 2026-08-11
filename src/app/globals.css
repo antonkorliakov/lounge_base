@@ -79,6 +79,43 @@ body {
 }
 .fix-comment { margin: 0 0 10px; color: #991b1b; }
 
+/* Карточка позиции услуг / слота фото внутри карточки правки: рамка уже
+   нарисована самой .fix-card, вторая внутри неё читалась бы как ещё один
+   уровень вложенности, которого нет. Контролы (.pass2-card input и т.п.)
+   продолжают работать — селекторы висят на классе, а не на рамке. */
+.fix-card .pass2-card {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  margin-bottom: 0;
+}
+.fix-card .pass2-card h3,
+.fix-card .photo-slot h3 { margin-top: 0; }
+
+/* «Ещё не изменено» / «Изменено». Не запрет на повторную отправку (она
+   разрешена сознательно — заполняющий не должен оказаться в ловушке
+   замечания, с которым не согласен), а различение: без него все карточки
+   выглядят одинаково и отправка без правок становится случайностью. Янтарный,
+   не красный: красный здесь уже занят комментарием ревьюера (.fix-comment) и
+   отказами сервера, а это не ошибка. */
+.fix-open { margin: 8px 0 0; font-size: 13px; color: #92400e; }
+.fix-changed { margin: 8px 0 0; font-size: 13px; color: #15803d; }
+
+/* Отмеченный ключ, для которого на этом экране нет контрола. Появиться не
+   должен никогда (см. `fixes.noControl` в dictionaries.ts и
+   `src/web/__tests__/fixesOnly.test.tsx`) — но если появится, должен быть
+   виден как дефект, а не как пустая карточка: пустая карточка и скрывала
+   этот дефект для 62 из 129 отмечаемых ключей. */
+.fix-unmatched {
+  margin: 0;
+  padding: 10px;
+  border: 2px dashed #b91c1c;
+  border-radius: 8px;
+  color: #7f1d1d;
+  background: #fff5f5;
+}
+.fix-unmatched code { font-weight: 600; }
+
 .photo-slot img { max-width: 100%; border-radius: 8px; }
 
 /* Was a bare line of text with no sizing rule at all — the tap target was
@@ -213,6 +250,10 @@ button:disabled { opacity: .4; }
   .pass1-row { border-color: #2a2d34; }
   .pass2-card,
   .fix-card { border-color: #2a2d34; }
+  /* Тот же довод, что у пастельных фонов экрана проверки ниже: светлая
+     подложка .fix-unmatched на тёмной странице стала бы светлым пятном с
+     нечитаемым тёмно-красным текстом. */
+  .fix-unmatched { background: #2a1616; border-color: #b91c1c; color: #fca5a5; }
 
   /* Экран проверки: пастельные светлые фоны (nav-current, frow-flagged,
      frow-comment) на тёмном фоне страницы читались бы как светлые пятна с

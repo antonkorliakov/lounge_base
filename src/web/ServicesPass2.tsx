@@ -1,13 +1,8 @@
 'use client'
 
-import {
-  OPTION_LISTS,
-  serviceItemByKey,
-  isOfferedAvailability,
-  requiresPrice,
-  type ServiceValueInput,
-} from '@/form-schema'
+import { serviceItemByKey, isOfferedAvailability, type ServiceValueInput } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
+import { ServiceItemCard } from './ServiceItemCard'
 
 /**
  * Детали спрашиваются только там, где на первом проходе ответили «есть».
@@ -33,6 +28,14 @@ export function offeredKeys(values: Record<string, ServiceValueInput>): string[]
     .map(([key]) => key)
 }
 
+/**
+ * The per-item card itself now lives in `./ServiceItemCard.tsx`, rendered
+ * here and on the fixes screen (`FixesOnly`) from one definition — see that
+ * file's header for why a second copy on the fixes screen was not an option.
+ * What stays here is this screen's own job, and the one thing the fixes
+ * screen must NOT inherit: the `offeredKeys` filter. The fixes screen has to
+ * open exactly the flagged item whether or not it is currently offered.
+ */
 export function ServicesPass2(props: {
   values: Record<string, ServiceValueInput>
   onChange: (itemKey: string, value: ServiceValueInput) => void
@@ -41,7 +44,7 @@ export function ServicesPass2(props: {
    *  the caller — see `FillForm`'s `serviceErrors`). */
   errors?: Record<string, string>
 }): React.JSX.Element {
-  const { pick, t } = useLocale()
+  const { t } = useLocale()
   const keys = offeredKeys(props.values)
 
   return (
@@ -49,79 +52,16 @@ export function ServicesPass2(props: {
       <h2>{t('services.pass2Title')}</h2>
       {keys.map((key) => {
         const item = serviceItemByKey(key)
-        const value = props.values[key]
-        if (!item || !value) return null
-        const needsPrice = requiresPrice(value.chargeType)
+        if (!item) return null
 
         return (
-          <div key={key} className="pass2-card">
-            <h3>{pick(item.label)}</h3>
-            {item.hint && <p className="field-hint">{pick(item.hint)}</p>}
-
-            <label>{t('services.charge')}</label>
-            <select
-              value={value.chargeType ?? ''}
-              onChange={(e) =>
-                props.onChange(key, {
-                  ...value,
-                  chargeType: e.target.value === '' ? null : e.target.value,
-                })
-              }
-            >
-              <option value="">—</option>
-              {OPTION_LISTS.chargeType.map((option) => (
-                <option key={option.id} value={option.id}>{pick(option.label)}</option>
-              ))}
-            </select>
-
-            {needsPrice && (
-              <>
-                <label>{t('services.price')}</label>
-                <input
-                  type="number" min={0}
-                  value={value.price ?? ''}
-                  onChange={(e) =>
-                    props.onChange(key, {
-                      ...value, price: e.target.value === '' ? null : Number(e.target.value),
-                    })
-                  }
-                />
-                <label>{t('services.currency')}</label>
-                <input
-                  value={value.currency ?? ''}
-                  onChange={(e) => props.onChange(key, { ...value, currency: e.target.value })}
-                />
-              </>
-            )}
-
-            <label>{t('services.slot')}</label>
-            <input
-              type="number" min={0}
-              value={value.slotMinutes ?? ''}
-              onChange={(e) =>
-                props.onChange(key, {
-                  ...value, slotMinutes: e.target.value === '' ? null : Number(e.target.value),
-                })
-              }
-            />
-
-            <label className="field-check">
-              <input
-                type="checkbox"
-                checked={value.bookingRequired ?? false}
-                onChange={(e) => props.onChange(key, { ...value, bookingRequired: e.target.checked })}
-              />
-              {t('services.booking')}
-            </label>
-
-            <label>{t('services.details')}</label>
-            <textarea
-              value={value.details ?? ''}
-              onChange={(e) => props.onChange(key, { ...value, details: e.target.value })}
-            />
-
-            {props.errors?.[key] && <p className="fix-comment">{props.errors[key]}</p>}
-          </div>
+          <ServiceItemCard
+            key={key}
+            item={item}
+            value={props.values[key]}
+            onChange={(value) => props.onChange(key, value)}
+            error={props.errors?.[key]}
+          />
         )
       })}
     </section>

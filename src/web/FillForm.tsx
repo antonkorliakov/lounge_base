@@ -45,8 +45,20 @@ export function FillForm(props: {
   const [submitError, setSubmitError] = useState<Localized | null>(null)
   const [submitMissing, setSubmitMissing] = useState<MissingItems | null>(null)
   const [submitted, setSubmitted] = useState(false)
+  /**
+   * Flagged answers the filler has actually edited in this session, for the
+   * fixes screen's "not changed yet" marking (see `FixesOnly`'s `touched`).
+   * Session-local by necessity: `props.flags` is what the server rendered at
+   * page load, and a successful save clears its flag in a second transaction
+   * without re-rendering this tree (see `clearFlagAfterSave`), so the card
+   * stays on screen after being fixed and nothing else here can tell the two
+   * apart.
+   */
+  const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set())
 
-  const fieldsByKey = useMemo(() => new Map(FIELDS.map((f) => [f.key, f])), [])
+  function markTouched(key: string): void {
+    setTouched((prev) => (prev.has(key) ? prev : new Set(prev).add(key)))
+  }
 
   const autosave = useAutosave({
     submissionId: props.submissionId,
@@ -114,12 +126,36 @@ export function FillForm(props: {
 
   function changeField(key: string, value: unknown): void {
     setFields((prev) => ({ ...prev, [key]: value }))
+    markTouched(key)
     autosave.push(key, value)
   }
 
   function changeService(key: string, value: ServiceValueInput): void {
     setServices((prev) => ({ ...prev, [key]: value }))
+    markTouched(key)
     autosave.push(`svc:${key}`, value)
+  }
+
+  /**
+   * Единственный обработчик успешной загрузки снимка — и для шага фото, и для
+   * экрана правок, чтобы правило «именованный слот заменяется, `additional`
+   * накапливается» существовало в одном месте.
+   *
+   * A named slot (entrance, reception, landmarks) answers one specific
+   * question and holds exactly one photo — a new upload replaces it, matching
+   * what the server actually does (`attachPhoto` deletes the previous row for
+   * any non-`extra` slot; see `src/photos/store.ts`). Only the `extra` slot
+   * (`additional`) accumulates. Appending unconditionally here used to show
+   * two images for a named slot after "Replace" until the next reload — a lie
+   * about what the server holds.
+   */
+  function photoUploaded(slotKey: string, url: string): void {
+    const slotDef = PHOTO_SLOTS.find((s) => s.key === slotKey)
+    setPhotos((prev) => ({
+      ...prev,
+      [slotKey]: slotDef?.extra ? [...(prev[slotKey] ?? []), url] : [url],
+    }))
+    markTouched(slotKey)
   }
 
   async function submit(): Promise<void> {
@@ -219,10 +255,16 @@ export function FillForm(props: {
         <main className="shell-body">
           <FixesOnly
             flags={props.flags}
-            fields={fieldsByKey}
-            values={fields}
-            onChange={changeField}
-            errors={autosave.rejected}
+            fieldValues={fields}
+            onFieldChange={changeField}
+            fieldErrors={autosave.rejected}
+            services={services}
+            onServiceChange={changeService}
+            serviceErrors={serviceErrors}
+            token={props.token}
+            photos={photos}
+            onPhotoUploaded={photoUploaded}
+            touched={touched}
           />
           {submitErrorNode()}
           <button type="button" onClick={submit}>
@@ -258,25 +300,7 @@ export function FillForm(props: {
 
         if (step.kind === 'photos') {
           return (
-            <PhotoSlots
-              token={props.token}
-              uploaded={photos}
-              onUploaded={(slotKey, url) => {
-                // A named slot (entrance, reception, landmarks) answers one
-                // specific question and holds exactly one photo — a new
-                // upload replaces it, matching what the server actually does
-                // (`attachPhoto` deletes the previous row for any non-`extra`
-                // slot; see `src/photos/store.ts`). Only the `extra` slot
-                // (`additional`) accumulates. Appending unconditionally here
-                // used to show two images for a named slot after "Replace"
-                // until the next reload — a lie about what the server holds.
-                const slotDef = PHOTO_SLOTS.find((s) => s.key === slotKey)
-                setPhotos((prev) => ({
-                  ...prev,
-                  [slotKey]: slotDef?.extra ? [...(prev[slotKey] ?? []), url] : [url],
-                }))
-              }}
-            />
+            <PhotoSlots token={props.token} uploaded={photos} onUploaded={photoUploaded} />
           )
         }
 

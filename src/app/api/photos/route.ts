@@ -5,6 +5,7 @@ import { PHOTO_SLOTS } from '@/form-schema'
 import { db } from '@/db/client'
 import { resolveFillToken } from '@/access/tokens'
 import { attachPhoto } from '@/photos/store'
+import { clearFlagAfterSave } from '@/app/clear-flag-after-save'
 
 /**
  * Every rejection below carries both locales, same shape as `ActionResult`
@@ -100,6 +101,22 @@ export async function POST(request: Request): Promise<NextResponse> {
       await del(blob.url).catch(() => {})
       return NextResponse.json({ error: result.error }, { status: 400 })
     }
+
+    // Перезалитый снимок снимает своё замечание и подтверждение своего блока,
+    // ровно как исправленное поле или позиция услуг — замечание адресуется
+    // ключом слота (`PHOTO_SLOTS` входит в `FLAGGABLE`, см. `src/review/
+    // flags.ts`), так что снимается по `slot`. До этого маршрут не снимал
+    // замечаний вообще: заполняющий мог перезагрузить именно тот снимок, на
+    // который ему указали, и замечание оставалось открытым — цикл проверки
+    // не сходился (см. Critical в конце P2 Task 7).
+    //
+    // Сбой этого шага НЕ превращается в отказ загрузки: снимок уже и в
+    // blob-хранилище, и в `photos`, так что «не удалось загрузить» было бы
+    // ложью, из-за которой заполняющий загрузил бы его второй раз. Тот же
+    // выбор и по тем же причинам, что у двух серверных действий сохранения —
+    // и та же самая функция, а не вторая её копия: см.
+    // `clearFlagAfterSave`.
+    await clearFlagAfterSave(resolved.submissionId, slot)
 
     return NextResponse.json({ url: blob.url })
   } catch (error) {
