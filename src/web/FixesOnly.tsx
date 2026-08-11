@@ -11,11 +11,23 @@ import {
   type ServiceValueInput,
 } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
+import { FLAG_REASON_LABELS } from '@/i18n/dictionaries'
+import type { FlagReason } from '@/review/flags'
 import { FieldInput } from './FieldInput'
 import { ServiceItemCard } from './ServiceItemCard'
 import { PhotoSlots } from './PhotoSlots'
 
-export type Flag = { fieldKey: string; reason: string | null; comment: string }
+/**
+ * `reason` — то же поле, что и у `FlagRow` (`src/review/flags.ts`), с тем же
+ * сузенным типом, а не `string | null`: строка приняла бы код, которого нет в
+ * `FLAG_REASONS`, и подпись к нему молча не нашлась бы. Сужение делает
+ * `toFlagReason` — единственное место, где строка из базы становится кодом, —
+ * и `src/app/f/[token]/page.tsx` получает эти строки через `openFlags`, чтобы
+ * сторона заполнения и сторона проверки читали одни и те же строки одинаково.
+ * Оба импорта здесь — только типы плюс чистый словарь, слой БД в клиентский
+ * бандл не попадает.
+ */
+export type Flag = { fieldKey: string; reason: FlagReason | null; comment: string }
 
 /**
  * Which of the questionnaire's three kinds of question a flagged key names,
@@ -100,7 +112,7 @@ export function FixesOnly(props: {
    */
   touched: ReadonlySet<string>
 }): React.JSX.Element {
-  const { t } = useLocale()
+  const { t, pick } = useLocale()
 
   const targets = useMemo(
     () => props.flags.map((flag) => ({ flag, target: fixTargetFor(flag.fieldKey) })),
@@ -206,7 +218,27 @@ export function FixesOnly(props: {
         const changed = props.touched.has(flag.fieldKey) && !errorFor(flag.fieldKey, target)
         return (
           <div key={flag.fieldKey} className="fix-card">
-            <p className="fix-comment">{flag.comment}</p>
+            {/* Код замечания — над текстом, а не вместо него: это
+                классификация в одно слово («неверный формат», «нужна
+                расшифровка»), и она отвечает на вопрос «что от меня хотят»
+                до чтения прозы. Пока её не показывали, выбор ревьюера из
+                четырёх кодов доезжал до заполняющего и пропадал, а разница
+                между ними для него как раз практическая: «не заполнено» —
+                ответить, «неверный формат» — переписать то же самое иначе,
+                «противоречит другому полю» — идти сверять ДРУГОЙ ответ, а не
+                править этот, «нужна расшифровка» — добавить к ответу деталей.
+                Комментарий ревьюера остаётся ниже как конкретика; в нём этой
+                разницы может не быть вообще (комментарий бывает в два слова, а
+                у 129 карточек его ещё и надо прочесть все).
+                `<b>` внутри `.fix-comment` — та же разметка, что у
+                `.frow-comment` на экране проверки, так что ревьюер и
+                заполняющий видят один и тот же код в одном и том же месте
+                карточки. `reason` необязателен: `raiseFlag` принимает
+                замечание и без кода. */}
+            <p className="fix-comment">
+              {flag.reason !== null && <b>{pick(FLAG_REASON_LABELS[flag.reason])}</b>}
+              {flag.comment}
+            </p>
             {control(flag, target)}
             <p className={changed ? 'fix-changed' : 'fix-open'}>
               {changed ? t('fixes.changed') : t('fixes.stillOpen')}

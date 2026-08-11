@@ -16,8 +16,8 @@
  * shared `PgDatabase<PgQueryResultHKT, typeof schema>` base class. It is
  * NOT sound for three paths where postgres-js and PGlite genuinely diverge
  * at runtime, cast or no cast:
- *   - `db.execute(...)` / `tx.execute(...)` — raw SQL execution, whose
- *     actual result shape differs per driver.
+ *   - `db.execute(...)` / `tx.execute(...)` / `db().execute(...)` — raw SQL
+ *     execution, whose actual result shape differs per driver.
  *   - `.prepare(...)` — prepared statements; the two drivers' sessions
  *     implement this differently.
  *   - `.transaction(fn, options)` — the two-argument form. `PgTransactionConfig`
@@ -30,15 +30,36 @@
  * instead of a latent one.
  */
 
-/** True for `db.execute(` or `tx.execute(` — the two parameter names this
- *  codebase actually uses for `Db`- and `Tx`-typed values (see every
- *  `saveFieldValue`/`saveServiceValue`/`submitSubmission`/`attachPhoto`/
- *  `removePhoto` in `src/submissions` and `src/photos`). Scoped to these two
- *  names rather than a bare `.execute(` so an unrelated object's own
- *  `.execute()` method (there are none in this codebase today, but the
- *  point of a guard is to not need to know that) is not a false positive.
+/**
+ * True for `.execute(` on a receiver named `db` or `tx`, reached either
+ * directly (`db.execute(`, `tx.execute(`) or through a call on that name
+ * (`db().execute(`). Both halves are needed because this codebase holds a
+ * `Db`-typed value in two different shapes, and the second one is the more
+ * common:
+ *  - **A parameter**, in the library layers: every
+ *    `saveFieldValue`/`saveServiceValue`/`submitSubmission`/`attachPhoto`/
+ *    `removePhoto` in `src/submissions` and `src/photos` takes `db: Db` (or
+ *    `tx: Tx` inside a transaction callback), so the receiver is the bare
+ *    name.
+ *  - **The factory call**, in the app layer: nothing under `src/app`
+ *    receives a `Db`, it calls `db()` from `src/db/client.ts` at the point of
+ *    use — 40 such call sites today, and the only DB idiom that layer has. A
+ *    version of this regex scoped to bare `db`/`tx` therefore could not see
+ *    the app layer at all: `await db().execute(sql\`…\`)` typechecks and
+ *    passed this guard, which is what it was written to prevent. The
+ *    optional call is matched with a single non-nested argument list rather
+ *    than a bare `()` so a factory that ever takes an argument does not
+ *    reopen the same hole.
+ *
+ * Still scoped to those two names rather than a bare `.execute(`, so an
+ * unrelated object's own `.execute()` method (there are none in this codebase
+ * today, but the point of a guard is to not need to know that) is not a false
+ * positive. What that scoping accepts, named rather than assumed away: a
+ * `Db` held under any OTHER local name — `const d = db(); d.execute(…)` — is
+ * invisible, the same alias-indirection limit
+ * `src/review/__tests__/lock-order-guard.ts` accepts for table identifiers.
  */
-const EXECUTE_RE = /\b(?:db|tx)\.execute\s*\(/g
+const EXECUTE_RE = /\b(?:db|tx)\s*(?:\(\s*[^()]*\))?\s*\.execute\s*\(/g
 
 /**
  * True for a `.prepare(` call on any receiver. Drizzle prepared statements
@@ -114,12 +135,25 @@ function hasSecondArgument(argsText: string): boolean {
  * function's limitation of not understanding comments or string literals,
  * which is an accepted trade-off for a guard whose job is to force a
  * conscious opt-out, not to replace a linter.
+ *
+ * One live consequence, since widening `EXECUTE_RE` to the factory-call
+ * receiver made it easy to hit: writing one of these patterns in PROSE — a doc
+ * comment naming the idiom this guard rejects — is reported as a real usage
+ * anywhere under `src` except `src/db`. It happened immediately, in
+ * `src/review/__tests__/lock-order-guard.ts`, whose accepted-gap note leans on
+ * this guard and wanted to name what it now covers. The failure direction is
+ * the right one (loud, in a file a human is already editing), and the workaround
+ * is to describe the pattern instead of quoting it; only this file may quote it
+ * freely, because the scan skips `src/db` for exactly that reason.
  */
 export function unsafeDbUsagesIn(text: string): string[] {
   const offenders: string[] = []
 
+  // Whitespace collapsed, not just trimmed: a chained call broken over lines
+  // (`db()\n  .execute(`) should be reported as `db().execute(` rather than as
+  // a multi-line fragment inside an assertion message.
   for (const match of text.matchAll(EXECUTE_RE)) {
-    offenders.push(match[0].trim())
+    offenders.push(match[0].replace(/\s+/g, ''))
   }
 
   for (const match of text.matchAll(PREPARE_RE)) {

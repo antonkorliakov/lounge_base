@@ -3,6 +3,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   lockOrderViolationsIn,
+  loungeLockViolationsIn,
+  loungeWritersIn,
   tablesWrittenIn,
   stripComments,
   provenLockDelegatesIn,
@@ -10,10 +12,23 @@ import {
   LOCK_DELEGATES,
 } from './lock-order-guard'
 
+/**
+ * One root list for BOTH checks in `lock-order-guard.ts`, not one per family.
+ * The alternative — scanning `src/registry` for the `lounges` rule only —
+ * would answer "which parent's lock does this function owe?" by which
+ * directory it happens to live in, so a `lounges` read-then-writer added to
+ * `src/review` would escape both checks. Scanning everything with both rules
+ * means each function is judged by what its own body does: `approveSubmission`
+ * (`src/review`) IS examined by the `lounges` check and passes it because it
+ * never reads the row it writes, and `setOperationalStatus` (`src/registry`) IS
+ * examined by the `submissions` check and is silently fine there because it
+ * writes none of that family's tables.
+ */
 const ROOTS = [
   join(process.cwd(), 'src/review'),
   join(process.cwd(), 'src/submissions'),
   join(process.cwd(), 'src/photos'),
+  join(process.cwd(), 'src/registry'),
 ]
 
 function sourceFiles(dir: string): string[] {
@@ -26,8 +41,12 @@ function sourceFiles(dir: string): string[] {
   })
 }
 
+function scannedSources(): string[] {
+  return ROOTS.flatMap((root) => sourceFiles(root))
+}
+
 describe('порядок блокировки: submissions лочится до записи в дочерние таблицы', () => {
-  it('каждая экспортируемая функция из src/review, src/submissions и src/photos, пишущая в field_flags/block_reviews/field_values/service_values/photos, лочит submissions первой', () => {
+  it('каждая экспортируемая функция из просканированных каталогов, пишущая в field_flags/block_reviews/field_values/service_values/photos, лочит submissions первой', () => {
     const offenders: string[] = []
     for (const root of ROOTS) {
       for (const file of sourceFiles(root)) {
@@ -40,6 +59,15 @@ describe('порядок блокировки: submissions лочится до �
     expect(offenders).toEqual([])
   })
 
+  /**
+   * Catches a root that stopped resolving to real files (a directory renamed
+   * or moved), but NOT `ROOTS` itself being emptied — a loop over an empty
+   * list passes. That case is covered by the positive-match assertions
+   * instead (`каждая защищаемая таблица …` below and the two `lounges`
+   * anti-vacuity ones), and verified by emptying the list: four tests fail
+   * across both families, this one among them not being one of them. Stated
+   * here so the gap is known rather than assumed covered.
+   */
   it('в каждом каталоге есть хотя бы один файл', () => {
     for (const root of ROOTS) {
       expect(sourceFiles(root).length).toBeGreaterThan(0)
@@ -92,6 +120,248 @@ describe('порядок блокировки: submissions лочится до �
     }
     const missing = GUARDED_TABLES.filter((t) => !found.has(t))
     expect(missing).toEqual([])
+  })
+})
+
+/**
+ * The second, parallel check — the `lounges` family. Separate `describe`
+ * rather than more cases inside the one above, because it enforces a
+ * DIFFERENT invariant with a different quantifier (see the header of
+ * `lock-order-guard.ts`: family 1 requires the parent lock of every writer of
+ * a child table; this one requires the `lounges` row lock of every function
+ * that reads that row and then writes it). Keeping them separate is what lets
+ * each one's name state its own rule instead of one name covering two.
+ *
+ * What it exists to catch, concretely: `setOperationalStatus`
+ * (`src/registry/status.ts`) reads the previous operational status and writes
+ * both the new one and the `events` row recording `from → to`. Without the
+ * row lock, two concurrent changes read the same `previous` and each record
+ * the same `from`, so the history stops chaining and can no longer be
+ * replayed. Before this check existed, deleting that `.for('update')` left
+ * every test in this file and in `src/registry/__tests__` green.
+ */
+describe('порядок блокировки: lounges лочится до записи статуса и истории', () => {
+  it('каждая экспортируемая функция, которая читает строку lounges и пишет её, лочит эту строку до записи', () => {
+    const offenders: string[] = []
+    for (const file of scannedSources()) {
+      const text = readFileSync(file, 'utf8')
+      for (const v of loungeLockViolationsIn(text)) {
+        offenders.push(`${file}: ${v.functionName} — ${v.reason}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  /**
+   * Anti-vacuity, question 1: the scan found a real `lounges` write at all.
+   * Without this, a drifted identifier (`lounges` renamed in `db/schema.ts`,
+   * imported under an alias, mistyped in `LOUNGE_WRITE_TABLES`) or a root list
+   * that stopped covering `src/registry` would make the check above report
+   * zero offenders because it stopped looking, not because everything locks.
+   */
+  it('в просканированных каталогах есть хотя бы одна настоящая запись в lounges', () => {
+    const writers = new Map<string, string>()
+    for (const file of scannedSources()) {
+      for (const [name, shape] of loungeWritersIn(readFileSync(file, 'utf8'))) {
+        writers.set(name, shape)
+      }
+    }
+    expect([...writers.keys()]).not.toEqual([])
+  })
+
+  /**
+   * Anti-vacuity, question 2, and the one specific to this check's shape:
+   * the rule applies only to a function that READS the row it writes, so a
+   * run in which nothing is classified `read-then-write` is a run in which
+   * the rule had no subject. That is the state the codebase was in before
+   * `src/registry` existed, and it is also what would happen if
+   * `setOperationalStatus`'s `previous` read moved out of its body (into a
+   * helper, or into an earlier transaction — the second being the mistake
+   * `clearFlagsFor` was fixed for). Either way the answer is "a human should
+   * look", not "green".
+   */
+  it('хотя бы одна функция действительно читает-и-пишет lounges, иначе правилу нечего проверять', () => {
+    const shapes: string[] = []
+    for (const file of scannedSources()) {
+      for (const [, shape] of loungeWritersIn(readFileSync(file, 'utf8'))) shapes.push(shape)
+    }
+    expect(shapes).toContain('read-then-write')
+  })
+
+  /**
+   * `approveSubmission` writes `lounges` too, and passes this check without
+   * any exemption: it never issues `.from(lounges)`, so it derives nothing
+   * from the row it overwrites (its values come from `field_values`), and the
+   * row lock its own `UPDATE` takes is all it needs. Pinned as a positive
+   * fact about the SOURCE rather than left implicit in "no offenders": if it
+   * ever starts reading `lounges` before writing it, this test fails and says
+   * so, at the same time as the check above starts demanding the lock — which
+   * is the right demand at that point, because the read-then-write shape
+   * would then be real. Its own doc comment in `decide.ts` carries the
+   * deadlock argument; nothing here restates or weakens it.
+   */
+  it('approveSubmission пишет lounges вслепую (не читая её) — поэтому блокировка ему не нужна', () => {
+    const text = readFileSync(join(process.cwd(), 'src/review/decide.ts'), 'utf8')
+    expect(loungeWritersIn(text).get('approveSubmission')).toBe('blind')
+    expect(loungeLockViolationsIn(text)).toEqual([])
+  })
+})
+
+// Same rationale as lockOrderViolationsIn's synthetic tests below: the
+// real-source scan above is only as good as this detector, so it is driven
+// directly with in-memory sources — both directions, so neither "recognizes
+// nothing" nor "accepts anything" can hide behind a currently-clean tree.
+describe('loungeLockViolationsIn', () => {
+  const locked = `
+    export async function setOperationalStatus(db, input) {
+      return db.transaction(async (tx) => {
+        const rows = await tx
+          .select({ status: lounges.operationalStatus })
+          .from(lounges)
+          .where(eq(lounges.id, input.loungeId))
+          .for('update')
+          .limit(1)
+        await tx.update(lounges).set({ operationalStatus: input.status }).where(eq(lounges.id, input.loungeId))
+        await tx.insert(events).values({ payload: { from: rows[0].status } })
+      })
+    }
+  `
+
+  it('пропускает функцию, которая лочит строку lounges перед записью', () => {
+    expect(loungeLockViolationsIn(locked)).toEqual([])
+  })
+
+  it('ловит ту же функцию, если убрать только .for(\'update\')', () => {
+    // Exactly break-verify #1, as a unit test: the ONE line deleted, nothing
+    // else — the realistic drift, not a whole hunk reverted.
+    const text = locked.replace(/\s*\.for\('update'\)/, '')
+    const violations = loungeLockViolationsIn(text)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.functionName).toBe('setOperationalStatus')
+    expect(violations[0]?.reason).toMatch(/without ever locking the lounges row/)
+  })
+
+  it('ловит функцию, которая лочит lounges ПОСЛЕ записи', () => {
+    const text = `
+      export async function badOrder(db, input) {
+        return db.transaction(async (tx) => {
+          const previous = await tx.select().from(lounges).where(eq(lounges.id, input.id))
+          await tx.update(lounges).set({ operationalStatus: input.status })
+          await tx.select().from(lounges).where(eq(lounges.id, input.id)).for('update')
+        })
+      }
+    `
+    const violations = loungeLockViolationsIn(text)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.functionName).toBe('badOrder')
+    expect(violations[0]?.reason).toMatch(/after its write/)
+  })
+
+  it('блокировка ЧУЖОЙ строки (submissions) не считается блокировкой lounges', () => {
+    // The case that makes this a genuinely separate check rather than a
+    // rename of the first one: `approveSubmission`'s lock satisfies family 1
+    // and says nothing about the `lounges` row. A function shaped like it but
+    // which also READS `lounges` must be reported.
+    const text = `
+      export async function readsThenWritesUnderTheWrongLock(db, input) {
+        return db.transaction(async (tx) => {
+          await tx.select({ status: submissions.status }).from(submissions).where(eq(submissions.id, input.id)).for('update')
+          const current = await tx.select().from(lounges).where(eq(lounges.id, input.loungeId))
+          await tx.update(lounges).set({ zone: current[0].zone })
+        })
+      }
+    `
+    const violations = loungeLockViolationsIn(text)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.reason).toMatch(/without ever locking the lounges row/)
+  })
+
+  it('не ловит слепую запись в lounges (ничего не читает — нечего сериализовать)', () => {
+    const text = `
+      export async function approveSubmission(db, input) {
+        return db.transaction(async (tx) => {
+          await tx.update(lounges).set(classifying).where(eq(lounges.id, locked.loungeId))
+          await tx.insert(events).values({ action: 'approved' })
+        })
+      }
+    `
+    expect(loungeLockViolationsIn(text)).toEqual([])
+    expect(loungeWritersIn(text)).toEqual(new Map([['approveSubmission', 'blind']]))
+  })
+
+  it('не ловит чтение lounges без записи (реестр только читает)', () => {
+    const text = `
+      export async function listRegistry(db) {
+        return db.select().from(lounges).orderBy(lounges.name)
+      }
+    `
+    expect(loungeLockViolationsIn(text)).toEqual([])
+    expect(loungeWritersIn(text)).toEqual(new Map())
+  })
+
+  it('не считает events дочерней таблицей lounges — запись события без блокировки не нарушение', () => {
+    // `submitSubmission`'s real shape: an `events` INSERT about a submission,
+    // with no lounge in hand at all. Naming `events` a child of `lounges`
+    // would report this as a violation and there would be no row for it to
+    // lock — see the guard header on why a table with two parents is guarded
+    // by neither.
+    const text = `
+      export async function submitSubmission(db, input) {
+        return db.transaction(async (tx) => {
+          await tx.insert(events).values({ submissionId: input.submissionId })
+        })
+      }
+    `
+    expect(loungeLockViolationsIn(text)).toEqual([])
+    expect(loungeWritersIn(text)).toEqual(new Map())
+  })
+
+  it('doc-комментарий про блокировку lounges не маскирует удалённый реальный лок', () => {
+    const text = `
+      /**
+       * Locks the lounges row: .from(lounges) … .for('update') — so says the
+       * comment, while the body below does no such thing.
+       */
+      export async function fn(db, input) {
+        return db.transaction(async (tx) => {
+          const rows = await tx.select().from(lounges).where(eq(lounges.id, input.id))
+          await tx.update(lounges).set({ operationalStatus: input.status })
+        })
+      }
+    `
+    const violations = loungeLockViolationsIn(text)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.functionName).toBe('fn')
+  })
+
+  it('видит тело функции с инлайновым объектным типом возврата', () => {
+    // `bodyBraceAfterParams` is shared with family 1; this pins that family 2
+    // inherits the fix rather than re-opening the hole for its own spans.
+    const text = `
+      export async function badInlineReturnType(db, input): Promise<{ ok: boolean } | null> {
+        return db.transaction(async (tx) => {
+          const rows = await tx.select().from(lounges).where(eq(lounges.id, input.id))
+          await tx.update(lounges).set({ operationalStatus: input.status })
+        })
+      }
+    `
+    const violations = loungeLockViolationsIn(text)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.functionName).toBe('badInlineReturnType')
+  })
+
+  it('ловит arrow-функцию, которая читает и пишет lounges без блокировки', () => {
+    const text = `
+      export const setStatus = async (db, input): Promise<StatusResult> => {
+        return db.transaction(async (tx) => {
+          const rows = await tx.select().from(lounges).where(eq(lounges.id, input.id))
+          await tx.update(lounges).set({ operationalStatus: input.status })
+        })
+      }
+    `
+    const violations = loungeLockViolationsIn(text)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.functionName).toBe('setStatus')
   })
 })
 

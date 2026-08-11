@@ -6,14 +6,14 @@ import type { Localized } from '@/form-schema'
 import { db } from '@/db/client'
 import { requireSession } from '@/access/session'
 import { raiseFlag, resolveFlag, openFlags, type FlagReason } from '@/review/flags'
-import { confirmBlock } from '@/review/blocks'
+import { confirmBlock, unconfirmBlock } from '@/review/blocks'
 import { requestChanges, approveSubmission } from '@/review/decide'
 import { submissions, lounges, fieldValues } from '@/db/schema'
 import type { SubmissionStatus } from '@/db/schema'
 import { createMailer } from '@/notify/mailer'
 import { changesRequestedMail, fillLinkMail, approvedMail } from '@/notify/messages'
 import { issueFillToken, FILL_TOKEN_TTL_DAYS } from '@/access/tokens'
-import { resendGateFor } from './resend-gate'
+import { resendGateFor, reviewStateFor } from './gates'
 
 /**
  * `error` несёт весь `Localized`, а не заранее выбранную строку — то же
@@ -85,6 +85,55 @@ export async function confirmBlockAction(
   })
   revalidatePath(`/admin/s/${submissionId}`)
   return result.ok ? { ok: true } : { ok: false, error: result.error }
+}
+
+/**
+ * Снять подтверждение блока — единственный способ отменить нажатие «Подтвердить
+ * блок», и до этого действия его не существовало нигде в продукте:
+ * `unconfirmBlock` (`src/review/blocks.ts`) был написан, заблокирован, покрыт
+ * тестами и указан в плане — и не имел ни одного вызывающего в приложении. Один
+ * промах мыши (диалога нет, отменить нечем) навсегда шёл в счёт 27/27, которые
+ * проверяет `approveSubmission`, а обойти это можно было только отметив в блоке
+ * какое-нибудь поле, чтобы принятие отказало по замечаниям, а не по
+ * подтверждениям. Ровно та же форма, что и `removePhoto` без вызывающих, —
+ * дефект, который эта ветка уже находила один раз.
+ *
+ * Гейт по статусу стоит ЗДЕСЬ, а не в `unconfirmBlock`: тот намеренно без
+ * гейта и с сигнатурой `Promise<void>`, в которой отказ невозможно сообщить
+ * даже при желании (см. его собственный комментарий и `REVIEW_STATUSES` там
+ * же) — гейт внутри него мог бы только молча ничего не сделать. Здесь же
+ * канал для отказа есть (`ActionResult`), и правило с текстом берутся из
+ * `reviewStateFor(...).decisions` — того же единственного ответа, которым
+ * экран проверки выключает эту кнопку и подписывает состояние анкеты. Один
+ * источник на обе половины: настоящий отказ на сервере и подсказку в
+ * интерфейсе.
+ *
+ * Чего этот гейт НЕ делает: он не защищает инвариант. Снятие подтверждения
+ * безопасно в любом статусе — оно делает анкету МЕНЕЕ подтверждённой, а не
+ * более (это и есть довод, по которому `unconfirmBlock` без гейта), так что
+ * чтение статуса отдельным незаблокированным `SELECT` перед вызовом — не
+ * гонка с последствиями: проскочившее снятие подтверждения на анкете, статус
+ * которой сменился в этот момент, ничего не портит. Гейт нужен затем, чтобы
+ * экран не предлагал шаг, которого в этом состоянии не бывает, и не отказывал
+ * задним числом.
+ */
+export async function unconfirmBlockAction(
+  submissionId: string,
+  blockKey: string,
+): Promise<ActionResult> {
+  await requireSession()
+
+  const status = await submissionStatusOf(submissionId)
+  if (!status) {
+    return { ok: false, error: { en: 'Submission not found', ru: 'Анкета не найдена' } }
+  }
+
+  const gate = reviewStateFor(status).decisions
+  if (!gate.allowed) return { ok: false, error: gate.reason }
+
+  await unconfirmBlock(db(), { submissionId, blockKey })
+  revalidatePath(`/admin/s/${submissionId}`)
+  return { ok: true }
 }
 
 async function contactEmail(submissionId: string): Promise<string | null> {
@@ -300,7 +349,7 @@ export async function requestChangesAction(
  *
  * Гейт стоит В ДВУХ местах, и это не дублирование: здесь — настоящий отказ,
  * а на экране проверки — выключенная кнопка с той же причиной (`resendGateFor`
- * в `./resend-gate.ts` — одно определение и правила, и текста, вызываемое из
+ * в `./gates.ts` — одно определение и правила, и текста, вызываемое из
  * `./page.tsx` и отсюда). Одного мало ни в какую сторону: `ReviewScreen` —
  * клиентский компонент, серверное действие вызывается по сети напрямую, так
  * что кнопка защитой быть не может; а один серверный отказ означал бы, что
@@ -343,7 +392,7 @@ export async function resendFillLinkAction(
   }
   // Тот же гейт и тот же текст, что показывает выключенная кнопка на экране
   // проверки (`./page.tsx` -> `ReviewScreen`) — одно определение на оба, см.
-  // `./resend-gate.ts`. Клиентский компонент гейтом быть не может, поэтому
+  // `./gates.ts`. Клиентский компонент гейтом быть не может, поэтому
   // отказ здесь обязателен, а не дублирует UI.
   const gate = resendGateFor(status)
   if (!gate.allowed) return { ok: false, error: gate.reason }

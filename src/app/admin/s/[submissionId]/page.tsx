@@ -6,11 +6,11 @@ import { loadSubmissionValues } from '@/submissions/values'
 import { listPhotos } from '@/photos/store'
 import { openFlags } from '@/review/flags'
 import { blockProgress } from '@/review/blocks'
-import { submissions } from '@/db/schema'
+import { submissions, lounges } from '@/db/schema'
 import { LocaleProvider } from '@/i18n/context'
 import { ReviewScreen } from '@/web/ReviewScreen'
 import { renderValues } from '@/web/renderValues'
-import { resendGateFor } from './resend-gate'
+import { reviewStateFor } from './gates'
 
 export default async function ReviewPage(props: {
   params: Promise<{ submissionId: string }>
@@ -26,15 +26,40 @@ export default async function ReviewPage(props: {
   // ревьюер увидел бы анкету, которая выглядит пустой, а не анкету,
   // которой не существует.
   //
-  // Заодно читается статус — тем же самым запросом, без второго обращения:
-  // от него зависит, можно ли пересылать оператору ссылку заполнения (см.
-  // `./resend-gate.ts`). Экран проверки сам по себе от статуса не зависит:
-  // отмечать и подтверждать блоки имеет смысл на любой анкете, до которой
-  // проверяющий дошёл, а `confirmBlock`/`requestChanges`/`approveSubmission`
-  // проверяют свои условия сами, внутри транзакции.
+  // Заодно этим же запросом читается всё, чем экран подписывает САМ СЕБЯ:
+  // статус и лаунж.
+  //
+  // Статус: от него зависит, какие шаги на этой анкете вообще применимы, и
+  // какие поэтому показаны выключенными с причиной (`reviewStateFor` в
+  // `./gates.ts`). Раньше он читался здесь же, но тратился ровно на одну
+  // кнопку — «переслать ссылку», — а остальные четыре решения экран предлагал
+  // на любой анкете: проверяющий отмечал ответы на уже принятой анкете
+  // (каждый вызов отвечал `{ok: true}`, потому что `raiseFlag` намеренно слеп
+  // к статусу), а потом получал отказ «анкета сейчас не на проверке» — в
+  // конце работы, которую уже сделал.
+  //
+  // Лаунж: `innerJoin`, а не второй запрос, и не поле `I.2` из ответов
+  // анкеты. Во-первых, это ровно та же строка, по которой проверяющий сюда
+  // пришёл из списка `/admin` («<название> — <IATA>»), и то же название, что
+  // уходит оператору в письмах (`loungeName` в `./actions.ts`), — одна
+  // личность анкеты во всех трёх местах, а не три. Во-вторых, ответ оператора
+  // на «Lounge Full Name*» — это предмет проверки: он может быть пустым, может
+  // быть отмечен замечанием, и подписывать им экран значит терять подпись
+  // именно тогда, когда с ответом что-то не так.
+  //
+  // `innerJoin` не может потерять существующую анкету: `submissions.loungeId`
+  // — `notNull` с внешним ключом `on delete cascade`, поэтому анкеты без
+  // лаунжа не бывает (удаление лаунжа удаляет и анкету). Так что `notFound()`
+  // ниже по-прежнему значит ровно «такой анкеты нет».
   const found = await db()
-    .select({ id: submissions.id, status: submissions.status })
+    .select({
+      id: submissions.id,
+      status: submissions.status,
+      loungeName: lounges.name,
+      iata: lounges.iataCode,
+    })
     .from(submissions)
+    .innerJoin(lounges, eq(submissions.loungeId, lounges.id))
     .where(eq(submissions.id, submissionId))
     .limit(1)
   const row = found[0]
@@ -59,11 +84,12 @@ export default async function ReviewPage(props: {
     <LocaleProvider initial="en">
       <ReviewScreen
         submissionId={submissionId}
+        lounge={{ name: row.loungeName, iata: row.iata }}
+        state={reviewStateFor(row.status)}
         progress={await blockProgress(db(), submissionId)}
         flags={await openFlags(db(), submissionId)}
         rendered={rendered}
         photos={photos}
-        resend={resendGateFor(row.status)}
       />
     </LocaleProvider>
   )

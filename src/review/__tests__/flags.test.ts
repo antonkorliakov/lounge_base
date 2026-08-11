@@ -250,17 +250,34 @@ describe('clearFlagsFor', () => {
     expect(confirmed).toContain(otherField.block)
   })
 
-  it('без открытого замечания возвращает false и НЕ трогает подтверждение блока', async () => {
+  /**
+   * Этот тест раньше утверждал ОБРАТНОЕ («…и НЕ трогает подтверждение блока»)
+   * и был зелёным — он пиннил как правильное поведение первый Important
+   * обзора всей ветки: правка неотмеченного ответа оставляла блок
+   * подтверждённым, и `approveSubmission` затем видел 27/27. Подтверждение
+   * относится к данным, а не к замечанию, так что «замечания не было» — не
+   * причина оставлять его в силе. Возвращаемое значение при этом не изменилось:
+   * `false` по-прежнему значит «снимать было нечего», от него зависит только
+   * логирование у вызывающих.
+   */
+  it('без открытого замечания возвращает false, но подтверждение блока всё равно снимает', async () => {
     const db = await createTestDb()
     const submissionId = await seedSubmitted(db)
 
     const field = FIELDS.find((f) => f.key === 'III.2.4')!
+    const otherField = FIELDS.find((f) => f.key === 'I.1')!
+    expect(field.block).not.toBe(otherField.block) // предпосылка теста
     await confirmBlock(db, submissionId, field.block)
+    await confirmBlock(db, submissionId, otherField.block)
 
     const result = await clearFlagsFor(db, submissionId, 'III.2.4')
 
     expect(result).toBe(false)
-    expect(await confirmedBlocks(db, submissionId)).toContain(field.block)
+    const confirmed = await confirmedBlocks(db, submissionId)
+    expect(confirmed).not.toContain(field.block)
+    // И по-прежнему только СВОЙ блок: снимать всё разом было бы не мягче, а
+    // бессмысленнее — ревьюер перепроверял бы анкету целиком.
+    expect(confirmed).toContain(otherField.block)
   })
 
   it('работает для слота фотографии', async () => {

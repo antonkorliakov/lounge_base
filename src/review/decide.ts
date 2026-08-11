@@ -171,10 +171,21 @@ export async function requestChanges(
  *     needs one lock from this set cannot be the "B" half of an A-waits-on-B
  *     -waits-on-A cycle; contention degenerates to plain queueing on that
  *     one row, not circular waiting.
- *  2. `lounges` is written here — nowhere else in the codebase touches that
- *     table at all (grep confirms it: no other module has `.update(lounges)`
- *     or `.insert(lounges)`), so no concurrent transaction is ever holding a
- *     lock on it for this one to wait on.
+ *  2. `lounges` is written here and in exactly one other place:
+ *     `setOperationalStatus` (`src/registry/status.ts`, plan 3), which sets a
+ *     lounge's operational status. That one CAN be holding a lock on the very
+ *     row this transaction wants — it takes the `lounges` row `FOR UPDATE` as
+ *     its first statement — so this is now a genuine second contended
+ *     resource, and the earlier version of this note ("nowhere else touches
+ *     that table at all") no longer holds. It still cannot deadlock against
+ *     this transaction, for a reason that does not depend on lock ordering:
+ *     `setOperationalStatus` waits for nothing except that one `lounges` row
+ *     (its only other write is an append-only `events` INSERT, which acquires
+ *     no lock anyone else holds). A transaction that never waits on a second
+ *     resource cannot be the "B waits on A" half of a cycle — the worst that
+ *     happens is this transaction queueing behind it on that row. If a future
+ *     writer of `lounges` ever needs a second lock as well, that argument
+ *     stops applying and the ordering has to be made explicit.
  *  3. `events` is append-only (a plain `INSERT`, no `WHERE`); a fresh row
  *     acquires no lock any other transaction can be holding, so it never
  *     becomes a second contended resource either.

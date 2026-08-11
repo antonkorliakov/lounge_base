@@ -39,7 +39,20 @@ describe('матрица услуг', () => {
     expect(SERVICE_GROUPS.filter((g) => g.kind === 'food')).toHaveLength(3)
   })
 
-  it('шесть атрибутов в фиксированном порядке', () => {
+  // Порядок закреплён потому, что по нему строятся колонки плоской выгрузки
+  // (`src/export/columns.ts`): перестановка переставила бы колонки в файле, а
+  // принимающая система читает их по позиции.
+  //
+  // `details` СЕДЬМОЙ И ОБЯЗАТЕЛЬНЫЙ, а не «ещё один при желании»: у позиций с
+  // подсказкой (2.3, 2.4, 5.1–5.3, fb.3.3, fb.3.4 — «please specify the
+  // capacity/drinks/hours») сам ответ пишется именно туда. Список без него
+  // выкидывал бы из выгрузки то, что вопрос и просит уточнить. Само
+  // соответствие списка типу `ServiceValueInput` держит компилятор
+  // (`satisfies Record<keyof ServiceValueInput, true>` в services.ts), а
+  // соответствие колонкам таблицы — тест в
+  // `src/export/__tests__/columns.test.ts`; здесь закреплён только ПОРЯДОК и
+  // то, что список не пуст.
+  it('семь атрибутов в фиксированном порядке, включая details', () => {
     expect(SERVICE_ATTRIBUTES).toEqual([
       'available',
       'chargeType',
@@ -47,7 +60,18 @@ describe('матрица услуг', () => {
       'currency',
       'slotMinutes',
       'bookingRequired',
+      'details',
     ])
+  })
+
+  // Позиции с подсказкой — те, у которых `details` несёт единственный
+  // содержательный ответ. Список подсказок проверяется ниже отдельно; здесь
+  // важно, что такие позиции вообще есть: если бы их не было, аргумент за
+  // `details` в выгрузке был бы теоретическим.
+  it('есть позиции, чей ответ живёт только в details (подсказка «уточните»)', () => {
+    const withHint = SERVICE_ITEMS.filter((i) => i.hint !== null)
+    expect(withHint.length).toBeGreaterThan(0)
+    expect(SERVICE_ATTRIBUTES).toContain('details')
   })
 
   it('ключи позиций уникальны', () => {

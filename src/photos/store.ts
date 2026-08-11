@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { photoSlotByKey } from '@/form-schema'
 import { photos } from '@/db/schema'
 import type { Db } from '@/db/types'
@@ -56,6 +56,16 @@ export async function attachPhoto(
       blobKey: input.blobKey,
       url: input.url,
       caption: input.caption,
+      // Не значение по умолчанию у столбца (`defaultNow()`), а `clock_timestamp()`
+      // — по той же причине, что в `submissions/values.ts` и `review/blocks.ts`:
+      // `now()` это время НАЧАЛА транзакции, взятое до того, как писатель взял
+      // блокировку `submissions`. Загрузка, которая ждала на этой блокировке
+      // подтверждения блока, получила бы штамп РАНЬШЕ того подтверждения,
+      // которое она обесценивает, и `blockProgress` не увидел бы изменения —
+      // ширина окна равна времени ожидания блокировки. Все три writer'а
+      // сравниваемых величин обязаны штамповать одинаково, иначе сравнение
+      // `confirmedAt` с временем записи ничего не значит.
+      uploadedAt: sql`clock_timestamp()`,
     })
 
     return { ok: true }

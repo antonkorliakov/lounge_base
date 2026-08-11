@@ -1,5 +1,6 @@
 import type { Localized } from './types'
 import type { OptionListId } from './option-lists'
+import type { ServiceValueInput } from './validation'
 import { OPTION_LISTS } from './option-lists'
 
 /**
@@ -36,16 +37,52 @@ export type ServiceItem = {
   availabilityList: OptionListId
 }
 
-export const SERVICE_ATTRIBUTES = [
-  'available',
-  'chargeType',
-  'price',
-  'currency',
-  'slotMinutes',
-  'bookingRequired',
-] as const
+/**
+ * Атрибуты одной позиции услуг — в порядке, в котором их обходит всякий, кто
+ * идёт по позиции атрибут за атрибутом (плоская выгрузка, `src/export/columns.ts`).
+ *
+ * СПИСОК НЕ ВЫПИСАН РУКАМИ ВТОРОЙ РАЗ. Он получается из объекта, чей тип —
+ * `Record<keyof ServiceValueInput, true>`, то есть компилятор требует ровно
+ * ключи сохраняемого значения позиции: пропущенный атрибут — ошибка «property
+ * is missing», лишний — ошибка «excess property». Раньше список был написан
+ * отдельно от `ServiceValueInput` и **терял `details`** — семь полей в типе и в
+ * таблице `service_values`, шесть здесь. Пока константа никем не
+ * использовалась, расхождение было безобидным; плоская выгрузка делает её
+ * несущей, а `details` — это то место, куда пишется ответ на подсказку позиции
+ * («If yes, please specify the capacity» у `Conference Room`, `VIP / Private
+ * Meeting Room`, `Sleeping Area / Pods`; «please specify drinks» у `Premium
+ * Alcohol`; «please specify hours» у `Alcohol Service Hours`). Для этих позиций
+ * содержательный ответ живёт только в `details`, так что список из шести
+ * молча выкинул бы из выгрузки именно то, о чём спрашивает вопрос. Та же
+ * ошибка уже случалась в этой ветке дважды: `details` забыли в обнулении
+ * закрытой позиции (`submissions/values.ts`) и в показе ревьюеру
+ * (`web/renderValues.ts`).
+ *
+ * `import type` — не обычный импорт: `validation.ts` импортирует значения
+ * отсюда, и обратная ссылка на ТИП стирается при компиляции, поэтому цикла
+ * модулей во время выполнения не возникает.
+ *
+ * Проверка типом — только половина. Вторая половина — тест, сверяющий этот
+ * список с настоящими колонками `service_values`
+ * (`src/export/__tests__/columns.test.ts`): тип и таблица объявлены в разных
+ * файлах, и добавленная в таблицу колонка сама по себе не заставит `tsc`
+ * ругнуться здесь.
+ */
+const ATTRIBUTE_ORDER = {
+  available: true,
+  chargeType: true,
+  price: true,
+  currency: true,
+  slotMinutes: true,
+  bookingRequired: true,
+  details: true,
+} satisfies Record<keyof ServiceValueInput, true>
 
-export type ServiceAttribute = (typeof SERVICE_ATTRIBUTES)[number]
+export type ServiceAttribute = keyof ServiceValueInput
+
+export const SERVICE_ATTRIBUTES: readonly ServiceAttribute[] = Object.keys(
+  ATTRIBUTE_ORDER,
+) as (keyof typeof ATTRIBUTE_ORDER)[]
 
 export const SERVICE_GROUPS: ServiceGroup[] = [
   { key: 'a1', kind: 'amenity', block: 'svc.a1', label: { en: 'Comfort & Environment', ru: 'Комфорт и обстановка' } },
