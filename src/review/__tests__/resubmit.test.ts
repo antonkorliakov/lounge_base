@@ -5,6 +5,7 @@ import type { Db } from '@/db/types'
 import { fieldValues, lounges, photos, submissions } from '@/db/schema'
 import { BLOCKS, fieldByKey } from '@/form-schema'
 import { saveFieldValue } from '@/submissions/values'
+import { removePhotoAt } from '@/photos/store'
 import { raiseFlag, openFlags, clearFlagsFor, blockKeyOf } from '../flags'
 import { confirmBlock, blockProgress } from '../blocks'
 import { requestChanges, approveSubmission } from '../decide'
@@ -217,6 +218,28 @@ describe('правка неотмеченного ответа', () => {
     expect(await confirmedOf(db, submissionId, blockOf(UNTOUCHED_KEY))).toBe(true)
   })
 
+  /**
+   * Удаление снимка — единственный случай, которого производный признак
+   * увидеть НЕ может: удалённая строка не оставляет ни времени, ни себя, так
+   * что самый свежий `uploadedAt` слота после удаления не новее, а СТАРШЕ.
+   * Поэтому здесь работает вторая половина исправления — безусловный `DELETE`
+   * в `clearFlagsFor`, который `DELETE /api/photos` зовёт (`clearFlagAfterSave`)
+   * ровно так же, как это делает загрузка.
+   */
+  it('убранный снимок снимает подтверждение блока фотографий', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedInFixes(db)
+    const photosBlock = blockOf(PHOTO_SLOT)
+    expect(await confirmedOf(db, submissionId, photosBlock)).toBe(true)
+
+    const removed = await removePhotoAt(db, {
+      submissionId, slot: PHOTO_SLOT, url: 'https://blob.test/2.jpg',
+    })
+    expect(removed.ok).toBe(true)
+    expect(await clearFlagsFor(db, submissionId, PHOTO_SLOT)).toBe(false)
+
+    expect(await confirmedOf(db, submissionId, photosBlock)).toBe(false)
+  })
 })
 
 /**
