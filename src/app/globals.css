@@ -47,6 +47,14 @@ body {
 }
 .field textarea,
 .pass2-card textarea { min-height: 88px; }
+/* Чекбокс — не текстовое поле: правило выше (`width: 100%`) растягивало его
+   на всю карточку, из-за чего «Нужна бронь» во втором проходе выглядела
+   огромным блоком, а не галочкой. Тот же размер, что у чекбокса первого
+   прохода (.pass1-row), тем же способом. Стало заметно, когда контрол
+   наличия появился в карточке позиции на экране правок — но касается и
+   существующей галочки брони. Тап-цель остаётся 44px: её держит сам
+   .field-check (min-height), а не размер квадрата. */
+.pass2-card input[type='checkbox'] { width: 22px; height: 22px; flex: 0 0 auto; }
 
 .field-compound { margin-top: 10px; }
 .field-slot { display: inline-flex; align-items: center; gap: 6px; }

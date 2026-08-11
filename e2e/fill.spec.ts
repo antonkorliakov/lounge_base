@@ -9,9 +9,12 @@ import { execSync } from 'node:child_process'
  * requirement). `--complete` seeds every required field/service/photo, the
  * only questionnaire shape `submitSubmission` actually accepts.
  */
-function seed(options: { complete?: boolean } = {}): string {
-  const command = options.complete ? 'npm run --silent seed -- --complete' : 'npm run --silent seed'
-  return execSync(command, { encoding: 'utf8' }).trim()
+function seed(options: { complete?: boolean; changesRequested?: boolean } = {}): string {
+  const flag =
+    options.changesRequested ? ' -- --changes-requested'
+    : options.complete ? ' -- --complete'
+    : ''
+  return execSync(`npm run --silent seed${flag}`, { encoding: 'utf8' }).trim()
 }
 
 /**
@@ -237,6 +240,85 @@ test('отказ при загрузке фото виден рядом со с�
   // like the submit-error assertion above — no second upload attempt.
   await page.getByRole('button', { name: 'RU', exact: true }).click()
   await expect(entranceSlot.getByText('Файл слишком велик')).toBeVisible()
+})
+
+/**
+ * Экран правок со всеми тремя категориями отмеченных ответов сразу — поле,
+ * позиция услуг, слот фото (`--changes-requested` в `scripts/seed-dev.ts`
+ * ставит по одному замечанию на каждую).
+ *
+ * До этого экран рисовал контрол только для полей: у 58 позиций услуг и 4
+ * слотов фото — 48% всего, что можно отметить — заполняющий видел комментарий
+ * ревьюера и НИЧЕГО, чем его исправить, а `submitSubmission` проверяет
+ * полноту, а не замечания, так что он мог отправить анкету неизменной, и цикл
+ * проверки не сходился. Этот дефект — четвёртый на этой ветке из класса
+ * «нужный человек не может увидеть или дотянуться до нужного», и все четыре
+ * нашлись чтением кода, ни один тестом. Поэтому проверка именно сквозная: не
+ * «в разметке есть input», а «правка на этом экране снимает СВОЁ замечание и
+ * не снимает чужие», что видно только после перезагрузки, то есть только
+ * пройдя настоящий путь автосохранение → серверное действие → clearFlagsFor.
+ *
+ * Загрузка фото здесь не выполняется: `put()` требует
+ * `BLOB_READ_WRITE_TOKEN`, которого в CI нет (см. тест про отказ загрузки
+ * выше). Проверяется, что контрол загрузки и текущий снимок слота на экране
+ * есть; снятие замечания при загрузке покрыто интеграционным тестом маршрута
+ * (`src/app/api/photos/__tests__/upload-route.test.ts`).
+ */
+test('экран правок: у каждой из трёх категорий есть рабочий контрол, и правка снимает своё замечание', async ({ page }) => {
+  const url = seed({ changesRequested: true })
+  await page.goto(url)
+
+  await expect(page.getByRole('heading', { name: 'Changes requested' })).toBeVisible()
+  await expect(page.locator('.fix-card')).toHaveCount(3)
+  // Ни одна карточка не должна остаться без контрола — а если осталась, она
+  // теперь громкая, а не пустая (см. `FixesOnly`'s `fix-unmatched`).
+  await expect(page.locator('.fix-unmatched')).toHaveCount(0)
+
+  const fieldCard = page.locator('.fix-card').filter({ has: page.getByLabel(/Lounge Full Name/) })
+  const serviceCard = page.locator('.fix-card').filter({
+    has: page.getByRole('heading', { name: 'Wifi Access' }),
+  })
+  const photoCard = page.locator('.fix-card').filter({
+    has: page.getByRole('heading', { name: 'Entrance' }),
+  })
+
+  // Позиция услуг: наличие (то, что раньше жило только в первом проходе и на
+  // этот экран не попадало вовсе) плюс весь набор атрибутов.
+  await expect(serviceCard.getByRole('checkbox').first()).toBeChecked()
+  await expect(serviceCard.getByRole('combobox')).toHaveValue('complimentary')
+  await expect(serviceCard.locator('input[type="number"]')).toHaveCount(1)
+  await expect(serviceCard.locator('textarea')).toHaveCount(1)
+
+  // Слот фото: что лежит сейчас — и чем заменить.
+  await expect(photoCard.locator('img')).toHaveCount(1)
+  await expect(photoCard.locator('input[type="file"]')).toHaveCount(1)
+  await expect(photoCard.getByText('Replace')).toBeVisible()
+
+  await expect(page.getByText('Flagged answers you have not changed yet: 3 / 3')).toBeVisible()
+
+  // ── Правка поля ───────────────────────────────────────────────────────────
+  await page.getByLabel(/Lounge Full Name/).fill('Primeclass Lounge Istanbul Airport')
+  await expect(page.getByText('Saved')).toBeVisible()
+  await expect(fieldCard.getByText('Changed', { exact: true })).toBeVisible()
+  await expect(page.getByText('Flagged answers you have not changed yet: 2 / 3')).toBeVisible()
+
+  // Перезагрузка перечитывает открытые замечания с сервера — единственный
+  // способ увидеть, что `clearFlagsFor` действительно сработал по этому ключу.
+  await page.reload()
+  await expect(page.locator('.fix-card')).toHaveCount(2)
+  await expect(page.getByLabel(/Lounge Full Name/)).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Wifi Access' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
+
+  // ── Правка позиции услуг ──────────────────────────────────────────────────
+  await serviceCard.locator('input[type="number"]').fill('120')
+  await expect(page.getByText('Saved')).toBeVisible()
+
+  await page.reload()
+  await expect(page.locator('.fix-card')).toHaveCount(1)
+  await expect(page.getByRole('heading', { name: 'Wifi Access' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
+  await expect(page.getByText('Flagged answers you have not changed yet: 1 / 1')).toBeVisible()
 })
 
 test('III.3.2: повторный выбор «allowed» не стирает возраст', async ({ page }) => {

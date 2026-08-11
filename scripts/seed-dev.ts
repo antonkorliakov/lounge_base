@@ -19,6 +19,21 @@
  * значения (например, placeholder вместо реального id варианта) не
  * проходит тихо: `save*Value` её отклонит, и сид упадёт с понятной
  * ошибкой вместо того, чтобы молча оставить анкету неполной.
+ *
+ * С флагом `--changes-requested` (включает `--complete`) анкета проходит весь
+ * жизненный цикл до возврата на правку: отправка → по одному замечанию на
+ * КАЖДУЮ из трёх категорий отмечаемых ключей (поле, позиция услуг, слот фото)
+ * → `requestChanges`. Именно эта анкета открывает экран правок
+ * (`FixesOnly`) — и именно все три категории сразу, потому что дефект,
+ * который этот режим позволяет проверить руками, состоял в том, что две из
+ * трёх категорий контрола не получали вовсе.
+ *
+ * Каждый шаг делается настоящей функцией домена, а не вставкой в таблицу:
+ * порядок здесь не произволен и не восстанавливается по схеме БД
+ * (`confirmBlock`/`requestChanges` требуют статус `submitted`, а
+ * `requestChanges` отказывается возвращать анкету без единого открытого
+ * замечания), так что сид, собранный «руками», молча разошёлся бы с тем, что
+ * может произойти в реальности.
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -26,6 +41,9 @@ import { createDb } from '../src/db/client'
 import { lounges, submissions, photos } from '../src/db/schema'
 import { issueFillToken } from '../src/access/tokens'
 import { saveFieldValue, saveServiceValue } from '../src/submissions/values'
+import { submitSubmission } from '../src/submissions/transitions'
+import { raiseFlag } from '../src/review/flags'
+import { requestChanges } from '../src/review/decide'
 import {
   FIELDS,
   SERVICE_ITEMS,
@@ -141,6 +159,38 @@ function closingServiceValue(item: ServiceItem): ServiceValueInput {
   }
 }
 
+/**
+ * Настоящая (пусть и синтетическая) картинка для засеянного снимка, как
+ * `data:`-URL.
+ *
+ * Раньше здесь стоял `https://example.com/seed/<slot>.jpg` — адрес, который
+ * существует, но картинкой не отдаётся. Из-за этого КАЖДАЯ миниатюра на
+ * экране проверки рисовалась как «Фото не открывается» (`FieldRow`'s
+ * `failed`), то есть засеянная анкета выглядела ровно так, как выглядит
+ * анкета с битыми ссылками, и отличить одно от другого глазами было нельзя —
+ * ни при проверке фото-блока, ни при проверке правок по отмеченному слоту.
+ * Проверять на такой анкете «виден ли текущий снимок в слоте» бессмысленно:
+ * ответ «нет» ничего не значит.
+ *
+ * `data:`-URL, а не файл в `public/` и не настоящая загрузка в blob: сид
+ * работает вообще без сети и без `BLOB_READ_WRITE_TOKEN` (в CI его нет — см.
+ * комментарий в `e2e/fill.spec.ts`), а `<img src>` принимает `data:` наравне
+ * с `http:`. SVG, а не JPEG: несколько сотен байт вместо бинарной строки на
+ * пол-килобайта, и на плитке видно название слота — так на экране проверки
+ * сразу понятно, какой снимок к какому слоту привязан, чего одноцветная
+ * заливка не даёт. Ограничения `MAX_PHOTO_BYTES`/`EXTENSION_BY_TYPE`
+ * (`src/app/api/photos/route.ts`) к этому пути не относятся: они проверяют
+ * ЗАГРУЖАЕМЫЙ файл, а сид пишет строку в `photos` напрямую, как и раньше.
+ */
+function seedPhotoUrl(label: string): string {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240">` +
+    `<rect width="320" height="240" fill="#dbe6f4"/>` +
+    `<text x="160" y="120" font-family="sans-serif" font-size="22" ` +
+    `text-anchor="middle" fill="#1f3352">${label}</text></svg>`
+  return `data:image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')}`
+}
+
 async function fillComplete(db: Db, submissionId: string): Promise<void> {
   for (const field of FIELDS) {
     const value = valueForField(field)
@@ -165,8 +215,8 @@ async function fillComplete(db: Db, submissionId: string): Promise<void> {
     await db.insert(photos).values({
       submissionId,
       slot: slot.key,
-      blobKey: `seed/${slot.key}.jpg`,
-      url: `https://example.com/seed/${slot.key}.jpg`,
+      blobKey: `seed/${slot.key}.svg`,
+      url: seedPhotoUrl(slot.label.en),
     })
   }
 
@@ -177,10 +227,90 @@ async function fillComplete(db: Db, submissionId: string): Promise<void> {
       await db.insert(photos).values({
         submissionId,
         slot: extraSlot.key,
-        blobKey: `seed/${extraSlot.key}-${i}.jpg`,
-        url: `https://example.com/seed/${extraSlot.key}-${i}.jpg`,
+        blobKey: `seed/${extraSlot.key}-${i}.svg`,
+        url: seedPhotoUrl(`${extraSlot.label.en} ${i + 1}`),
       })
     }
+  }
+}
+
+/**
+ * Ключи для трёх засеянных замечаний — по одному на каждую категорию
+ * отмечаемых ключей, чтобы экран правок открывался сразу со всеми тремя
+ * контролами.
+ *
+ * `I.2` (Lounge Full Name) — плоское текстовое поле, самое простое для правки
+ * руками; `2.1` (Wifi Access) — реальная позиция услуг из списка `yesNo`, та
+ * же, на которой стоят e2e-тесты услуг; `entrance` — обязательный
+ * именованный слот фото (не `additional`), то есть тот случай, где новая
+ * загрузка ЗАМЕНЯЕТ снимок.
+ */
+const SERVICE_FLAG_KEY = '2.1'
+
+const SEEDED_FLAGS: { key: string; reason: 'wrong_format' | 'needs_detail' | 'empty'; comment: string }[] = [
+  { key: 'I.2', reason: 'wrong_format', comment: 'Field flag: give the full legal name, not the short one.' },
+  { key: SERVICE_FLAG_KEY, reason: 'needs_detail', comment: 'Service flag: Wifi is marked available — state the time limit and any details.' },
+  { key: 'entrance', reason: 'empty', comment: 'Photo flag: the entrance shot is too dark to see the signage. Please retake it.' },
+]
+
+/**
+ * Прогоняет уже заполненную анкету по настоящему жизненному циклу до
+ * `changes_requested`. Порядок обязателен и проверяется самими функциями:
+ * `raiseFlag` и `requestChanges` работают по статусу `submitted`
+ * (`REVIEW_STATUSES`), а `requestChanges` отказывается возвращать анкету, у
+ * которой нет ни одного открытого замечания. Отказ любого шага — падение
+ * сида, а не молчаливое «получилось что-то другое».
+ */
+async function returnForChanges(db: Db, submissionId: string): Promise<void> {
+  // Отмечаемая позиция услуг должна быть ПРЕДЛАГАЕМОЙ, иначе на экране правок
+  // у неё честно не будет ни цены, ни слота, ни деталей: `ServiceItemCard`
+  // спрашивает их только у предлагаемой позиции — то же правило, по которому
+  // `offeredKeys` не пускает закрытую позицию во второй проход. `fillComplete`
+  // отвечает «нет» по всем позициям (этого достаточно для полноты), так что
+  // одну из них здесь переспрашиваем как «есть». `chargeType` обязателен:
+  // предлагаемая позиция без него — валидный, но НЕПОЛНЫЙ ответ, и
+  // `submitSubmission` ниже её не пропустит. `complimentary` не требует цены.
+  const offered = await saveServiceValue(db, {
+    submissionId,
+    itemKey: SERVICE_FLAG_KEY,
+    value: {
+      available: 'yes',
+      chargeType: 'complimentary',
+      price: null,
+      currency: null,
+      slotMinutes: null,
+      bookingRequired: null,
+      details: null,
+    },
+  })
+  if (!offered.ok) {
+    throw new Error(`seed-dev: позиция ${SERVICE_FLAG_KEY} отклонена — ${offered.error.ru}`)
+  }
+
+  const submitted = await submitSubmission(db, { submissionId, actor: 'filler' })
+  if (!submitted.ok) {
+    throw new Error(`seed-dev: отправка не прошла — ${submitted.error.ru}`)
+  }
+
+  for (const flag of SEEDED_FLAGS) {
+    const result = await raiseFlag(db, {
+      submissionId,
+      fieldKey: flag.key,
+      reason: flag.reason,
+      comment: flag.comment,
+      reviewer: 'seed-reviewer@example.com',
+    })
+    if (!result.ok) {
+      throw new Error(`seed-dev: замечание по ${flag.key} отклонено — ${result.error.ru}`)
+    }
+  }
+
+  const returned = await requestChanges(db, {
+    submissionId,
+    reviewer: 'seed-reviewer@example.com',
+  })
+  if (!returned.ok) {
+    throw new Error(`seed-dev: возврат на правку не прошёл — ${returned.error.ru}`)
   }
 }
 
@@ -191,7 +321,10 @@ async function main(): Promise<void> {
   if (!url) throw new Error('DATABASE_URL не задан')
   const db = createDb(url)
 
-  const complete = process.argv.includes('--complete')
+  // `--changes-requested` включает `--complete`: возврат на правку возможен
+  // только у отправленной анкеты, а `submitSubmission` принимает лишь полную.
+  const changesRequested = process.argv.includes('--changes-requested')
+  const complete = changesRequested || process.argv.includes('--complete')
 
   const [lounge] = await db
     .insert(lounges)
@@ -212,6 +345,9 @@ async function main(): Promise<void> {
 
   if (complete) {
     await fillComplete(db, submission!.id)
+  }
+  if (changesRequested) {
+    await returnForChanges(db, submission!.id)
   }
 
   const { token } = await issueFillToken(db, {
