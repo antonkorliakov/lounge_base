@@ -15,6 +15,20 @@
       "when": 1786353966696,
       "tag": "0001_fine_apocalypse",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786382550658,
+      "tag": "0002_flat_roughhouse",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786384475399,
+      "tag": "0003_white_absorbing_man",
+      "breakpoints": true
     }
   ]
 }

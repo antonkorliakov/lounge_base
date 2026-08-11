@@ -4,6 +4,7 @@ import { db } from '@/db/client'
 import { resolveFillToken } from '@/access/tokens'
 import { saveFieldValue, saveServiceValue } from '@/submissions/values'
 import { submitSubmission } from '@/submissions/transitions'
+import { clearFlagAfterSave } from '@/app/clear-flag-after-save'
 import type { Localized, ServiceValueInput } from '@/form-schema'
 import type { MissingItems } from '@/submissions/completeness'
 
@@ -62,7 +63,13 @@ export async function saveFieldAction(
     fieldKey,
     value,
   })
-  return result.ok ? { ok: true } : { ok: false, error: result.error }
+  if (!result.ok) return { ok: false, error: result.error }
+
+  // Исправленный ответ снимает своё замечание и подтверждение своего блока:
+  // ревьюер посмотрит его заново, остальное останется подтверждённым. Сбой
+  // этого шага не отменяет успех записи — см. `clearFlagAfterSave`.
+  await clearFlagAfterSave(resolved.submissionId, fieldKey)
+  return { ok: true }
 }
 
 export async function saveServiceAction(
@@ -78,7 +85,13 @@ export async function saveServiceAction(
     itemKey,
     value,
   })
-  return result.ok ? { ok: true } : { ok: false, error: result.error }
+  if (!result.ok) return { ok: false, error: result.error }
+
+  // Замечание к позиции услуг адресуется её ключом целиком (`FLAGGABLE` в
+  // `src/review/flags.ts` не принимает ключи отдельных атрибутов), так что
+  // здесь снимается то же самое, что и для поля, — по `itemKey`.
+  await clearFlagAfterSave(resolved.submissionId, itemKey)
+  return { ok: true }
 }
 
 export async function submitAction(token: string): Promise<ActionResult> {

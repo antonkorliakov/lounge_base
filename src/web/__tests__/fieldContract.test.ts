@@ -12,25 +12,23 @@ import {
   type ServiceValueInput,
 } from '@/form-schema'
 import { numberFieldValue } from '../FieldInput'
+import { EMPTY_SERVICE_ATTRS } from '../ServiceItemCard'
 
 /**
- * Mirrors `ServicesPass1`'s `EMPTY` constant (`src/web/ServicesPass1.tsx`):
- * every attribute a first-pass answer can possibly carry, before Pass 2 has
- * ever touched it. Both of Pass 1's controls (the binary checkbox and the
- * own-list `<select>`) build their emitted value as `{ ...EMPTY, ...current,
- * available: <the chosen id> }` — so this, plus an `available`, is exactly
- * what reaches the server for the FIRST answer to any service item. This is
- * the value that Critical/R1 made unsaveable: `chargeType: null` on an
- * offered item used to be refused outright.
+ * Every attribute a first-pass answer can possibly carry, before Pass 2 has
+ * ever touched it. `ServiceAvailabilityInput` (one `<select>` over the item's
+ * own availability list, all 58 items) builds its emitted value as
+ * `{ ...EMPTY_SERVICE_ATTRS, ...current, available: <the chosen id> }` — so this, plus an
+ * `available`, is exactly what reaches the server for the FIRST answer to any
+ * service item. This is the value that Critical/R1 made unsaveable:
+ * `chargeType: null` on an offered item used to be refused outright.
+ *
+ * Imported from the component, not mirrored here. It used to be a hand-copied
+ * duplicate with a comment asking the reader to keep the two in step — which
+ * would have let the real constant gain or lose an attribute while this test
+ * went on asserting the old shape and passing. The real one now lives in
+ * `../ServiceItemCard`, shared by both service screens and the fixes screen.
  */
-const EMPTY_SERVICE_ATTRS: Omit<ServiceValueInput, 'available'> = {
-  chargeType: null,
-  price: null,
-  currency: null,
-  slotMinutes: null,
-  bookingRequired: null,
-  details: null,
-}
 
 /**
  * The whole-branch review's central finding: every task-scoped review looked

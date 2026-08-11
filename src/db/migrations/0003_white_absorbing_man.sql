@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "field_flags_open_unique" ON "field_flags" USING btree ("submission_id","field_key") WHERE "field_flags"."resolved_at" is null;

@@ -1,10 +1,10 @@
 import { and, eq } from 'drizzle-orm'
-import type { Localized } from '@/form-schema'
-import { PHOTO_SLOTS } from '@/form-schema'
-import { photos, submissions } from '@/db/schema'
-import type { Db, Tx } from '@/db/types'
+import { photoSlotByKey } from '@/form-schema'
+import { photos } from '@/db/schema'
+import type { Db } from '@/db/types'
+import { assertEditable, fail, type SaveResult } from '@/submissions/editable'
 
-export type SaveResult = { ok: true } | { ok: false; error: Localized }
+export type { SaveResult }
 
 export type PhotoRow = {
   id: string
@@ -12,36 +12,6 @@ export type PhotoRow = {
   blobKey: string
   url: string
   caption: string | null
-}
-
-const fail = (en: string, ru: string): SaveResult => ({ ok: false, error: { en, ru } })
-
-/**
- * Правки принимаются только в состояниях, где форма открыта заполняющему —
- * то же множество, что в `submissions/values.ts`. Фотография — такой же
- * ответ анкеты, как текстовое поле, и должна подчиняться тому же правилу:
- * пока анкета на проверке (`submitted`/`approved`), заполняющий не должен
- * суметь подменить снимок из-под рецензента.
- */
-const EDITABLE = new Set(['draft', 'changes_requested'])
-
-async function assertEditable(tx: Tx, submissionId: string): Promise<SaveResult> {
-  // FOR UPDATE по той же причине, что в values.ts: проверка статуса и запись
-  // идут в разные таблицы (submissions vs photos), обычный SELECT под READ
-  // COMMITTED не берёт блокировку и не сериализует конкурентную смену статуса.
-  const rows = await tx
-    .select({ status: submissions.status })
-    .from(submissions)
-    .where(eq(submissions.id, submissionId))
-    .for('update')
-    .limit(1)
-
-  const status = rows[0]?.status
-  if (!status) return fail('Submission not found', 'Анкета не найдена')
-  if (!EDITABLE.has(status)) {
-    return fail('This submission is under review', 'Анкета сейчас на проверке')
-  }
-  return { ok: true }
 }
 
 export async function attachPhoto(
@@ -54,7 +24,7 @@ export async function attachPhoto(
     caption: string | null
   },
 ): Promise<SaveResult> {
-  const slot = PHOTO_SLOTS.find((s) => s.key === input.slot)
+  const slot = photoSlotByKey(input.slot)
   if (!slot) {
     return fail('Unknown photo slot', 'Неизвестный слот фото')
   }
@@ -102,6 +72,47 @@ export async function listPhotos(db: Db, submissionId: string): Promise<PhotoRow
     .where(eq(photos.submissionId, submissionId))
 
   return rows
+}
+
+/**
+ * Убирает ОДИН снимок КОНКРЕТНОЙ анкеты, найденный по слоту и URL.
+ *
+ * Ищет по `(submissionId, slot, url)`, а не принимает `photoId` от клиента, и
+ * это не про удобство: fill-токен удостоверяет анкету, а не снимок.
+ * `removePhoto` ниже сам достаёт `submissionId` из найденной строки и ни с чем
+ * его не сверяет — правильно для внутреннего вызова, но если бы маршрут
+ * передавал туда id прямо от клиента, любой обладатель валидного токена мог бы
+ * удалить снимок ЛЮБОЙ анкеты, узнав его id. Здесь выборка ограничена
+ * анкетой токена, так что id, который ей не принадлежит, просто не может
+ * получиться. Плюс у клиента на руках и так URL-ы (`Record<slot, string[]>` —
+ * и с сервера, и после только что прошедшей загрузки), а id — нет.
+ *
+ * Две транзакции, а не одна: удаляет по-прежнему `removePhoto` — со своей
+ * блокировкой, своей проверкой `editable` и своим тестом, — а здесь только
+ * чтение перед ним. Промежуток безвреден: если строка за это время исчезла или
+ * анкета перестала быть редактируемой, `removePhoto` откажет, а не удалит
+ * что-то не то.
+ */
+export async function removePhotoAt(
+  db: Db,
+  input: { submissionId: string; slot: string; url: string },
+): Promise<SaveResult> {
+  const rows = await db
+    .select({ id: photos.id })
+    .from(photos)
+    .where(
+      and(
+        eq(photos.submissionId, input.submissionId),
+        eq(photos.slot, input.slot),
+        eq(photos.url, input.url),
+      ),
+    )
+    .limit(1)
+
+  const photoId = rows[0]?.id
+  if (!photoId) return fail('Photo not found', 'Фото не найдено')
+
+  return removePhoto(db, photoId)
 }
 
 export async function removePhoto(db: Db, photoId: string): Promise<SaveResult> {

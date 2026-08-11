@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { BLOCKS, PHOTO_SLOTS, FIELDS, SERVICE_GROUPS } from '../index'
+import {
+  BLOCKS, PHOTO_SLOTS, FIELDS, SERVICE_GROUPS, SERVICE_ITEMS, keysOfBlock, blockKeyOf,
+} from '../index'
 
 describe('блоки проверки', () => {
   it('их ровно 27', () => {
@@ -56,5 +58,53 @@ describe('слоты фотографий', () => {
   it('минимум четыре снимка обязательны суммарно', () => {
     const required = PHOTO_SLOTS.filter((s) => s.required).length
     expect(required).toBeGreaterThanOrEqual(3)
+  })
+})
+
+/**
+ * `keysOfBlock` (block → keys) and `blockKeyOf` (key → block) are built from
+ * one shared construction (see `register` in `../blocks.ts`) specifically so
+ * they cannot drift apart the way two independently-maintained scans over
+ * the same data could. These tests pin that agreement directly, in both
+ * directions and over every key/block that exists — not just the two
+ * example blocks the review module's own tests happen to touch — so a
+ * future edit that reintroduces a second, separate implementation of either
+ * direction (or that changes one without the other) fails here first.
+ */
+describe('keysOfBlock и blockKeyOf — согласованное отображение', () => {
+  it('каждый ключ, который keysOfBlock отдаёт блоку, blockKeyOf отображает обратно на тот же блок', () => {
+    for (const block of BLOCKS) {
+      for (const key of keysOfBlock(block.key)) {
+        expect(blockKeyOf(key), `${block.key} → ${key}`).toBe(block.key)
+      }
+    }
+  })
+
+  it('каждый ключ поля, позиции услуг и слота фото отображается на блок, который его содержит', () => {
+    const leafKeys = [
+      ...FIELDS.map((f) => f.key),
+      ...SERVICE_ITEMS.map((i) => i.key),
+      ...PHOTO_SLOTS.map((s) => s.key),
+    ]
+    for (const key of leafKeys) {
+      const blockKey = blockKeyOf(key)
+      expect(blockKey, key).not.toBeNull()
+      expect(keysOfBlock(blockKey!), `${key} → ${blockKey}`).toContain(key)
+    }
+  })
+
+  it('суммарно keysOfBlock по всем блокам покрывает ровно универсум ключей — без пропусков и без лишних', () => {
+    const expected = new Set([
+      ...FIELDS.map((f) => f.key),
+      ...SERVICE_ITEMS.map((i) => i.key),
+      ...PHOTO_SLOTS.map((s) => s.key),
+    ])
+    const actual = new Set(BLOCKS.flatMap((b) => keysOfBlock(b.key)))
+    expect(actual).toEqual(expected)
+  })
+
+  it('незнакомый ключ не отображается ни на один блок, незнакомый блок не отдаёт ключей', () => {
+    expect(blockKeyOf('IX.99')).toBeNull()
+    expect(keysOfBlock('IX.99')).toEqual([])
   })
 })

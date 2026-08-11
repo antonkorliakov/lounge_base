@@ -1,12 +1,8 @@
 'use client'
 
-import { SERVICE_GROUPS, SERVICE_ITEMS, OPTION_LISTS, type ServiceValueInput } from '@/form-schema'
+import { SERVICE_GROUPS, SERVICE_ITEMS, type ServiceValueInput } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
-
-const EMPTY: Omit<ServiceValueInput, 'available'> = {
-  chargeType: null, price: null, currency: null,
-  slotMinutes: null, bookingRequired: null, details: null,
-}
+import { ServiceAvailabilityInput } from './ServiceItemCard'
 
 export function ServicesPass1(props: {
   values: Record<string, ServiceValueInput>
@@ -22,11 +18,7 @@ export function ServicesPass1(props: {
       {SERVICE_GROUPS.map((group) => (
         <div key={group.key} className="pass1-group">
           <h3>{pick(group.label)}</h3>
-          {SERVICE_ITEMS.filter((i) => i.group === group.key).map((item) => {
-            const current = props.values[item.key]
-            const options = OPTION_LISTS[item.availabilityList]
-            const isBinary = item.availabilityList === 'yesNo'
-
+          {SERVICE_ITEMS.filter((i) => i.group === group.key).map((item) => (
             // The whole row is a <label>, not just the <input>: on a phone,
             // standing in a lounge thumbing through 58 items, the tappable
             // area needs to be the entire row (finger-sized, per the mobile
@@ -34,41 +26,19 @@ export function ServicesPass1(props: {
             // both the item text and its control forwards a tap anywhere in
             // the row to that control natively — toggling the checkbox, or
             // opening the <select> — no extra JS needed.
-            return (
-              <label key={item.key} className="pass1-row">
-                <span>{pick(item.label)}</span>
-                {isBinary ? (
-                  <input
-                    type="checkbox"
-                    checked={current?.available === 'yes'}
-                    onChange={(e) =>
-                      props.onChange(item.key, {
-                        ...EMPTY,
-                        ...current,
-                        available: e.target.checked ? 'yes' : 'no',
-                      })
-                    }
-                  />
-                ) : (
-                  <select
-                    value={current?.available ?? ''}
-                    onChange={(e) =>
-                      props.onChange(item.key, {
-                        ...EMPTY, ...current, available: e.target.value,
-                      })
-                    }
-                  >
-                    <option value="">—</option>
-                    {options.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {pick(option.label)}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </label>
-            )
-          })}
+            //
+            // The control itself (and the `{ ...EMPTY, ...current }` merge it
+            // emits) moved to `ServiceAvailabilityInput` so the fixes screen
+            // can render the same one — see `./ServiceItemCard.tsx`.
+            <label key={item.key} className="pass1-row">
+              <span>{pick(item.label)}</span>
+              <ServiceAvailabilityInput
+                item={item}
+                value={props.values[item.key]}
+                onChange={(value) => props.onChange(item.key, value)}
+              />
+            </label>
+          ))}
         </div>
       ))}
     </section>

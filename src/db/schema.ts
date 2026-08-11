@@ -1,6 +1,7 @@
+import { sql } from 'drizzle-orm'
 import {
   boolean, date, index, integer, jsonb, numeric, pgEnum, pgTable,
-  text, timestamp, unique, uuid,
+  text, timestamp, unique, uniqueIndex, uuid,
 } from 'drizzle-orm/pg-core'
 
 export const submissionStatus = pgEnum('submission_status', [
@@ -124,7 +125,21 @@ export const fieldFlags = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   },
-  (table) => [index('field_flags_submission_idx').on(table.submissionId)],
+  (table) => [
+    index('field_flags_submission_idx').on(table.submissionId),
+    // Enforces "one open flag per (submission, field)" in the database
+    // itself, not just in raiseFlag's application logic. Partial (only over
+    // still-open rows) so resolved history for the same key doesn't
+    // conflict. This turns raiseFlag's replace-if-open into a single
+    // `INSERT ... ON CONFLICT ... DO UPDATE` targeting this index, the same
+    // shape as the delete-then-write races already fixed elsewhere on this
+    // branch (see `access/team.ts`'s `consumeLoginToken`) — one atomic
+    // statement instead of a read followed by a write that a concurrent
+    // caller can interleave with.
+    uniqueIndex('field_flags_open_unique')
+      .on(table.submissionId, table.fieldKey)
+      .where(sql`${table.resolvedAt} is null`),
+  ],
 )
 
 export const events = pgTable('events', {
@@ -148,6 +163,36 @@ export const fillTokens = pgTable(
   },
   (table) => [unique('fill_tokens_hash_unique').on(table.tokenHash)],
 )
+
+export const teamMembers = pgTable(
+  'team_members',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull(),
+    name: text('name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique('team_members_email_unique').on(table.email)],
+)
+
+export const loginTokens = pgTable(
+  'login_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    memberId: uuid('member_id').notNull().references(() => teamMembers.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+  },
+  (table) => [unique('login_tokens_hash_unique').on(table.tokenHash)],
+)
+
+export const sessions = pgTable('sessions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  memberId: uuid('member_id').notNull().references(() => teamMembers.id, { onDelete: 'cascade' }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
 
 export type SubmissionStatus = (typeof submissionStatus.enumValues)[number]
 export type OperationalStatus = (typeof operationalStatus.enumValues)[number]

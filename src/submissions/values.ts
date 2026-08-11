@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm'
-import type { Localized, ServiceValueInput } from '@/form-schema'
+import type { ServiceValueInput } from '@/form-schema'
 import {
   fieldByKey,
   serviceItemByKey,
@@ -7,37 +7,11 @@ import {
   validateServiceValue,
   isOfferedAvailability,
 } from '@/form-schema'
-import { fieldValues, serviceValues, submissions } from '@/db/schema'
+import { fieldValues, serviceValues } from '@/db/schema'
 import type { Db, Tx } from '@/db/types'
+import { assertEditable, fail, type SaveResult } from './editable'
 
-export type SaveResult = { ok: true } | { ok: false; error: Localized }
-
-const fail = (en: string, ru: string): SaveResult => ({ ok: false, error: { en, ru } })
-
-/** Правки принимаются только в состояниях, где форма открыта заполняющему. */
-const EDITABLE = new Set(['draft', 'changes_requested'])
-
-async function assertEditable(tx: Tx, submissionId: string): Promise<SaveResult> {
-  // FOR UPDATE: the status check and the write land in different tables
-  // (submissions vs. field_values/service_values), so under the default
-  // READ COMMITTED isolation a plain SELECT takes no lock and does nothing
-  // to serialize against a concurrent status change. Locking this row keeps
-  // a concurrent submit/approve from committing until this transaction
-  // does — do not remove this thinking it's redundant with the transaction.
-  const rows = await tx
-    .select({ status: submissions.status })
-    .from(submissions)
-    .where(eq(submissions.id, submissionId))
-    .for('update')
-    .limit(1)
-
-  const status = rows[0]?.status
-  if (!status) return fail('Submission not found', 'Анкета не найдена')
-  if (!EDITABLE.has(status)) {
-    return fail('This submission is under review', 'Анкета сейчас на проверке')
-  }
-  return { ok: true }
-}
+export type { SaveResult }
 
 export async function saveFieldValue(
   db: Db,
@@ -95,9 +69,22 @@ export async function saveServiceValue(
     // meaningful, so they're blanked here rather than carried over from
     // whatever they were before. Without this, un-checking (or reverting)
     // a previously-chargeable item would leave its old chargeType/price/
-    // currency/slotMinutes/bookingRequired sitting in the row for plan 3's
-    // export to read as if they still applied to an item the operator just
-    // said the lounge doesn't have.
+    // currency/slotMinutes/bookingRequired/details sitting in the row for
+    // plan 3's export to read as if they still applied to an item the
+    // operator just said the lounge doesn't have.
+    //
+    // The list is EVERY attribute besides `available` — i.e. exactly
+    // `EMPTY_SERVICE_ATTRS` (`src/web/ServiceItemCard.tsx`), which is also
+    // exactly the set `ServiceItemCard` renders behind its own
+    // `isOfferedAvailability` gate. Naming the rule that way rather than
+    // listing attributes is what keeps the two from drifting: `details` was
+    // left out of the blanking below while being offered-only in the UI, so
+    // flipping a flagged item from "yes" to "no" on the fixes screen kept
+    // `details: 'Free for 4h, then chargeable'` against `available: 'no'` —
+    // and `renderValues` shows `details` to the reviewer, so the review
+    // screen displayed that contradiction verbatim. A new offered-only
+    // attribute must be added here too; if it ever isn't, the same silent
+    // staleness returns for it alone.
     const offered = isOfferedAvailability(item, available)
 
     const row = {
@@ -109,7 +96,7 @@ export async function saveServiceValue(
       currency: offered ? input.value.currency : null,
       slotMinutes: offered ? input.value.slotMinutes : null,
       bookingRequired: offered ? input.value.bookingRequired : null,
-      details: input.value.details,
+      details: offered ? input.value.details : null,
     }
 
     await tx

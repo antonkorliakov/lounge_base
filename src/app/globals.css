@@ -35,6 +35,7 @@ body {
 .field input,
 .field select,
 .field textarea,
+.pass1-row select,
 .pass2-card input,
 .pass2-card select,
 .pass2-card textarea {
@@ -47,15 +48,22 @@ body {
 }
 .field textarea,
 .pass2-card textarea { min-height: 88px; }
+/* Чекбокс — не текстовое поле: правило выше (`width: 100%`) растягивало его
+   на всю карточку, из-за чего «Нужна бронь» во втором проходе выглядела
+   огромным блоком, а не галочкой. Тап-цель остаётся 44px: её держит сам
+   .field-check (min-height), а не размер квадрата. Единственный чекбокс в
+   карточке — «Нужна бронь»: наличие спрашивается дропдауном (см.
+   `ServiceAvailabilityInput`), как и в первом проходе. */
+.pass2-card input[type='checkbox'] { width: 22px; height: 22px; flex: 0 0 auto; }
 
 .field-compound { margin-top: 10px; }
 .field-slot { display: inline-flex; align-items: center; gap: 6px; }
 .field-slot input { width: auto; min-width: 4rem; }
 
 /* The row itself is a <label> (see ServicesPass1.tsx) so the whole thing —
-   not just the 22px checkbox — is the tap target; min-height plus flex-wrap
-   keeps that true, and keeps long two-language labels from ever forcing
-   horizontal scroll on a phone. */
+   not just the control at its end — is the tap target; min-height plus
+   flex-wrap keeps that true, and keeps long two-language labels from ever
+   forcing horizontal scroll on a phone. */
 .pass1-row {
   display: flex;
   flex-wrap: wrap;
@@ -67,8 +75,10 @@ body {
   border-bottom: 1px solid #f0f1f3;
 }
 .pass1-row span { min-width: 0; flex: 1 1 auto; }
-.pass1-row input[type='checkbox'] { width: 22px; height: 22px; flex: 0 0 auto; }
-.pass1-row select { width: auto; min-height: 44px; }
+/* Наличие — дропдаун у всех 58 позиций (раньше чекбокс у 57 из них, см.
+   `ServiceAvailabilityInput`). Ширина по содержимому, а не 100% как у полей
+   карточки: он стоит в одной flex-строке с названием позиции, а не под ним. */
+.pass1-row select { width: auto; flex: 0 0 auto; }
 
 .pass2-card,
 .fix-card {
@@ -79,7 +89,51 @@ body {
 }
 .fix-comment { margin: 0 0 10px; color: #991b1b; }
 
+/* Карточка позиции услуг / слота фото внутри карточки правки: рамка уже
+   нарисована самой .fix-card, вторая внутри неё читалась бы как ещё один
+   уровень вложенности, которого нет. Контролы (.pass2-card input и т.п.)
+   продолжают работать — селекторы висят на классе, а не на рамке. */
+.fix-card .pass2-card {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  margin-bottom: 0;
+}
+.fix-card .pass2-card h3,
+.fix-card .photo-slot h3 { margin-top: 0; }
+
+/* «Ещё не изменено» / «Изменено». Не запрет на повторную отправку (она
+   разрешена сознательно — заполняющий не должен оказаться в ловушке
+   замечания, с которым не согласен), а различение: без него все карточки
+   выглядят одинаково и отправка без правок становится случайностью. Янтарный,
+   не красный: красный здесь уже занят комментарием ревьюера (.fix-comment) и
+   отказами сервера, а это не ошибка. */
+.fix-open { margin: 8px 0 0; font-size: 13px; color: #92400e; }
+.fix-changed { margin: 8px 0 0; font-size: 13px; color: #15803d; }
+
+/* Отмеченный ключ, для которого на этом экране нет контрола. Появиться не
+   должен никогда (см. `fixes.noControl` в dictionaries.ts и
+   `src/web/__tests__/fixesOnly.test.tsx`) — но если появится, должен быть
+   виден как дефект, а не как пустая карточка: пустая карточка и скрывала
+   этот дефект для 62 из 129 отмечаемых ключей. */
+.fix-unmatched {
+  margin: 0;
+  padding: 10px;
+  border: 2px dashed #b91c1c;
+  border-radius: 8px;
+  color: #7f1d1d;
+  background: #fff5f5;
+}
+.fix-unmatched code { font-weight: 600; }
+
 .photo-slot img { max-width: 100%; border-radius: 8px; }
+/* Снимок и кнопка «Убрать» под ним — одним блоком, чтобы у накопительного
+   слота с тремя снимками было видно, какая кнопка к какому относится (то же
+   различение, что и нумерация в `alt`/`aria-label`, см. `PhotoSlots`). Кнопка
+   есть только у `extra`-слота на экране правок; у остальных этот блок — просто
+   обёртка вокруг картинки. */
+.photo-shot { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 8px; }
+.photo-remove { font-size: 13px; }
 
 /* Was a bare line of text with no sizing rule at all — the tap target was
    whatever the font's line-height happened to be. Styled to both look and
@@ -111,6 +165,88 @@ button {
 }
 button:disabled { opacity: .4; }
 
+.review-screen { display: grid; grid-template-columns: 200px 1fr; min-height: 100dvh; }
+.block-nav { border-right: 1px solid #e4e6ea; padding: 8px 0; overflow-y: auto; }
+.nav-item {
+  display: flex; gap: 8px; align-items: center; width: 100%;
+  padding: 7px 12px; border: 0; background: none; font: inherit;
+  font-size: 13px; text-align: left; cursor: pointer;
+}
+.nav-current { background: #eef4ff; font-weight: 600; }
+.nav-dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; }
+.nav-dot-confirmed { background: #16a34a; }
+.nav-dot-flagged { background: #dc2626; }
+.nav-dot-untouched { border: 1.5px solid #cbd0d6; }
+
+.review-pane { padding: 16px 20px; }
+.frow { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid #f0f1f3; align-items: flex-start; }
+.frow-key { flex: 0 0 220px; opacity: .7; font-size: 14px; }
+.frow-value { flex: 1; font-size: 14px; }
+/* Миниатюра 160×120 — достаточно, чтобы узнать сцену на глаз (вход, стойка
+   регистрации, ориентиры), но не полноразмерная картинка на каждой из
+   четырёх-пяти позиций слота. Клик открывает оригинал в новой вкладке.
+
+   `contain`, а не `cover`: `cover` срезал у кадра 4:3 около четверти ширины —
+   то есть ровно края кадра. Для слота `landmarks` (III.5.5, «ориентиры
+   рядом») края и есть предмет проверки: ориентир стоит у границы кадра, а
+   не в центре, и обрезанная миниатюра позволяет подтвердить блок по снимку,
+   на котором проверяемого объекта не видно. Аргумент «120 пикселей хватает
+   узнать сцену» к обрезке не относится вовсе: он о размере, а не о том, что
+   часть сцены отсутствует. Бокс 160×120 — 4:3, самая частая пропорция
+   телефонной камеры, так что горизонтальный снимок заполняет плитку целиком
+   при том же визуальном весе; вертикальный вписывается с полями по бокам, и
+   поля видны как поля (фон плитки), а не как кадр. */
+.frow-photos { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.frow-photo { display: block; border: 1px solid #e0e3e8; border-radius: 8px; overflow: hidden; line-height: 0; background: #f4f5f7; }
+.frow-photo img { width: 160px; height: 120px; object-fit: contain; display: block; }
+/* Плитка снимка, который не открылся (см. `FieldRow`'s `failed`): тот же
+   размер и то же место в ряду, но с читаемым текстом вместо браузерного
+   значка битой картинки — поэтому здесь возвращается `line-height`, снятый
+   у `.frow-photo` ради картинки. */
+.frow-photo-dead {
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  width: 160px; height: 120px; box-sizing: border-box; padding: 8px;
+  line-height: 1.3; font-size: 12px; color: #92400e; background: #fffbeb;
+  border-color: #f3dca6; text-decoration: none;
+}
+.frow-act { flex: 0 0 auto; opacity: 0; border: 1px solid #e0e3e8; border-radius: 5px; background: none; font: inherit; font-size: 12px; padding: 2px 8px; cursor: pointer; }
+/* Наведение существует только на устройствах с мышью/трекпадом — на
+   touch-устройстве `:hover` либо никогда не срабатывает, либо "залипает"
+   после тапа, так что скрывать кнопку по умолчанию для ревьюера на
+   планшете означало бы прятать единственный способ отметить поле. На
+   устройствах без настоящего hover (и при пальцевом, а не точном указателе)
+   кнопка видна всегда; на мышиных — только при наведении, как и задумано,
+   чтобы сотни строк не рябили кнопками в покое. Фокус с клавиатуры также
+   всегда проявляет кнопку — иначе таб-навигация делала бы её невидимой,
+   даже когда она уже в фокусе. */
+@media (hover: hover) and (pointer: fine) {
+  .frow:hover .frow-act { opacity: 1; }
+}
+@media (hover: none), (pointer: coarse) {
+  .frow-act { opacity: 1; }
+}
+.frow-act:focus-visible { opacity: 1; }
+.frow-flagged { background: #fff8f8; border-left: 3px solid #dc2626; padding-left: 13px; }
+.frow-comment { margin-top: 6px; padding: 8px 10px; border: 1px solid #f0d5d5; border-radius: 6px; color: #7f1d1d; font-size: 13px; }
+.frow-comment b { display: block; font-size: 11px; text-transform: uppercase; color: #b91c1c; margin-bottom: 3px; }
+.frow-undo { display: block; margin-top: 6px; border: 0; background: none; font: inherit; font-size: 12px; opacity: .6; cursor: pointer; padding: 0; }
+.frow-editor { margin-top: 8px; padding: 10px; border: 1px solid #cfd9ea; border-radius: 7px; }
+.frow-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.chip { border: 1px solid #d3d6db; border-radius: 20px; padding: 3px 10px; background: none; font: inherit; font-size: 12px; cursor: pointer; }
+.chip-on { background: #1a1d21; color: #fff; border-color: #1a1d21; }
+.frow-editor textarea { width: 100%; min-height: 60px; padding: 8px; font: inherit; border: 1px solid #d3d6db; border-radius: 6px; }
+.frow-actions { display: flex; gap: 7px; margin-top: 8px; }
+.bt-flag { background: #dc2626; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+.bt-flag:disabled { opacity: .5; cursor: default; }
+.review-foot { display: flex; gap: 8px; margin-top: 20px; padding-top: 14px; border-top: 1px solid #e4e6ea; }
+.review-error { color: #b91c1c; }
+.review-notice { color: #92400e; }
+.login { max-width: 340px; margin: 12vh auto; display: flex; flex-direction: column; gap: 10px; padding: 0 16px; }
+.login input, .login button { padding: 10px; font: inherit; border-radius: 8px; border: 1px solid #c9ced6; }
+.admin-home { max-width: 640px; margin: 40px auto; padding: 0 16px; }
+.admin-home ul { list-style: none; padding: 0; }
+.admin-home li { padding: 10px 0; border-bottom: 1px solid #f0f1f3; }
+
 @media (prefers-color-scheme: dark) {
   body { background: #111317; color: #f0f1f3; }
   .shell-top,
@@ -119,6 +255,7 @@ button:disabled { opacity: .4; }
   .field input,
   .field select,
   .field textarea,
+  .pass1-row select,
   .pass2-card input,
   .pass2-card select,
   .pass2-card textarea,
@@ -131,4 +268,38 @@ button:disabled { opacity: .4; }
   .pass1-row { border-color: #2a2d34; }
   .pass2-card,
   .fix-card { border-color: #2a2d34; }
+  /* Тот же довод, что у пастельных фонов экрана проверки ниже: светлая
+     подложка .fix-unmatched на тёмной странице стала бы светлым пятном с
+     нечитаемым тёмно-красным текстом. */
+  .fix-unmatched { background: #2a1616; border-color: #b91c1c; color: #fca5a5; }
+
+  /* Экран проверки: пастельные светлые фоны (nav-current, frow-flagged,
+     frow-comment) на тёмном фоне страницы читались бы как светлые пятна с
+     нечитаемым текстом — не просто некрасиво, а нечитаемо. Цвет текста
+     .review-error/.review-notice сознательно не трогается здесь по тому же
+     прецеденту, что уже есть в этом файле: .fix-comment (выше) в тёмном
+     режиме тоже не получает свой собственный цвет текста — эти два случая
+     не идентичны только потому, что их фон здесь меняется, а фон
+     .fix-comment остаётся прозрачным. */
+  .block-nav,
+  .frow,
+  .frow-editor,
+  .review-foot { border-color: #2a2d34; }
+  .frow-act { border-color: #2a2d34; }
+  .chip { border-color: #2a2d34; }
+  /* Фон плитки — это поля вокруг снимка, который не заполнил её целиком
+     (`object-fit: contain`), поэтому в тёмном режиме он должен быть тёмным:
+     светлая подложка иначе рисует вокруг каждого вертикального кадра две
+     яркие полосы. Тот же довод, что и у пастельных фонов выше. */
+  .frow-photo { border-color: #2a2d34; background: #1a1c21; }
+  .frow-photo-dead { background: #2a2416; border-color: #5b4a23; color: #fcd34d; }
+  .nav-current { background: #1b2735; }
+  .frow-flagged { background: #2a1616; }
+  .frow-comment { background: none; border-color: #5b2323; color: #fca5a5; }
+  .frow-comment b { color: #f87171; }
+  .frow-editor textarea {
+    background: #1a1c21;
+    color: #f0f1f3;
+    border-color: #2a2d34;
+  }
 }

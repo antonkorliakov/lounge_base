@@ -8,3 +8,7 @@ playwright-report/
 blob-report/
 playwright/.cache/
 next-env.d.ts
+# Синтетические снимки, которые пишет `npm run seed` (см. `seedPhotoUrl`) —
+# локальные тестовые данные, как и сама засеянная анкета.
+public/seed/
+

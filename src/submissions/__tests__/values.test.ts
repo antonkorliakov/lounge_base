@@ -127,9 +127,13 @@ describe('сохранение значений', () => {
   })
 
   // R2: once an item stops being offered (cleared, or reverted to "no"),
-  // its old chargeType/price/currency/slotMinutes/bookingRequired must not
-  // survive in the row — otherwise a not-offered item still carries a price
-  // that plan 3's export would read as if it still applied.
+  // NONE of its offered-only attributes may survive in the row — otherwise a
+  // not-offered item still carries a price that plan 3's export would read as
+  // if it still applied. Asserted as a deep-equal over the whole loaded value
+  // rather than attribute by attribute: `details` was the one attribute the
+  // blanking left out, and no test noticed, because every assertion here
+  // named the attributes it already knew about. A future attribute that is
+  // added to the row and not to the blanking fails this instead of nothing.
   it('снятие ранее платной позиции обратно до «—» стирает цену/валюту/прочие атрибуты', async () => {
     const db = await createTestDb()
     const submissionId = await seedDraft(db)
@@ -159,12 +163,55 @@ describe('сохранение значений', () => {
 
     expect(result.ok).toBe(true)
     const loaded = await loadSubmissionValues(db, submissionId)
-    expect(loaded.services['7.2']?.available).toBeNull()
-    expect(loaded.services['7.2']?.chargeType).toBeNull()
-    expect(loaded.services['7.2']?.price).toBeNull()
-    expect(loaded.services['7.2']?.currency).toBeNull()
-    expect(loaded.services['7.2']?.slotMinutes).toBeNull()
-    expect(loaded.services['7.2']?.bookingRequired).toBeNull()
+    expect(loaded.services['7.2']).toEqual({
+      available: null, chargeType: null, price: null,
+      currency: null, slotMinutes: null, bookingRequired: null, details: null,
+    })
+  })
+
+  // The same rule reached the way the fixes screen reaches it: a flagged item
+  // the reviewer disputes ("you ticked Shower, there is no shower") is flipped
+  // from "yes" to a closing "no" — not cleared to the placeholder. `details`
+  // is offered-only in the UI (`ServiceItemCard` gates it on
+  // `isOfferedAvailability`), and `renderValues` shows it to the reviewer, so
+  // keeping it here meant the review screen displayed "Free for 4h, then
+  // chargeable" against `available: 'no'`.
+  it('переключение позиции с «да» на «нет» стирает и details, не только цену', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+
+    await saveServiceValue(db, {
+      submissionId,
+      itemKey: '7.2',
+      value: {
+        available: 'yes', chargeType: 'chargeable', price: 15,
+        currency: 'EUR', slotMinutes: 30, bookingRequired: true,
+        details: 'Free for 4h, then chargeable',
+      },
+    })
+    expect((await loadSubmissionValues(db, submissionId)).services['7.2']?.details).toBe(
+      'Free for 4h, then chargeable',
+    )
+
+    const result = await saveServiceValue(db, {
+      submissionId,
+      itemKey: '7.2',
+      // Exactly what the card emits on that click: `onChange` merges the new
+      // `available` over the value it is holding, so every stale attribute
+      // still arrives — the client blanks nothing.
+      value: {
+        available: 'no', chargeType: 'chargeable', price: 15,
+        currency: 'EUR', slotMinutes: 30, bookingRequired: true,
+        details: 'Free for 4h, then chargeable',
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    const loaded = await loadSubmissionValues(db, submissionId)
+    expect(loaded.services['7.2']).toEqual({
+      available: 'no', chargeType: null, price: null,
+      currency: null, slotMinutes: null, bookingRequired: null, details: null,
+    })
   })
 
   it('отклоняет платную услугу без цены', async () => {

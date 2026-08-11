@@ -4,6 +4,7 @@ import { submissions, events } from '@/db/schema'
 import type { SubmissionStatus } from '@/db/schema'
 import type { Db } from '@/db/types'
 import { missingItems, type MissingItems } from './completeness'
+import { EDITABLE_STATUSES } from './editable'
 
 export type TransitionResult =
   | { ok: true; status: SubmissionStatus }
@@ -14,8 +15,10 @@ const fail = (en: string, ru: string): TransitionResult => ({
   error: { en, ru },
 })
 
-/** Отправить можно из состояний, где форма открыта заполняющему. */
-const SUBMITTABLE = new Set<SubmissionStatus>(['draft', 'changes_requested'])
+// Отправить можно из тех же состояний, в которых форма ещё открыта на
+// правку заполняющему — то же множество, что использует `assertEditable`
+// в values.ts/photos/store.ts, теперь общее с ними через `./editable`
+// (см. Item 1 подготовительного прохода перед P2).
 
 export async function submitSubmission(
   db: Db,
@@ -42,7 +45,7 @@ export async function submitSubmission(
 
     const status = rows[0]?.status
     if (!status) return fail('Submission not found', 'Анкета не найдена')
-    if (!SUBMITTABLE.has(status)) {
+    if (!EDITABLE_STATUSES.has(status)) {
       return fail('Already submitted', 'Анкета уже отправлена')
     }
 
