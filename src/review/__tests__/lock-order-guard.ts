@@ -1,12 +1,20 @@
 /**
- * Pure detection logic backing the "submissions locked before the write"
- * guard (`src/review/__tests__/lock-order.test.ts`). Lives outside the
- * scanned tree on purpose, mirroring `src/form-schema/__tests__/import-guard.ts`
+ * Pure detection logic backing the lock-ordering guards in
+ * `src/review/__tests__/lock-order.test.ts`. Lives outside the scanned tree
+ * on purpose, mirroring `src/form-schema/__tests__/import-guard.ts`
  * and `src/db/__tests__/unsafe-db-usage-guard.ts`: the scan walks
- * `src/review`, `src/submissions`, and `src/photos`, but skips `__tests__`
- * subdirectories, so a helper that necessarily contains the literal
- * patterns it looks for (`.insert(fieldFlags)`, `.for('update')`, …) must
- * live inside `__tests__` or it would trip its own rule.
+ * `src/review`, `src/submissions`, `src/photos`, and `src/registry`, but
+ * skips `__tests__` subdirectories, so a helper that necessarily contains
+ * the literal patterns it looks for (`.insert(fieldFlags)`, `.for('update')`,
+ * …) must live inside `__tests__` or it would trip its own rule.
+ *
+ * There are TWO checks here, over one shared set of scanned roots:
+ * `lockOrderViolationsIn` (the `submissions` family, below) and
+ * `loungeLockViolationsIn` (the `lounges` family, at the bottom of this
+ * file). Read the section "WHY TWO CHECKS AND NOT ONE TABLE OF (PARENT,
+ * CHILDREN) PAIRS" further down before adding a third: the two are not two
+ * instances of one rule, and the difference is the whole reason the second
+ * one exists.
  *
  * Why this guard exists: the same check-then-write race has been found and
  * fixed on this branch by review, not by a test, once for each of — the
@@ -21,7 +29,7 @@
  * fix was always the same one line — lock `submissions` (`FOR UPDATE`)
  * before the write — so this makes that line's presence, and its position
  * relative to the write, a structural property of every exported function
- * in these three directories that touches one of the five tables a review
+ * in the scanned directories that touches one of the five tables a review
  * decision's validity depends on, rather than something the next reviewer
  * has to rediscover by re-deriving the same race by hand, per caller.
  *
@@ -81,9 +89,127 @@
  * None of these are silently assumed away: they are true limits of a
  * text-based scanner that does not parse TypeScript, the same limit every
  * other guard in this codebase already lives with.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY TWO CHECKS AND NOT ONE TABLE OF (PARENT, CHILDREN) PAIRS
+ * ---------------------------------------------------------------------------
+ * `src/registry` needs its own invariant — "lock the `lounges` row before
+ * writing its operational status and history" (`setOperationalStatus`,
+ * `src/registry/status.ts`). The obvious move is to generalize this file into
+ * a list of `{ parent, children }` pairs and run one loop over it. That was
+ * considered and rejected, because the two invariants do not have the same
+ * shape, and the difference is not cosmetic:
+ *
+ *  - **Family 1 (`submissions`) is unconditional.** Its children are
+ *    DIFFERENT ROWS in DIFFERENT TABLES from the parent. Nothing in the
+ *    database makes an `INSERT INTO field_flags` contend with an `UPDATE
+ *    submissions` — under READ COMMITTED there is no serialization between
+ *    them at all — so the lock is the ONLY thing that creates any. It is
+ *    therefore required of every writer, whether or not that writer itself
+ *    reads `submissions`: `unconfirmBlock` was a bare unlocked `DELETE` that
+ *    read nothing, and it was one of the races this guard was built for.
+ *  - **Family 2 (`lounges`) is conditional on the writer also READING the
+ *    row.** Here the "child" is the parent row itself: `setOperationalStatus`
+ *    reads `lounges.operational_status` to record it as the event's `from`,
+ *    then updates that same row. The `UPDATE` already takes that row's
+ *    exclusive lock on its own, so two concurrent writers cannot interleave
+ *    their writes; what an unlocked version loses is that the earlier READ
+ *    was not covered by it, so both transactions can read the same `previous`
+ *    and each write an event claiming the same `from` — the history stops
+ *    being a chain (`to` of one no longer equals `from` of the next).
+ *    Deriving a write from an unlocked read is exactly the check-then-write
+ *    shape this file was built around; a write that derives nothing from a
+ *    read of that row has nothing to serialize beyond what Postgres already
+ *    does for it.
+ *
+ * A single `{ parent, children }` table would have to pick ONE quantifier for
+ * both families. Picking family 2's ("only when the writer reads the parent")
+ * would weaken family 1 to the point of exempting the bare-`DELETE` race that
+ * started all of this. Picking family 1's ("every writer, always") would
+ * demand a `FOR UPDATE` from `approveSubmission` that its correctness does not
+ * rest on (see below) — a lock added to satisfy a scanner rather than to fix a
+ * race, in a file whose own history is a list of concurrency arguments that
+ * read as airtight and were not. So: two checks, each stating its own
+ * invariant in its own terms, sharing every primitive (`stripComments`, the
+ * span finders, `writeHitsIn`, `inlineLockPositionsIn`) so there is one
+ * detector to keep honest, not two.
+ *
+ * **`events` is a child of BOTH families, and is guarded by NEITHER.** It is
+ * written by `submitSubmission` (`src/submissions/transitions.ts`),
+ * `requestChanges`/`approveSubmission` (`src/review/decide.ts`) and
+ * `setOperationalStatus` (`src/registry/status.ts`). "Which lock counts for
+ * `events`?" has no good answer, and that is the point: it is append-only. A
+ * fresh row acquires no lock any other transaction can be holding, so there is
+ * no ordering between two `events` writers to enforce in the first place — and
+ * the property `events` really does need, "every state change writes its event
+ * in the SAME transaction as the change", is atomicity, which no lock-order
+ * scan can observe (see the accepted gaps below). Naming it as a child of
+ * either parent would produce pure false failures in both directions:
+ * `submitSubmission` writes an event about a submission and has no lounge id
+ * in hand at all, so demanding a `lounges` lock from it would be asking for a
+ * lock on a row it cannot name; `setOperationalStatus` has no submission, so
+ * the mirror image holds for a `submissions` lock. Family 1 already made this
+ * call — `events` was never in `GUARDED_TABLES` despite two of its writers
+ * living in the scanned roots — and family 2 makes the same one for the same
+ * reason.
+ *
+ * **`approveSubmission` writes `lounges` and does NOT lock it — correctly.**
+ * It is a blind write: `tx.update(lounges).set(classifying)` where
+ * `classifying` comes from `field_values`, not from `lounges`. It never issues
+ * a `.from(lounges)` at all, so it reads nothing it then overwrites, and the
+ * columns it sets (`terminal`/`terminalType`/`zone`/`airsideLandside`) are
+ * disjoint from the ones `setOperationalStatus` sets. The row lock its own
+ * `UPDATE` takes is all the serialization it needs, and `loungeLockViolationsIn`
+ * passes it for exactly that reason rather than by exemption — there is no
+ * exemption mechanism here, deliberately (see above), and this is the test of
+ * whether the check's shape is honest: it must pass `approveSubmission` on a
+ * property derived from its source, not on a name in a list. Its doc comment
+ * in `decide.ts` explains why it cannot deadlock against
+ * `setOperationalStatus` (that transaction waits on nothing but its one
+ * `lounges` row, so it cannot be the "B waits on A" half of a cycle); nothing
+ * here weakens or restates that argument, and if `approveSubmission` ever
+ * starts reading `lounges` before writing it, this check will begin demanding
+ * the lock — which would be the correct demand at that point, because the
+ * read-then-write shape would then be real.
+ *
+ * Accepted gaps specific to family 2, on top of the ones above:
+ *  - **A blind writer of the status columns escapes.** A future function that
+ *    sets `lounges.operational_status` without reading it first (a bulk
+ *    "close every lounge in this airport", say) is not subject to the check.
+ *    It cannot write a truthful `from` in its event without a read, so such a
+ *    function is either incomplete or reads and is caught; but if it simply
+ *    writes no event, the property it breaks is "every status change is
+ *    recorded", which is about transaction content, not lock order, and would
+ *    need its own guard. Named here rather than left to be discovered.
+ *  - **Read and write are not known to be the same row.** The scan sees
+ *    `.from(lounges)` and `.update(lounges)` in one body; it cannot tell
+ *    whether they concern the same lounge (`listRegistry` reads every row).
+ *    It errs toward demanding the lock, which is the safe direction: the cost
+ *    of a false demand is one line of SQL, the cost of a missed one is a
+ *    history that no longer reconstructs.
+ *  - **No delegate mechanism.** `LOCK_DELEGATES` is about `submissions`; a
+ *    `lounges` lock taken inside a helper would not be recognized. No such
+ *    helper exists today (`setOperationalStatus` locks inline), and adding one
+ *    would need a conscious edit here — same trade-off, and same reason for
+ *    machine-checking any such list, as family 1's.
  */
 
 export const GUARDED_TABLES = ['fieldFlags', 'blockReviews', 'fieldValues', 'serviceValues', 'photos'] as const
+
+/**
+ * The two parent rows a scanned writer can be required to hold `FOR UPDATE`.
+ * Named constants rather than literals inside the detectors so that a
+ * detector's call site says which family it belongs to.
+ */
+const SUBMISSIONS = 'submissions'
+const LOUNGES = 'lounges'
+
+/**
+ * Family 2's write set: the `lounges` row itself. `events` is deliberately
+ * absent — see this file's header for why a table with two parents is guarded
+ * by neither lock.
+ */
+const LOUNGE_WRITE_TABLES = [LOUNGES] as const
 
 /**
  * Function names known to take the `submissions` `FOR UPDATE` lock
@@ -114,7 +240,10 @@ export const GUARDED_TABLES = ['fieldFlags', 'blockReviews', 'fieldValues', 'ser
  *    function this guard flags (`requestChanges`/`approveSubmission` write
  *    `submissions`/`lounges`/`events`, none of which are in
  *    `GUARDED_TABLES`), kept listed so a future function built on top of it
- *    is recognized without editing this list again.
+ *    is recognized without editing this list again. `lounges` is not
+ *    unguarded, it is guarded by the OTHER check in this file
+ *    (`loungeLockViolationsIn`), which asks for a lock on the `lounges` row
+ *    and to which this list is irrelevant.
  *
  * If a new delegate is added, add it here with the same kind of note —
  * this list is the guard's only way of knowing an indirect lock is real,
@@ -393,20 +522,37 @@ function allFunctionSpans(text: string): FunctionSpan[] {
 
 type WriteHit = { index: number; table: string }
 
-const WRITE_RE = new RegExp(
-  `\\.(?:insert|update|delete)\\(\\s*(${GUARDED_TABLES.join('|')})\\s*\\)`,
-  'g',
-)
-
-function writeHitsIn(body: string): WriteHit[] {
+/**
+ * `.insert/.update/.delete(TABLE)` hits in `body`, for the given table set —
+ * `GUARDED_TABLES` for family 1, `LOUNGE_WRITE_TABLES` for family 2. The
+ * table set is a parameter rather than a module constant so that both
+ * families share one write detector: a fix or a gap found in it applies to
+ * both, instead of the second family growing a near-copy that drifts.
+ */
+function writeHitsIn(body: string, tables: readonly string[]): WriteHit[] {
   const hits: WriteHit[] = []
-  const re = new RegExp(WRITE_RE.source, WRITE_RE.flags)
+  const re = new RegExp(`\\.(?:insert|update|delete)\\(\\s*(${tables.join('|')})\\s*\\)`, 'g')
   let m: RegExpExecArray | null
   while ((m = re.exec(body))) {
     const table = m[1]
     if (table) hits.push({ index: m.index, table })
   }
   return hits
+}
+
+/**
+ * Positions of `.from(TABLE)` in `body` — every place this body READS the
+ * given table. Family 2 needs this and family 1 does not: family 1's rule
+ * holds whether or not the writer reads its parent, while family 2's applies
+ * exactly when a write is derived from a read of the row being written (see
+ * this file's header).
+ */
+function tableReadPositionsIn(body: string, table: string): number[] {
+  const positions: number[] = []
+  const re = new RegExp(`\\.from\\(\\s*${table}\\s*\\)`, 'g')
+  let m: RegExpExecArray | null
+  while ((m = re.exec(body))) positions.push(m.index)
+  return positions
 }
 
 /**
@@ -426,17 +572,24 @@ function writeHitsIn(body: string): WriteHit[] {
  */
 export function tablesWrittenIn(fileText: string): Set<string> {
   const text = stripComments(fileText)
-  return new Set(writeHitsIn(text).map((hit) => hit.table))
+  return new Set(writeHitsIn(text, GUARDED_TABLES).map((hit) => hit.table))
 }
 
 /**
- * Positions in `body` where a `submissions` lock is established by this
- * body's own SQL: `.from(submissions)` — as the nearest preceding
- * `.from(IDENT)` — chained into `.for('update')` or `.for("update")`. Order
- * matters to the caller, not presence alone, so this returns positions
- * rather than a boolean.
+ * Positions in `body` where a lock on `table` is established by this body's
+ * own SQL: `.from(TABLE)` — as the nearest preceding `.from(IDENT)` —
+ * chained into `.for('update')` or `.for("update")`. Order matters to the
+ * caller, not presence alone, so this returns positions rather than a
+ * boolean.
+ *
+ * `table` is a parameter so both families use the same lock detector: family
+ * 1 asks for `submissions`, family 2 for `lounges`. Requiring the nearest
+ * preceding `.from` to BE that table is what makes a lock on the wrong row
+ * fail to count — a function that takes `FOR UPDATE` on `submissions` and
+ * then read-then-writes `lounges` is not locked for family 2's purposes, and
+ * is reported.
  */
-function inlineLockPositionsIn(body: string): number[] {
+function inlineLockPositionsIn(body: string, table: string): number[] {
   const positions: number[] = []
 
   const forRe = /\.for\(\s*['"]update['"]\s*\)/g
@@ -447,7 +600,7 @@ function inlineLockPositionsIn(body: string): number[] {
     let last: RegExpExecArray | null = null
     let fm: RegExpExecArray | null
     while ((fm = fromRe.exec(before))) last = fm
-    if (last && last[1] === 'submissions') positions.push(m.index)
+    if (last && last[1] === table) positions.push(m.index)
   }
 
   return positions
@@ -459,7 +612,7 @@ function inlineLockPositionsIn(body: string): number[] {
  * guard.
  */
 function lockPositionsIn(body: string): number[] {
-  const positions = inlineLockPositionsIn(body)
+  const positions = inlineLockPositionsIn(body, SUBMISSIONS)
 
   if (LOCK_DELEGATES.length > 0) {
     const delegateRe = new RegExp(`\\b(?:${LOCK_DELEGATES.join('|')})\\s*\\(`, 'g')
@@ -497,7 +650,9 @@ export function provenLockDelegatesIn(fileText: string): Set<string> {
   const names: ReadonlySet<string> = new Set(LOCK_DELEGATES)
   const proven = new Set<string>()
   for (const fn of allFunctionSpans(text)) {
-    if (names.has(fn.name) && inlineLockPositionsIn(fn.body).length > 0) proven.add(fn.name)
+    if (names.has(fn.name) && inlineLockPositionsIn(fn.body, SUBMISSIONS).length > 0) {
+      proven.add(fn.name)
+    }
   }
   return proven
 }
@@ -505,7 +660,7 @@ export function provenLockDelegatesIn(fileText: string): Set<string> {
 export type LockOrderViolation = { functionName: string; reason: string }
 
 /**
- * The guard itself: every exported function in `fileText` that writes to
+ * Family 1's guard: every exported function in `fileText` that writes to
  * one of `GUARDED_TABLES` must have a `submissions` lock (inline or via
  * `LOCK_DELEGATES`) positioned strictly before the *earliest* such write —
  * checking against the earliest is sufficient to guarantee it precedes
@@ -520,7 +675,7 @@ export function lockOrderViolationsIn(fileText: string): LockOrderViolation[] {
   const violations: LockOrderViolation[] = []
 
   for (const fn of exportedFunctionSpans(text)) {
-    const writes = writeHitsIn(fn.body)
+    const writes = writeHitsIn(fn.body, GUARDED_TABLES)
     if (writes.length === 0) continue
 
     const firstWrite = writes.reduce((a, b) => (b.index < a.index ? b : a))
@@ -539,6 +694,99 @@ export function lockOrderViolationsIn(fileText: string): LockOrderViolation[] {
       violations.push({
         functionName: fn.name,
         reason: `locks submissions after its write to ${firstWrite.table}, not before`,
+      })
+    }
+  }
+
+  return violations
+}
+
+/**
+ * How an exported function writes `lounges`, as family 2's check sees it:
+ *  - `read-then-write` — its body also reads `lounges` (`.from(lounges)`), so
+ *    the write can be derived from that read and the check applies to it.
+ *  - `blind` — it writes `lounges` and never reads it, so there is nothing to
+ *    derive and nothing for the lock to add over the row lock the `UPDATE`
+ *    itself takes. `approveSubmission` is this, and it is the only one today.
+ */
+export type LoungeWriteShape = 'blind' | 'read-then-write'
+
+/**
+ * Every exported function in `fileText` that writes `lounges`, with the shape
+ * family 2 classified it as. Backs BOTH anti-vacuity assertions for family 2
+ * in `lock-order.test.ts`, which are two different questions with two
+ * different meanings when they fail:
+ *
+ *  1. Is this map non-empty at all? An empty one means the scan found no
+ *     `lounges` write anywhere in the roots — i.e. the identifier drifted (a
+ *     rename in `db/schema.ts`, a local import alias, a typo in
+ *     `LOUNGE_WRITE_TABLES`) or the root list stopped covering `src/registry`.
+ *     `loungeLockViolationsIn` would then report zero violations for a reason
+ *     that has nothing to do with anything being locked, which is the exact
+ *     failure this project has now hit five times.
+ *  2. Does at least one entry say `read-then-write`? Family 2's rule is
+ *     conditional on the read, so a run in which nothing is classified that
+ *     way is a run in which the check had no subject — it passed over
+ *     nothing. That happens if `setOperationalStatus` stops reading the row
+ *     it writes (say its `previous` read is moved out of the transaction, or
+ *     behind a helper — the accepted helper-indirection gap), and it is
+ *     precisely the case where a human should look rather than be reassured.
+ */
+export function loungeWritersIn(fileText: string): Map<string, LoungeWriteShape> {
+  const text = stripComments(fileText)
+  const writers = new Map<string, LoungeWriteShape>()
+
+  for (const fn of exportedFunctionSpans(text)) {
+    if (writeHitsIn(fn.body, LOUNGE_WRITE_TABLES).length === 0) continue
+    const reads = tableReadPositionsIn(fn.body, LOUNGES)
+    writers.set(fn.name, reads.length > 0 ? 'read-then-write' : 'blind')
+  }
+
+  return writers
+}
+
+/**
+ * Family 2's guard: every exported function in `fileText` that READS `lounges`
+ * and also WRITES it must take that row's `FOR UPDATE` (in its own SQL, and
+ * on `lounges` specifically — a lock on `submissions` does not count) strictly
+ * before the earliest such write.
+ *
+ * Deliberately NOT the same quantifier as `lockOrderViolationsIn`, and not
+ * shareable with it: see this file's header for why family 1 is unconditional
+ * while this one applies exactly to the read-then-write shape, and for why
+ * `events` — written by both families — is guarded by neither. Blind writers
+ * are skipped here for a stated reason, not exempted by name: there is no
+ * exemption mechanism in this file and this check does not introduce one.
+ *
+ * `LOCK_DELEGATES` is not consulted: those helpers lock `submissions`, which
+ * is a different row. A `lounges` lock taken inside a helper would not be
+ * recognized here (accepted gap, header).
+ */
+export function loungeLockViolationsIn(fileText: string): LockOrderViolation[] {
+  const text = stripComments(fileText)
+  const violations: LockOrderViolation[] = []
+
+  for (const fn of exportedFunctionSpans(text)) {
+    const writes = writeHitsIn(fn.body, LOUNGE_WRITE_TABLES)
+    if (writes.length === 0) continue
+    if (tableReadPositionsIn(fn.body, LOUNGES).length === 0) continue
+
+    const firstWrite = writes.reduce((a, b) => (b.index < a.index ? b : a))
+    const locks = inlineLockPositionsIn(fn.body, LOUNGES)
+
+    if (locks.length === 0) {
+      violations.push({
+        functionName: fn.name,
+        reason: `reads lounges and then writes ${firstWrite.table} without ever locking the lounges row`,
+      })
+      continue
+    }
+
+    const earliestLock = Math.min(...locks)
+    if (earliestLock > firstWrite.index) {
+      violations.push({
+        functionName: fn.name,
+        reason: `locks the lounges row after its write to ${firstWrite.table}, not before`,
       })
     }
   }
