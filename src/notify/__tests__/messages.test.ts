@@ -54,7 +54,7 @@ describe('письма', () => {
   it('письмо входа называет реальный срок действия ссылки и её одноразовость', () => {
     const mail = loginMail({ to: 'a@b.c', loginUrl: 'https://app.test/admin/login/xyz' })
 
-    expect(mail.text).toContain('одноразов')
+    expect(mail.text).toContain('once')
     expect(mail.text).toContain(`${LOGIN_TTL_MINUTES}`)
   })
 })

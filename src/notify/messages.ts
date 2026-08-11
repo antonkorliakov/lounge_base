@@ -32,7 +32,12 @@ export type OutgoingMail = { to: string; subject: string; text: string }
  * guess — these two builders are exactly where that preference should be
  * read and used to pick between `Localized` variants.
  *
- * `loginMail`, below, is a different situation: see its own comment.
+ * This is now a recorded decision, not just this file's convention: all
+ * notification mail sent by this system is English — see the design spec
+ * (`docs/superpowers/specs/2026-08-06-lounge-data-collection-design.md`),
+ * notifications section. `loginMail`, below, is English too, but for a
+ * related-yet-distinct reason specific to its own recipients: see its own
+ * comment.
  */
 export function changesRequestedMail(input: {
   to: string
@@ -68,34 +73,30 @@ export function approvedMail(input: {
 }
 
 /**
- * Language: Russian, unlike the two operator mails above — and for the
- * mirror-image reason, PROVISIONALLY. This mail never goes to an operator
- * of unknown language; it goes to a member of `teamMembers`. The claim this
- * rests on — that team is Russian-speaking — was given to me as an
- * instruction from the task's coordinator, not as a fact recorded in the
- * brief or anywhere else in the design: neither the design spec nor plan 2
- * documents the team's language anywhere, and there is no `locale`/
- * `language` column on `teamMembers`. The coordinator has said the claim
- * was their own inference (from the project's working language being
- * Russian) rather than a documented fact, and is checking it with the
- * human partner in parallel with this fix. Treat the Russian text here as
- * provisional pending that answer, not as settled the way the two mails
- * above are.
+ * Language: English, same decision as the two operator mails above (see
+ * the design spec reference there), but for a distinct reason specific to
+ * this mail's recipients. This one goes to a member of `teamMembers`, not
+ * an operator — a population whose language could in principle be known
+ * rather than guessed. It's still English, because "known" would require a
+ * guarantee this system doesn't have: nothing about `teamMembers` enforces
+ * that its membership is uniformly one language, today or after the next
+ * person is added to it, and there is no `locale`/`language` column on
+ * that table to check even if such a guarantee existed. English is the
+ * choice that doesn't quietly break the day someone who doesn't read
+ * Russian joins the team — unlike a language chosen because it happens to
+ * describe the team *right now*, it doesn't need re-litigating every time
+ * the team's composition changes.
  *
- * The underlying reasoning, if the claim holds: an operator's language is
- * genuinely unrecorded (see above), but this mail's audience would then be
- * actually known rather than guessed, so there would be nothing to hedge
- * against by defaulting to English here. If the team turns out not to be
- * uniformly Russian-speaking, or the answer changes, `teamMembers` would
- * need its own recorded language preference before this can be answered
- * per-recipient — the same gap noted above for operators.
+ * If `teamMembers` ever gains a real per-member language preference, this
+ * is where it should be read and used — the same condition noted above for
+ * the operator mails, just for a different table.
  */
 export function loginMail(input: { to: string; loginUrl: string }): OutgoingMail {
   return {
     to: input.to,
-    subject: 'Вход в Lounge Onboarding',
+    subject: 'Sign in to Lounge Onboarding',
     text: [
-      'Перейдите по ссылке, чтобы войти. Она одноразовая и действует 20 минут.',
+      'Use this link to sign in. It works once and expires in 20 minutes.',
       input.loginUrl,
     ].join('\n'),
   }
