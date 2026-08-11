@@ -72,6 +72,17 @@ export function PhotoSlots(props: {
   // Per-slot, not a single form-wide error: a rejection on one slot must
   // not blank out or get confused with whatever another slot is showing.
   const [errors, setErrors] = useState<Record<string, Localized>>({})
+  /**
+   * Снимки, удаление которых уже в пути. Нужно потому, что заявленная среда —
+   * телефон на аэропортовом Wi-Fi: между тапом и ответом сервера проходит
+   * заметное время, кнопка всё это время на экране, и второй тап отправил бы
+   * второй DELETE того же снимка. Первый бы прошёл, второй вернул бы «Фото не
+   * найдено» — то есть заполняющий увидел бы ошибку про снимок, который как раз
+   * успешно убран. Гасим на время запроса, а не спрашиваем подтверждение:
+   * случайное удаление здесь восстановимо (снимок остаётся в телефоне, кнопка
+   * «Добавить» рядом), а лишний диалог на каждый тап — нет.
+   */
+  const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set())
 
   async function upload(slot: string, file: File): Promise<void> {
     // `resizeToJpeg` and `fetch` were previously called outside any `try`:
@@ -125,6 +136,8 @@ export function PhotoSlots(props: {
   }
 
   async function remove(slot: string, url: string): Promise<void> {
+    if (removing.has(url)) return
+    setRemoving((prev) => new Set(prev).add(url))
     try {
       const response = await fetch('/api/photos', {
         method: 'DELETE',
@@ -157,6 +170,16 @@ export function PhotoSlots(props: {
       // Ровно те же причины и та же цена, что у `upload`: без видимого отказа
       // заполняющий жмёт «Убрать» и не понимает, произошло ли что-нибудь.
       setErrors((prev) => ({ ...prev, [slot]: UI['photos.removeFailed'] }))
+    } finally {
+      // И после отказа тоже: иначе один сбой сети запирал бы этот снимок
+      // навсегда — единственный правдивый ответ на замечание по слоту стал бы
+      // недоступен до перезагрузки страницы.
+      setRemoving((prev) => {
+        if (!prev.has(url)) return prev
+        const next = new Set(prev)
+        next.delete(url)
+        return next
+      })
     }
   }
 
@@ -178,6 +201,7 @@ export function PhotoSlots(props: {
                   type="button"
                   className="photo-remove"
                   aria-label={`${t('photos.remove')}: ${pick(slot.label)} ${index + 1}`}
+                  disabled={removing.has(url)}
                   onClick={() => void remove(slot.key, url)}
                 >
                   {t('photos.remove')}
