@@ -86,6 +86,22 @@
  *    (`src/db/__tests__/unsafe-db-usage-guard.ts`), so a raw-SQL write
  *    escaping *this* guard's notice would already have been caught by
  *    *that* one before it could exist outside `src/db` in the first place.
+ *    That composed claim was weaker than it read until recently: the other
+ *    guard's `EXECUTE_RE` matched only the bare receivers `db`/`tx`, so it
+ *    covered these roots (where a `Db` really does arrive as a parameter) but
+ *    not the app layer's `db().execute(…)`. Both receiver shapes are covered
+ *    there now; what remains accepted in both files is a `Db` held under some
+ *    other local name (`const d = db()`).
+ *  - **Two arrow forms are invisible to `arrowConstSpans`**, on top of the
+ *    helper/alias gaps above: `export const f = <T>(…) => …` (a generic, so
+ *    what follows `=` is `<`, not the `(` the header regex requires) and
+ *    `export const f: Type = (…) => …` (an annotated const, so what follows
+ *    the name is `:`, not `=`). Neither exists in the scanned roots today —
+ *    every writer is `export async function` — but a writer added in either
+ *    shape would be skipped silently rather than flagged, which is the
+ *    direction that does not ask anyone to look. Named here because it was
+ *    carried as an unwritten "minor" for two rounds; closing it is a change to
+ *    `arrowConstSpans`'s header regex, not to any rule.
  * None of these are silently assumed away: they are true limits of a
  * text-based scanner that does not parse TypeScript, the same limit every
  * other guard in this codebase already lives with.
@@ -374,19 +390,21 @@ function bodyBraceAfterParams(text: string, paramsEnd: number): number {
 /**
  * Finds every top-level `export [async] function NAME(...) { ... }` in
  * (already comment-stripped) `text` and returns each one's name and full
- * body text (the `{ … }` span, inclusive). Relies on none of this
- * project's exported functions in `src/review`/`src/submissions`/
- * `src/photos` having an inline object-literal *type* in their signature
- * (e.g. a return type written as `Promise<{ ok: boolean }>` rather than a
- * named alias) — every one uses a named type (`SaveResult`,
- * `ConfirmResult`, `TransitionResult`, `FlagRow[]`, `BlockState[]`,
- * `PhotoRow[]`, `void`, …), so the first `{` after the parameter list's
- * closing `)` is always the real function body, not a return-type literal.
- * This is a documented limitation, not a silent gap: a future function
- * that violates it would have its whole body mis-detected, which the
- * guard's own "at least one file scanned" sanity check cannot catch —
- * reviewers adding a new exported function with an inline object return
- * type should notice this comment.
+ * body text (the `{ … }` span, inclusive).
+ *
+ * An inline object-literal *return type* — `Promise<{ status: … } | null>`
+ * rather than a named alias — is HANDLED, not assumed absent: finding the body
+ * brace is `bodyBraceAfterParams`'s job and it skips return-type annotations
+ * (read its comment). This doc used to say the opposite, that no scanned
+ * signature was written that way and therefore "the first `{` after the
+ * parameter list is always the real function body". That was false when
+ * written — `loadSubmissionValues` (`src/submissions/values.ts`) and
+ * `lockSubmission` (`src/review/decide.ts`) both write `Promise<{ … }>` — and
+ * it stayed here after the premise was fixed in code, so the two comments
+ * about one mechanism contradicted each other and this one told readers to
+ * watch for a hazard that no longer exists. Recorded rather than quietly
+ * deleted, because "a comment asserting a premise nobody checked" is a defect
+ * class this branch has now hit several times.
  *
  * `requireExport: false` drops the `export` requirement, for
  * `provenLockDelegatesIn`'s benefit only: `lockSubmission`
@@ -451,6 +469,12 @@ function findArrowAfterParams(text: string, afterParamsClose: number): number | 
  * with an explicit return-type annotation, the style every `function`
  * declaration here already uses (`findArrowAfterParams` skips exactly
  * that).
+ *
+ * The header regex requires `(` immediately after `NAME =`, so two arrow
+ * shapes are NOT recognized — a generic (`= <T>(…) =>`) and an annotated const
+ * (`f: Type = (…) =>`). Listed in this file's "Accepted gaps" section rather
+ * than only here, since a skipped writer is a hole in the guard, not a quirk
+ * of this helper.
  *
  * Two body shapes are handled:
  *  - Block body (`=> { ... }`): body is the brace-matched span, same
