@@ -5,8 +5,9 @@ import {
   lockOrderViolationsIn,
   tablesWrittenIn,
   stripComments,
-  EXEMPTIONS,
+  provenLockDelegatesIn,
   GUARDED_TABLES,
+  LOCK_DELEGATES,
 } from './lock-order-guard'
 
 const ROOTS = [
@@ -45,20 +46,28 @@ describe('порядок блокировки: submissions лочится до �
     }
   })
 
-  it('исключение существует как экспортируемая функция', () => {
-    // If a name in EXEMPTIONS stops existing (renamed, deleted), this
-    // catches the exemption silently protecting nothing rather than the
-    // function it was written for.
-    const names = new Set(Object.keys(EXEMPTIONS))
+  /**
+   * `LOCK_DELEGATES` is the guard's only remaining hand-maintained list —
+   * `EXEMPTIONS` is gone — and it is the one place a listed name can make
+   * the guard *weaker*: every writer in `src/submissions`/`src/photos`
+   * satisfies the scan by calling `assertEditable` rather than locking
+   * inline, so if `assertEditable` ever loses its own `.for('update')`, the
+   * scan above would keep reporting zero violations while nothing in that
+   * whole path locks anything. This replaces the old "every EXEMPTIONS name
+   * still exists" assertion with the same anti-staleness idea aimed at the
+   * list that still exists, and asks for more than existence: each delegate
+   * must be found in the scanned roots AND take the lock in its own body.
+   */
+  it('каждый LOCK_DELEGATES действительно берёт блокировку submissions в своём теле', () => {
+    const proven = new Set<string>()
     for (const root of ROOTS) {
       for (const file of sourceFiles(root)) {
         const text = readFileSync(file, 'utf8')
-        for (const fn of text.matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g)) {
-          names.delete(fn[1]!)
-        }
+        for (const name of provenLockDelegatesIn(text)) proven.add(name)
       }
     }
-    expect(Array.from(names)).toEqual([])
+    const unproven = LOCK_DELEGATES.filter((name) => !proven.has(name))
+    expect(unproven).toEqual([])
   })
 
   /**
@@ -142,6 +151,26 @@ describe('lockOrderViolationsIn', () => {
     expect(violations[0]?.reason).toMatch(/after its write/)
   })
 
+  it('видит тело функции с инлайновым объектным типом возврата', () => {
+    // `bodyBraceAfterParams` used to take the first `{` after the parameter
+    // list, so this signature's own return-type literal was mistaken for the
+    // body and everything inside the real one — writes included — was
+    // invisible. Two live functions in the scanned roots are written this
+    // way (`loadSubmissionValues`, `lockSubmission`); both happen to be
+    // read-only, so the hole cost nothing yet.
+    const text = `
+      export async function badInlineReturnType(db, id): Promise<{ ok: boolean } | null> {
+        return db.transaction(async (tx) => {
+          await tx.insert(fieldFlags).values({})
+        })
+      }
+    `
+    const violations = lockOrderViolationsIn(text)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.functionName).toBe('badInlineReturnType')
+    expect(violations[0]?.reason).toMatch(/without ever locking submissions/)
+  })
+
   it('не ловит функцию, которая ничего не пишет в защищённые таблицы', () => {
     const text = `
       export async function readOnly(db) {
@@ -164,7 +193,13 @@ describe('lockOrderViolationsIn', () => {
     expect(lockOrderViolationsIn(text)).toEqual([])
   })
 
-  it('не ловит функцию из списка исключений, даже если она пишет без блокировки', () => {
+  it('ловит clearFlagsFor без блокировки — исключений больше нет ни для кого', () => {
+    // `clearFlagsFor` was the guard's last exemption, on an argument that
+    // turned out to be wrong (see its doc comment in `flags.ts`). This is
+    // the inverse of the test that used to stand here: the same lock-free
+    // body, now expected to be REPORTED. Naming the function explicitly
+    // pins that the exemption mechanism is gone rather than merely empty —
+    // an `EXEMPTIONS = {}` would pass a generically-named case too.
     const text = `
       export async function clearFlagsFor(db, submissionId, key) {
         return db.transaction(async (tx) => {
@@ -173,7 +208,10 @@ describe('lockOrderViolationsIn', () => {
         })
       }
     `
-    expect(lockOrderViolationsIn(text)).toEqual([])
+    const violations = lockOrderViolationsIn(text)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.functionName).toBe('clearFlagsFor')
+    expect(violations[0]?.reason).toMatch(/without ever locking submissions/)
   })
 
   it('doc-комментарий с текстом про блокировку не маскирует удалённый реальный лок', () => {
@@ -270,6 +308,88 @@ describe('lockOrderViolationsIn', () => {
       expect(violations[0]?.functionName).toBe('badExpr')
       expect(violations[0]?.reason).toMatch(/without ever locking submissions/)
     })
+  })
+})
+
+// Same rationale as lockOrderViolationsIn's own synthetic tests: the
+// delegate-honesty check above is only as good as this detector, and a
+// detector that quietly stopped recognizing anything would make that check
+// fail loudly — but one that recognized too much (accepting a delegate that
+// only calls another delegate) would make it pass for nothing. Both
+// directions are pinned here.
+describe('provenLockDelegatesIn', () => {
+  it('признаёт делегата, который берёт блокировку в своём теле', () => {
+    const text = `
+      export async function assertEditable(tx, submissionId) {
+        const rows = await tx
+          .select({ status: submissions.status })
+          .from(submissions)
+          .where(eq(submissions.id, submissionId))
+          .for('update')
+          .limit(1)
+        return rows[0]
+      }
+    `
+    expect(provenLockDelegatesIn(text)).toEqual(new Set(['assertEditable']))
+  })
+
+  it('видит неэкспортируемого делегата (lockSubmission — модульно-локальный)', () => {
+    const text = `
+      async function lockSubmission(tx, submissionId) {
+        const rows = await tx
+          .select({ status: submissions.status })
+          .from(submissions)
+          .where(eq(submissions.id, submissionId))
+          .for('update')
+          .limit(1)
+        return rows[0] ?? null
+      }
+    `
+    expect(provenLockDelegatesIn(text)).toEqual(new Set(['lockSubmission']))
+  })
+
+  it('НЕ признаёт делегата, у которого блокировка удалена', () => {
+    const text = `
+      export async function assertEditable(tx, submissionId) {
+        const rows = await tx
+          .select({ status: submissions.status })
+          .from(submissions)
+          .where(eq(submissions.id, submissionId))
+          .limit(1)
+        return rows[0]
+      }
+    `
+    expect(provenLockDelegatesIn(text)).toEqual(new Set())
+  })
+
+  it('НЕ признаёт делегата, который лишь вызывает другого делегата', () => {
+    // Self-referential proof: two listed delegates certifying each other
+    // with no real FOR UPDATE anywhere. Only the body's own SQL counts.
+    const text = `
+      async function lockSubmission(tx, id) {
+        return assertEditable(tx, id)
+      }
+    `
+    expect(provenLockDelegatesIn(text)).toEqual(new Set())
+  })
+
+  it('doc-комментарий про блокировку не делает делегата доказанным', () => {
+    const text = `
+      /** Locks with .from(submissions) … .for('update') — says the comment. */
+      export async function assertEditable(tx, submissionId) {
+        return tx.select().from(submissions).where(eq(submissions.id, submissionId))
+      }
+    `
+    expect(provenLockDelegatesIn(text)).toEqual(new Set())
+  })
+
+  it('не признаёт функцию, которой нет в LOCK_DELEGATES, как бы она ни лочила', () => {
+    const text = `
+      export async function someOtherHelper(tx, id) {
+        return tx.select().from(submissions).where(eq(submissions.id, id)).for('update')
+      }
+    `
+    expect(provenLockDelegatesIn(text)).toEqual(new Set())
   })
 })
 

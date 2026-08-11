@@ -8,29 +8,51 @@
  * patterns it looks for (`.insert(fieldFlags)`, `.for('update')`, …) must
  * live inside `__tests__` or it would trip its own rule.
  *
- * Why this guard exists: seven check-then-write races have been found and
- * fixed on this branch by review, not by a test — the value-save path
- * (`assertEditable`), `submitSubmission`, the magic-link consume
- * (`access/team.ts`), `raiseFlag`, `unconfirmBlock`, and `resolveFlag`
- * (both from this task's own fix rounds — `resolveFlag` needed the lock
- * for a direction-dependent reason `raiseFlag`/`unconfirmBlock` didn't:
- * see `EXEMPTIONS`'s history below, or `resolveFlag`'s own doc comment in
- * `flags.ts`, for why "shrinking the open-flag set is always safe" was
- * true for two callers and false for a third). Every one was the
- * identical shape: a write to a child table that isn't serialized against
- * a concurrent status-changing transaction because nothing makes the two
- * contend for the same lock. The fix was always the same one line — lock
- * `submissions` (`FOR UPDATE`) before the write — so this makes that
- * line's presence, and its position relative to the write, a structural
- * property of every exported function in these three directories that
- * touches one of the five tables a review decision's validity depends on,
- * rather than something the next reviewer has to rediscover by
- * re-deriving the same race by hand, per caller, which is exactly the
- * failure mode that produced `resolveFlag`'s stale exemption in the first
- * place: a direction-dependent safety argument in a hand-maintained
- * exemption list is something a future caller or reader can misapply.
- * Uniform locking removes the need for that reasoning; this guard exists
- * so removing the need is actually enforced, not just recommended.
+ * Why this guard exists: the same check-then-write race has been found and
+ * fixed on this branch by review, not by a test, once for each of — the
+ * value-save path (`assertEditable`), `submitSubmission`, the magic-link
+ * consume (`access/team.ts`), `raiseFlag`, `unconfirmBlock`, `resolveFlag`,
+ * and `clearFlagsFor`. The list is the count, deliberately: the previous
+ * wording carried a numeral that no longer matched the names beside it, and
+ * `flags.ts` now points here rather than restating a second count of its
+ * own. Every one was the identical shape: a write to a child
+ * table that isn't serialized against a concurrent status-changing
+ * transaction because nothing makes the two contend for the same lock. The
+ * fix was always the same one line — lock `submissions` (`FOR UPDATE`)
+ * before the write — so this makes that line's presence, and its position
+ * relative to the write, a structural property of every exported function
+ * in these three directories that touches one of the five tables a review
+ * decision's validity depends on, rather than something the next reviewer
+ * has to rediscover by re-deriving the same race by hand, per caller.
+ *
+ * **This guard has no exemption mechanism, deliberately, and it used to.**
+ * The two entries it ever held both turned out to be wrong, each in a
+ * different way, and both were argued in as convincingly as the code they
+ * excused:
+ *  - `resolveFlag` was exempted as "only ever SHRINKS the open-flag set, so
+ *    it cannot invalidate a decision." True for `approveSubmission` and
+ *    `confirmBlock` (both refuse when flags ARE open, so shrinking only
+ *    makes their refusal more conservative), false for `requestChanges`,
+ *    which refuses when flags are NOT open — for it, shrinking is the
+ *    dangerous direction. A per-caller directional argument is only as good
+ *    as the caller list it was written against, and callers get added.
+ *  - `clearFlagsFor` was exempted for a reason believed stronger and
+ *    direction-independent: its firing condition (`EDITABLE_STATUSES`) is
+ *    disjoint from every review decision's (`REVIEW_STATUSES`), so "there is
+ *    no window, full stop." Also wrong, and more instructively: the status
+ *    gate lives in an EARLIER transaction that has already committed and
+ *    released its lock by the time the follow-up write opens its own. A
+ *    precondition checked under a lock that has since been released is a
+ *    statement about the past, not an invariant. See `clearFlagsFor`'s own
+ *    doc comment in `flags.ts` for the full path.
+ * Both exemptions read as airtight when written and neither was. That is
+ * the argument against having the mechanism at all: a hand-maintained
+ * exemption list asks every future reader to re-derive a concurrency proof
+ * and get it right, when the alternative costs one line of SQL. Uniform
+ * locking removes the need for that reasoning; this guard exists so
+ * removing the need is actually enforced, not just recommended. The one
+ * hand-maintained list that remains, `LOCK_DELEGATES`, is machine-checked
+ * (see `provenLockDelegatesIn`) precisely because these two were not.
  *
  * Accepted gaps, inherited from the regex-based approach (the same
  * trade-off `import-guard.ts`/`unsafe-db-usage-guard.ts` already accept,
@@ -68,10 +90,20 @@ export const GUARDED_TABLES = ['fieldFlags', 'blockReviews', 'fieldValues', 'ser
  * themselves, as their own first statement, and to be called with `tx`
  * (the caller's own locked transaction) rather than opening a fresh one —
  * so a caller that only calls one of these need not repeat the lock
- * inline to satisfy this guard. Each entry is trusted here because its own
- * body was read and independently found to contain the exact inline
- * pattern this guard itself recognizes (`.from(submissions)` followed by
- * `.for('update')`) — not asserted on faith:
+ * inline to satisfy this guard. Each entry's body really does contain the
+ * exact inline pattern this guard itself recognizes (`.from(submissions)`
+ * followed by `.for('update')`), and that is not asserted on faith or on
+ * one reviewer having read it once: `provenLockDelegatesIn` re-derives it
+ * from the source on every run, and `lock-order.test.ts` fails if any entry
+ * here stops being a real function whose own body takes the lock inline.
+ * That check exists because this is now the guard's only hand-maintained
+ * trust list, and the two entries the previous one (`EXEMPTIONS`) ever held
+ * were both wrong — see this file's header.
+ *
+ * A stale name in this list is loud in the safe direction on its own (it
+ * simply never matches, so callers relying on it get flagged); the
+ * dangerous direction is an entry that stays listed after its body loses
+ * the lock, which is what `provenLockDelegatesIn` covers.
  *
  *  - `assertEditable` (`src/submissions/editable.ts`) — locks, then only
  *    reads `submissions.status`; called by `saveFieldValue`/
@@ -89,43 +121,6 @@ export const GUARDED_TABLES = ['fieldFlags', 'blockReviews', 'fieldValues', 'ser
  * so it must stay honest about why each entry is trusted.
  */
 export const LOCK_DELEGATES = ['assertEditable', 'lockSubmission'] as const
-
-/**
- * Exported functions that write to a guarded table but are deliberately
- * NOT required to lock `submissions` first, because the write cannot
- * invalidate a decision (`requestChanges`/`approveSubmission`) that was
- * valid when that decision's own locked transaction read the relevant
- * state, REGARDLESS of which way that decision's check runs (open-flags-
- * must-be-empty, or open-flags-must-be-nonzero, or block-must-be-
- * confirmed). That "regardless of direction" qualifier is load-bearing —
- * it used to also list `resolveFlag` here, reasoned as safe because it
- * only shrinks the open-flag set. That was true for `approveSubmission`
- * and `confirmBlock` (both refuse when flags ARE open, so shrinking the
- * set can only make their refusal more conservative) and false for
- * `requestChanges` (which refuses when flags are NOT open — for it,
- * shrinking the set is the dangerous direction: a concurrent, unlocked
- * `resolveFlag` could empty the set between `requestChanges`'s read and
- * its commit, sending the operator a "changes requested" submission with
- * nothing marked). `resolveFlag` now locks `submissions` like everything
- * else (`src/review/flags.ts`) and is not exempted; see its own doc
- * comment there for the fix. `clearFlagsFor` remains exempted below for a
- * genuinely different, direction-independent reason: it cannot run
- * concurrently with ANY review decision at all, not merely one whose
- * check happens to point the safe way.
- */
-export const EXEMPTIONS: Readonly<Record<string, string>> = {
-  clearFlagsFor:
-    "src/review/flags.ts — fires only on an operator's edit of a " +
-    'previously-flagged field, which EDITABLE_STATUSES limits to `draft`/' +
-    '`changes_requested`. Every review decision (`requestChanges`, ' +
-    '`approveSubmission`) and `confirmBlock` require `submitted` ' +
-    '(REVIEW_STATUSES). Those status sets are disjoint and a submission ' +
-    'has exactly one status at a time, so clearFlagsFor and a review ' +
-    'action can never legally run against the same submission at the same ' +
-    'time regardless of locking, and regardless of which direction either ' +
-    "side's check points — there is no window for this write to land in, " +
-    'full stop, not just no window for one particular direction of harm.',
-}
 
 /**
  * Strips `//` line comments and `/* … *\/` block comments from `text`,
@@ -212,14 +207,39 @@ type FunctionSpan = { name: string; body: string }
 
 /**
  * Given the index of a parameter list's closing `)`, returns the index of
- * the `{` that opens the function body — for a `function` declaration,
- * that is simply the first `{` found (see the caller's own doc comment for
- * why: no scanned signature uses an inline object-literal return type).
- * Shared by both the `function NAME(...)` and `const NAME = (...) =>`
- * matchers below, which differ only in what precedes the parameter list.
+ * the `{` that opens the function body, skipping over a return-type
+ * annotation if one is present — including one containing an inline object
+ * literal, e.g. `): Promise<{ status: SubmissionStatus } | null> {`.
+ *
+ * This used to be `text.indexOf('{', paramsEnd + 1)`, documented as safe
+ * because no scanned signature used an inline object return type. That was
+ * not true (or stopped being true): `loadSubmissionValues`
+ * (`src/submissions/values.ts`) and `lockSubmission` (`src/review/decide.ts`)
+ * both write their return type that way, so both had their whole "body"
+ * mis-detected as the type literal — harmless in those two cases only
+ * because neither's real body writes to a guarded table, i.e. the guard was
+ * skipping them for the wrong reason. Handled rather than documented now.
+ *
+ * Depth is tracked over `<([`/`>)]` only, NOT over `{}`: braces are exactly
+ * what we are looking for, and an inline object type can only appear nested
+ * inside a generic argument or a parenthesized/bracketed type, so the body
+ * brace is the first `{` seen at depth zero. `=>` is stepped over so a
+ * function-typed return (`): (x: number) => string {`) doesn't drive the
+ * depth negative on the `>`.
  */
 function bodyBraceAfterParams(text: string, paramsEnd: number): number {
-  return text.indexOf('{', paramsEnd + 1)
+  let depth = 0
+  for (let i = paramsEnd + 1; i < text.length; i++) {
+    const ch = text[i] ?? ''
+    if (ch === '=' && text[i + 1] === '>') {
+      i++
+      continue
+    }
+    if ('<(['.includes(ch)) depth++
+    else if ('>)]'.includes(ch)) depth--
+    else if (ch === '{' && depth <= 0) return i
+  }
+  return -1
 }
 
 /**
@@ -238,10 +258,21 @@ function bodyBraceAfterParams(text: string, paramsEnd: number): number {
  * guard's own "at least one file scanned" sanity check cannot catch —
  * reviewers adding a new exported function with an inline object return
  * type should notice this comment.
+ *
+ * `requireExport: false` drops the `export` requirement, for
+ * `provenLockDelegatesIn`'s benefit only: `lockSubmission`
+ * (`src/review/decide.ts`) is a `LOCK_DELEGATES` entry and module-local, so
+ * checking that a delegate really takes the lock has to see unexported
+ * declarations too. The violations scan itself still passes `true` — an
+ * unexported helper is reached only through an exported one, whose own span
+ * contains the call, so scanning both would double-report.
  */
-function functionDeclarationSpans(text: string): FunctionSpan[] {
+function functionDeclarationSpans(text: string, requireExport = true): FunctionSpan[] {
   const spans: FunctionSpan[] = []
-  const headerRe = /export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g
+  const headerRe = new RegExp(
+    `${requireExport ? 'export\\s+' : ''}(?:async\\s+)?function\\s+([A-Za-z_$][\\w$]*)\\s*\\(`,
+    'g',
+  )
   let m: RegExpExecArray | null
   while ((m = headerRe.exec(text))) {
     const name = m[1]
@@ -304,9 +335,12 @@ function findArrowAfterParams(text: string, afterParamsClose: number): number | 
  *    function's own tests exercise the expression-body shape directly
  *    rather than trusting it by construction.
  */
-function arrowConstSpans(text: string): FunctionSpan[] {
+function arrowConstSpans(text: string, requireExport = true): FunctionSpan[] {
   const spans: FunctionSpan[] = []
-  const headerRe = /export\s+const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(/g
+  const headerRe = new RegExp(
+    `${requireExport ? 'export\\s+' : ''}const\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*(?:async\\s*)?\\(`,
+    'g',
+  )
   let m: RegExpExecArray | null
   while ((m = headerRe.exec(text))) {
     const name = m[1]
@@ -353,6 +387,10 @@ function exportedFunctionSpans(text: string): FunctionSpan[] {
   return [...functionDeclarationSpans(text), ...arrowConstSpans(text)]
 }
 
+function allFunctionSpans(text: string): FunctionSpan[] {
+  return [...functionDeclarationSpans(text, false), ...arrowConstSpans(text, false)]
+}
+
 type WriteHit = { index: number; table: string }
 
 const WRITE_RE = new RegExp(
@@ -392,14 +430,13 @@ export function tablesWrittenIn(fileText: string): Set<string> {
 }
 
 /**
- * Positions in `body` where a genuine `submissions` lock is established —
- * either inline (`.from(submissions)` reached, at some point before it,
- * by the nearest preceding `.from(IDENT)`, chained into `.for('update')`
- * or `.for("update")`) or via a call to one of `LOCK_DELEGATES`. Order
+ * Positions in `body` where a `submissions` lock is established by this
+ * body's own SQL: `.from(submissions)` — as the nearest preceding
+ * `.from(IDENT)` — chained into `.for('update')` or `.for("update")`. Order
  * matters to the caller, not presence alone, so this returns positions
  * rather than a boolean.
  */
-function lockPositionsIn(body: string): number[] {
+function inlineLockPositionsIn(body: string): number[] {
   const positions: number[] = []
 
   const forRe = /\.for\(\s*['"]update['"]\s*\)/g
@@ -413,6 +450,17 @@ function lockPositionsIn(body: string): number[] {
     if (last && last[1] === 'submissions') positions.push(m.index)
   }
 
+  return positions
+}
+
+/**
+ * Every position `inlineLockPositionsIn` finds, plus every call to a
+ * `LOCK_DELEGATES` entry — the two ways a scanned writer can satisfy this
+ * guard.
+ */
+function lockPositionsIn(body: string): number[] {
+  const positions = inlineLockPositionsIn(body)
+
   if (LOCK_DELEGATES.length > 0) {
     const delegateRe = new RegExp(`\\b(?:${LOCK_DELEGATES.join('|')})\\s*\\(`, 'g')
     let dm: RegExpExecArray | null
@@ -420,6 +468,38 @@ function lockPositionsIn(body: string): number[] {
   }
 
   return positions
+}
+
+/**
+ * The `LOCK_DELEGATES` names declared in (comment-stripped) `fileText` whose
+ * own body really does take the `submissions` lock. Backs the "every
+ * delegate this guard trusts actually locks" check in `lock-order.test.ts`,
+ * which is the anti-vacuity property for the guard's one remaining
+ * hand-maintained list — without it, deleting `assertEditable`'s
+ * `.for('update')` would silently disarm the guard for every writer in
+ * `src/submissions`/`src/photos` that delegates to it, and the scan would go
+ * on reporting zero violations.
+ *
+ * Deliberately `inlineLockPositionsIn`, not `lockPositionsIn`: a delegate
+ * must show the lock in its OWN SQL. Accepting delegated evidence here would
+ * let two listed delegates that merely call each other certify one another
+ * with no real `FOR UPDATE` anywhere — a self-referential proof, the
+ * dressed-up version of the same "passes because it never actually looked"
+ * failure this file keeps guarding against.
+ *
+ * Unexported declarations count (`lockSubmission` is module-local), and a
+ * name declared in a shape neither span finder recognizes is reported as
+ * unproven rather than assumed fine — the test then fails, which is the
+ * direction that asks a human to look.
+ */
+export function provenLockDelegatesIn(fileText: string): Set<string> {
+  const text = stripComments(fileText)
+  const names: ReadonlySet<string> = new Set(LOCK_DELEGATES)
+  const proven = new Set<string>()
+  for (const fn of allFunctionSpans(text)) {
+    if (names.has(fn.name) && inlineLockPositionsIn(fn.body).length > 0) proven.add(fn.name)
+  }
+  return proven
 }
 
 export type LockOrderViolation = { functionName: string; reason: string }
@@ -430,18 +510,16 @@ export type LockOrderViolation = { functionName: string; reason: string }
  * `LOCK_DELEGATES`) positioned strictly before the *earliest* such write —
  * checking against the earliest is sufficient to guarantee it precedes
  * every later one too, since "before the minimum" implies "before all".
- * Functions in `EXEMPTIONS` are skipped, with the reason available for
- * anyone auditing why. Functions that don't write to a guarded table at
- * all are not this guard's concern and are silently skipped — they have
- * nothing here to serialize.
+ * There is no exemption list and no way to opt a function out — see this
+ * file's header for why the one that existed was removed. Functions that
+ * don't write to a guarded table at all are not this guard's concern and
+ * are silently skipped — they have nothing here to serialize.
  */
 export function lockOrderViolationsIn(fileText: string): LockOrderViolation[] {
   const text = stripComments(fileText)
   const violations: LockOrderViolation[] = []
 
   for (const fn of exportedFunctionSpans(text)) {
-    if (fn.name in EXEMPTIONS) continue
-
     const writes = writeHitsIn(fn.body)
     if (writes.length === 0) continue
 

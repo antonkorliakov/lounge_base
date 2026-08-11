@@ -136,19 +136,12 @@ export async function raiseFlag(
      * `assertEditable` (`src/submissions/editable.ts`) already use, so this
      * introduces no new deadlock risk.
      *
-     * `clearFlagsFor` below does NOT take this lock, and does not need it —
-     * not merely "no deadlock," a stronger reason. `clearFlagsFor` only ever
-     * fires from the operator's edit path, when a previously-flagged
-     * field's value changes, which per `EDITABLE_STATUSES`
-     * (`src/submissions/editable.ts`) can only happen while the submission is
-     * `draft` or `changes_requested`. `confirmBlock` requires `submitted`
-     * (`REVIEW_STATUSES`, `blocks.ts`). Those two status sets are disjoint —
-     * a submission has exactly one status at a time, so it can never
-     * simultaneously satisfy both preconditions. `clearFlagsFor` and
-     * `confirmBlock` therefore cannot legally act on the same submission at
-     * the same time regardless of locking; the lock this function takes is
-     * for serializing against `confirmBlock`'s check specifically, not
-     * against every child-table writer in this module.
+     * Every other child-table writer in this module takes the same lock in
+     * the same position, including `clearFlagsFor`. An earlier version of
+     * this comment argued at length that `clearFlagsFor` was the one
+     * exception and did not need it; that argument was wrong, and its
+     * specific reasoning error is recorded in `clearFlagsFor`'s own doc
+     * comment below because it is the reusable part.
      *
      * Not gated on the locked row's status: that would change this
      * function's behaviour (Task 2 deliberately left `raiseFlag` ungated —
@@ -278,6 +271,59 @@ export { blockKeyOf }
  * гарантировать не бывает, так что оба эффекта одного события ("поле
  * отредактировано") должны фиксироваться вместе или не фиксироваться
  * вовсе.
+ *
+ * The transaction also takes the same `submissions` `FOR UPDATE` every
+ * sibling writer here takes, as its first statement, for the same reason
+ * `resolveFlag` does: it can otherwise commit in the middle of
+ * `requestChanges` (`src/review/decide.ts`), which reads `openFlags` inside
+ * its own locked transaction and REFUSES on an empty set. An unlocked clear
+ * landing between that read and that commit leaves a submission in
+ * `changes_requested` with zero open flags — and `FillForm`'s fixes screen is
+ * gated on `status === 'changes_requested' && flags.length > 0`, so the
+ * filler gets the whole 19-step form back with no indication of what to fix.
+ * That is exactly what the refusal exists to prevent.
+ *
+ * **This function was previously exempted from the lock-order guard, and the
+ * exemption's argument was wrong.** It is worth recording why, because the
+ * error is easy to repeat and this is far from the first check-then-write
+ * race on this branch — the guard's own header enumerates them, so the count
+ * lives in one place rather than being restated here to drift out of date.
+ * The argument was: `clearFlagsFor` only fires when a
+ * previously-flagged answer is edited, which `EDITABLE_STATUSES` limits to
+ * `draft`/`changes_requested`; every review decision requires `submitted`
+ * (`REVIEW_STATUSES`); the two sets are disjoint and a submission has one
+ * status at a time; therefore no window exists, full stop.
+ *
+ * Every clause of that is true, and the conclusion still does not follow. It
+ * confuses "cannot FIRE concurrently with a review decision" with "cannot BE
+ * RUNNING concurrently with one" — i.e. it treats the status gate as if it
+ * held for the duration of the work it admits, when in fact the gate's lock
+ * is released the moment the gate's OWN transaction commits. The real path:
+ * `saveFieldAction` (`src/app/f/[token]/actions.ts`) → `resolveFillToken`, a
+ * plain SELECT on `fill_tokens` that checks no status at all → `saveFieldValue`,
+ * whose `assertEditable` takes the lock and checks `EDITABLE_STATUSES` inside
+ * its own transaction → that transaction COMMITS → only then does
+ * `clearFlagsFor` open a fresh one. By the time this function's first
+ * statement runs, nothing holds the row and the status is free to have
+ * changed. Reachable, not theoretical: `FillForm`'s `submit()` calls
+ * `submitAction` immediately, with no wait on the autosave queue and no
+ * gating on `pendingCount`, so a filler typing a correction and clicking
+ * Submit inside the 600ms debounce produces exactly these overlapping
+ * requests.
+ *
+ * The generalizable form: a status precondition checked in an earlier
+ * transaction is a statement about the past, not an invariant held over the
+ * follow-up write, so "these two statuses are disjoint" never by itself
+ * licenses skipping the lock. Reasoning per caller about whether a
+ * particular interleaving happens to be harmful is what produced this
+ * exemption and `resolveFlag`'s before it; uniform locking is what replaced
+ * both, and the guard (`src/review/__tests__/lock-order-guard.ts`) now has no
+ * exemptions at all.
+ *
+ * No deadlock introduced: this runs after `saveFieldValue`'s transaction has
+ * committed, and takes `submissions` before the child tables — the one
+ * ordering every writer in `src/review`, `src/submissions` and `src/photos`
+ * uses.
  */
 export async function clearFlagsFor(
   db: Db,
@@ -285,6 +331,12 @@ export async function clearFlagsFor(
   key: string,
 ): Promise<boolean> {
   return db.transaction(async (tx) => {
+    await tx
+      .select({ id: submissions.id })
+      .from(submissions)
+      .where(eq(submissions.id, submissionId))
+      .for('update')
+
     const cleared = await tx
       .update(fieldFlags)
       .set({ resolvedAt: new Date() })
