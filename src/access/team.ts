@@ -20,12 +20,22 @@ export const LOGIN_TTL_MINUTES = 20
 // работать: сессия неактивного участника протухает не позже чем через
 // столько же дней после последнего обращения.
 //
-// Exported for the same reason as `LOGIN_TTL_MINUTES` above: the cookie
-// `src/app/admin/login/[token]/route.ts` sets describes this same lifetime
-// to the browser and must read the real number, not repeat an invented one
-// that can drift out of sync with it (a fix-round finding — see the task's
-// report — the cookie previously hardcoded 30 days for reasons unrelated to
-// this constant).
+// Этот срок — НЕ то же самое, что срок жизни cookie, который выставляет
+// `src/app/admin/login/[token]/route.ts`. Предыдущая редакция этого
+// комментария утверждала, что cookie «выражает ту же самую длительность», и
+// это была ошибка: cookie пишется один раз, при входе, и никогда не
+// переписывается, поэтому его `maxAge` — абсолютный потолок одного входа, а
+// не скользящее окно. Отражать в нём этот TTL значило бы выкидывать
+// активного проверяющего ровно через `SESSION_TTL_DAYS` дней после входа,
+// сколько бы он ни работал, — прямо против обещания абзаца выше. Своя
+// политика cookie и её обоснование живут при самом cookie, в
+// `SESSION_COOKIE_MAX_AGE_SECONDS` (`access/session.ts`).
+//
+// Экспортируется (помимо `daysFromNow` внутри модуля) ради теста
+// `access/__tests__/session-cookie.test.ts`: он держит НЕРАВЕНСТВО между
+// этим TTL и потолком cookie — единственную настоящую связь между двумя
+// политиками, — чтобы изменение TTL здесь не сделало потолок связывающим
+// ограничением молча.
 export const SESSION_TTL_DAYS = 7
 
 const DAY_MS = 24 * 60 * 60 * 1000
