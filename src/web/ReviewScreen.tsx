@@ -1,10 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import {
-  BLOCKS, FIELDS, SERVICE_ITEMS, PHOTO_SLOTS,
-  type Localized, type ServiceValueInput,
-} from '@/form-schema'
+import { BLOCKS, type Localized } from '@/form-schema'
 import type { BlockState } from '@/review/blocks'
 import type { FlagRow, FlagReason } from '@/review/flags'
 import { useLocale } from '@/i18n/context'
@@ -22,6 +19,16 @@ export function ReviewScreen(props: {
   progress: BlockState[]
   flags: FlagRow[]
   rendered: Record<string, { label: string; value: string }>
+  /**
+   * URL-ы фото по слоту — отдельно от `rendered`, потому что `rendered`
+   * плоский по конструкции (`Record<string, { label, value: string }>`, см.
+   * `renderValues` в `./renderValues.ts`): значение там всегда строка, а
+   * показать снимок строкой значит показать его счётчик, а не сам снимок
+   * (см. отчёт задачи, находка ревьюера "Photos are unreviewable"). `FieldRow`
+   * получает эти URL-ы напрямую только для блока `kind: 'photos'` — остальные
+   * 26 блоков продолжают идти через `rendered`, как и раньше.
+   */
+  photos: Record<string, string[]>
 }): React.JSX.Element {
   const { locale, pick } = useLocale()
   const [current, setCurrent] = useState(BLOCKS[0]!.key)
@@ -68,6 +75,7 @@ export function ReviewScreen(props: {
               key={key}
               label={cell?.label ?? key}
               value={cell?.value ?? '—'}
+              photos={block.kind === 'photos' ? (props.photos[key] ?? []) : undefined}
               flag={flagByKey.get(key) ?? null}
               onRaise={(reason: FlagReason | null, comment: string) =>
                 void run(() => flagAction(props.submissionId, key, reason, comment))
@@ -112,116 +120,4 @@ export function ReviewScreen(props: {
       </section>
     </div>
   )
-}
-
-/**
- * Плоское представление одной позиции услуг для показа ревьюеру.
- *
- * Черновик этой функции показывал только `available`/`chargeType`/`price`+
- * `currency` — и тем самым прятал `details`, `slotMinutes` и
- * `bookingRequired` целиком. Это не косметика: у нескольких позиций
- * (`Conference Room`, `VIP / Private Meeting Room`, `Sleeping Area / Pods`
- * — все несут `hint: specifyCapacity`, "If yes, please specify the
- * capacity"; `Premium Alcohol` — "please specify drinks"; `Alcohol Service
- * Hours` — "please specify hours", см. `form-schema/services.ts`) сам ответ
- * на подсказку пишется именно в `details`, а не в одно из трёх показанных
- * полей. Ревьюер, глядящий только на старую тройку, увидел бы "yes ·
- * chargeable · 50 USD" и не смог бы проверить, действительно ли оператор
- * указал вместимость/напитки/часы — то есть ту самую вещь, которую вопрос
- * и просит уточнить. `slotMinutes`/`bookingRequired` — тот же случай для
- * позиций с записью на слот (массаж, спа). Все шесть атрибутов показаны
- * здесь ради этого — не ради полноты как таковой.
- */
-function formatServiceValue(
-  value: ServiceValueInput | undefined,
-  locale: 'en' | 'ru',
-): string {
-  const parts = [
-    value?.available ?? '—',
-    value?.chargeType ?? null,
-    value?.price !== null && value?.price !== undefined
-      ? `${value.price} ${value.currency ?? ''}`.trim()
-      : null,
-    value?.slotMinutes !== null && value?.slotMinutes !== undefined
-      ? `${value.slotMinutes} ${locale === 'ru' ? 'мин' : 'min'}`
-      : null,
-    value?.bookingRequired === true
-      ? (locale === 'ru' ? 'нужна запись' : 'booking required')
-      : null,
-    value?.details ? value.details : null,
-  ]
-  return parts.filter(Boolean).join(' · ')
-}
-
-/** Плоское представление значений для показа ревьюеру. */
-export function renderValues(input: {
-  fields: Record<string, unknown>
-  services: Record<string, ServiceValueInput>
-  photos: Record<string, string[]>
-  locale: 'en' | 'ru'
-}): Record<string, { label: string; value: string }> {
-  const out: Record<string, { label: string; value: string }> = {}
-
-  for (const field of FIELDS) {
-    const raw = input.fields[field.key]
-    out[field.key] = {
-      label: field.label[input.locale],
-      value: formatValue(raw),
-    }
-  }
-
-  for (const item of SERVICE_ITEMS) {
-    out[item.key] = {
-      label: item.label[input.locale],
-      value: formatServiceValue(input.services[item.key], input.locale),
-    }
-  }
-
-  for (const slot of PHOTO_SLOTS) {
-    const urls = input.photos[slot.key] ?? []
-    out[slot.key] = {
-      label: slot.label[input.locale],
-      value: urls.length === 0 ? '—' : `${urls.length}`,
-    }
-  }
-
-  return out
-}
-
-/**
- * `III.3.2` (Unaccompanied Children Policy) — единственное поле анкеты, чей
- * ответ несёт составной `slots` наравне с `option`/`detail` (см.
- * `form-schema/validation.ts`'s `SelectValue.slots` и
- * `TEMPLATE_REQUIRED_BY_OPTION`): выбор "allowed" обязан нести минимальный
- * возраст в `slots.age`. Черновик этой функции проверял только `'option'
- * in raw` и читал `option`/`detail` — `slots` у него не было в типе
- * вообще, так что для этого единственного поля во всей анкете сам возраст,
- * то есть содержательный ответ на вопрос, тихо пропадал из показа
- * ревьюеру: он видел "allowed" и ничего больше, хотя вопрос "с какого
- * возраста" остаётся без ответа на экране независимо от того, был ли он
- * дан оператором. Ревьюер не может подтвердить блок, не видя того, что
- * подтверждает.
- */
-function formatValue(raw: unknown): string {
-  if (raw === null || raw === undefined || raw === '') return '—'
-  if (Array.isArray(raw)) return raw.join(', ')
-  if (typeof raw === 'object' && 'option' in raw) {
-    const value = raw as { option: string; detail: string | null; slots?: Record<string, number | null> }
-    const parts = [value.option]
-    if (value.detail) parts.push(value.detail)
-    if (value.slots) {
-      const slotText = Object.entries(value.slots)
-        .filter(([, v]) => v !== null && v !== undefined)
-        .map(([slotKey, v]) => `${slotKey}: ${v}`)
-        .join(', ')
-      if (slotText) parts.push(slotText)
-    }
-    return parts.join(' — ')
-  }
-  if (typeof raw === 'object') {
-    return Object.entries(raw as Record<string, unknown>)
-      .map(([key, val]) => `${key}: ${String(val)}`)
-      .join(', ')
-  }
-  return String(raw)
 }

@@ -25,21 +25,57 @@ export type ExistingFlag = { id: string; reason: FlagReason | null; comment: str
 export function FieldRow(props: {
   label: string
   value: string
+  /**
+   * Только для фото-слотов (см. `ReviewScreen.tsx`, блок `kind: 'photos'`).
+   * `undefined` — обычное поле/позиция услуг, показывается `value` как текст,
+   * как и раньше. Массив (пустой или нет) — фото-слот: показывается галерея
+   * миниатюр или `photos.missing`, а `value` игнорируется.
+   *
+   * Раньше `renderValues` схлопывал URL до счётчика ("3"), и это была
+   * единственная информация, которую получал ревьюер об одном из 27
+   * подтверждаемых блоков — притом блоке, для которого дизайн явно разрешает
+   * отмечать отдельный слот замечанием. Отметить снимок, не видя его,
+   * невозможно: ревьюер должен убедиться, что вход на фото — действительно
+   * вход, что стойка регистрации видна, что ориентиры совпадают с
+   * письменными инструкциями (`III.5.1`/`III.5.5`) — a bare count answers
+   * none of that.
+   */
+  photos?: string[]
   flag: ExistingFlag | null
   onRaise: (reason: FlagReason | null, comment: string) => void
   onResolve: (flagId: string) => void
 }): React.JSX.Element {
-  const { locale } = useLocale()
+  const { locale, t } = useLocale()
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState<FlagReason | null>(null)
   const [comment, setComment] = useState('')
+
+  // Миниатюра, а не голая ссылка на каждое из пяти фото (утомительно
+  // открывать по одной) и не голая ссылка без превью (недостаточно, чтобы
+  // узнать вход по картинке размером 40 пикселей). ~120px даёт узнать сцену
+  // на глаз; клик открывает оригинал в новой вкладке для полной проверки —
+  // тот же компромисс, что и в галереях фотоприложений.
+  const valueArea =
+    props.photos === undefined ? (
+      props.value
+    ) : props.photos.length === 0 ? (
+      <p className="field-hint">{t('photos.missing')}</p>
+    ) : (
+      <div className="frow-photos">
+        {props.photos.map((url) => (
+          <a key={url} href={url} target="_blank" rel="noreferrer" className="frow-photo">
+            <img src={url} alt={props.label} loading="lazy" />
+          </a>
+        ))}
+      </div>
+    )
 
   if (props.flag) {
     return (
       <div className="frow frow-flagged">
         <div className="frow-key">{props.label}</div>
         <div className="frow-value">
-          {props.value}
+          {valueArea}
           <div className="frow-comment">
             <b>
               {REASONS.find((r) => r.id === props.flag?.reason)?.[locale] ??
@@ -63,7 +99,7 @@ export function FieldRow(props: {
     <div className="frow">
       <div className="frow-key">{props.label}</div>
       <div className="frow-value">
-        {props.value}
+        {valueArea}
         {open && (
           <div className="frow-editor">
             <div className="frow-chips">

@@ -128,6 +128,12 @@ button:disabled { opacity: .4; }
 .frow { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid #f0f1f3; align-items: flex-start; }
 .frow-key { flex: 0 0 220px; opacity: .7; font-size: 14px; }
 .frow-value { flex: 1; font-size: 14px; }
+/* Миниатюра размером ~120px — достаточно, чтобы узнать сцену на глаз (вход,
+   стойка регистрации, ориентиры), но не полноразмерная картинка на каждой
+   из четырёх-пяти позиций слота. Клик открывает оригинал в новой вкладке. */
+.frow-photos { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.frow-photo { display: block; border: 1px solid #e0e3e8; border-radius: 8px; overflow: hidden; line-height: 0; }
+.frow-photo img { width: 120px; height: 120px; object-fit: cover; display: block; }
 .frow-act { flex: 0 0 auto; opacity: 0; border: 1px solid #e0e3e8; border-radius: 5px; background: none; font: inherit; font-size: 12px; padding: 2px 8px; cursor: pointer; }
 /* Наведение существует только на устройствах с мышью/трекпадом — на
    touch-устройстве `:hover` либо никогда не срабатывает, либо "залипает"
@@ -201,6 +207,7 @@ button:disabled { opacity: .4; }
   .review-foot { border-color: #2a2d34; }
   .frow-act { border-color: #2a2d34; }
   .chip { border-color: #2a2d34; }
+  .frow-photo { border-color: #2a2d34; }
   .nav-current { background: #1b2735; }
   .frow-flagged { background: #2a1616; }
   .frow-comment { background: none; border-color: #5b2323; color: #fca5a5; }

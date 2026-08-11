@@ -1,5 +1,6 @@
 'use server'
 
+import { after } from 'next/server'
 import { db } from '@/db/client'
 import { requestLogin } from '@/access/team'
 import { createMailer } from '@/notify/mailer'
@@ -33,26 +34,31 @@ export async function requestLoginAction(
     const base = process.env.APP_URL ?? 'http://localhost:3000'
     const loginUrl = `${base}/admin/login/${result.token}`
 
-    // Отправка не дожидается ответа и не может его провалить. Токен уже
-    // вставлен в базу (внутри requestLogin) — письмо — это уведомление о
-    // уже случившемся факте, а не часть решения "пускать или нет". Оба
-    // сбоя, которые createMailer()/`send` документируют за собой
-    // (синхронный throw у создания транспорта при плохом MAIL_FROM/
-    // SMTP_URL, и отклонённый промис у самой отправки — см. `notify/
-    // mailer.ts`), пойманы явно: как необработанный throw, так и
-    // необработанный reject здесь одинаково опасны — оба обрушили бы этот
-    // server action и вернули бы вызывающему 500 вместо нейтрального
-    // { sent: true }, а это именно то различие, которое эта функция обязана
-    // скрывать.
-    try {
-      void createMailer()
-        .send(loginMail({ to: email, loginUrl }))
-        .catch((err: unknown) => {
-          console.error('[admin/login] failed to send login mail', err)
-        })
-    } catch (err) {
-      console.error('[admin/login] failed to construct mailer', err)
-    }
+    // Отправка не дожидается ответа (см. MIN_RESPONSE_MS выше — SMTP-
+    // разговор не должен быть таймером) и не может его провалить — но
+    // раньше здесь стоял голый "fire-and-forget" (`void mailer.send(...)`
+    // без ничего, что удерживало бы это дальше). На serverless-раннтайме
+    // исполнение может быть остановлено сразу после того, как ответ ушёл
+    // клиенту — именно то, что отличает "не дожидаться" от "дать шанс
+    // выполниться вообще": промис было бы создан, но раннтайм мог оборвать
+    // процесс до того, как он settled, и письмо с единственной работающей
+    // ссылкой входа просто не ушло бы — без единой строки в логах.
+    // `after()` (`next/server`) существует ровно для этого: планирует
+    // работу, которая обязана выполниться после того, как ответ уже отдан,
+    // но раннтайм обязан не завершаться, пока она не закончится — то есть
+    // именно "вне таймера ответа, но не 'может исполниться, а может и нет'".
+    // Проверено вручную (см. отчёт задачи): при запущенном `next dev`
+    // ответ формы приходит почти мгновенно, а строка `[mail] → ...`
+    // печатается в лог сервера уже после того, как браузер получил ответ —
+    // то есть `after()` действительно откладывает работу за пределы
+    // отправки ответа, а не просто переименовывает `await`.
+    after(async () => {
+      try {
+        await createMailer().send(loginMail({ to: email, loginUrl }))
+      } catch (err) {
+        console.error('[admin/login] failed to send login mail', err)
+      }
+    })
   }
 
   const elapsed = Date.now() - startedAt

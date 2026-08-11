@@ -220,7 +220,19 @@ export async function resendFillLinkAction(
     }
   }
 
-  return { ok: true }
+  // Раньше здесь было тихое `{ ok: true }` — ревьюер нажимал «Переслать
+  // ссылку», действие срабатывало, и экран не менялся вообще: с точки зрения
+  // ревьюера "ничего не произошло" и "письмо ушло" выглядели одинаково.
+  // В отличие от `requestChangesAction`/`approveAction`, у этого действия нет
+  // отдельного видимого эффекта (не появляется новый флаг, блок не меняет
+  // цвет) — единственное свидетельство успеха для ревьюера это `notice`.
+  return {
+    ok: true,
+    notice: {
+      en: `Link sent to ${to}.`,
+      ru: `Ссылка отправлена на ${to}.`,
+    },
+  }
 }
 
 export async function approveAction(submissionId: string): Promise<ActionResult> {

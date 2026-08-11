@@ -19,7 +19,14 @@ export const LOGIN_TTL_MINUTES = 20
 // посреди работы — но ограничивают экспозицию для того, кто перестал
 // работать: сессия неактивного участника протухает не позже чем через
 // столько же дней после последнего обращения.
-const SESSION_TTL_DAYS = 7
+//
+// Exported for the same reason as `LOGIN_TTL_MINUTES` above: the cookie
+// `src/app/admin/login/[token]/route.ts` sets describes this same lifetime
+// to the browser and must read the real number, not repeat an invented one
+// that can drift out of sync with it (a fix-round finding — see the task's
+// report — the cookie previously hardcoded 30 days for reasons unrelated to
+// this constant).
+export const SESSION_TTL_DAYS = 7
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const SESSION_TTL_MS = SESSION_TTL_DAYS * DAY_MS

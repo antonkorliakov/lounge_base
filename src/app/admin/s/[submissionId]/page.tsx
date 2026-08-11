@@ -8,7 +8,8 @@ import { openFlags } from '@/review/flags'
 import { blockProgress } from '@/review/blocks'
 import { submissions } from '@/db/schema'
 import { LocaleProvider } from '@/i18n/context'
-import { ReviewScreen, renderValues } from '@/web/ReviewScreen'
+import { ReviewScreen } from '@/web/ReviewScreen'
+import { renderValues } from '@/web/renderValues'
 
 export default async function ReviewPage(props: {
   params: Promise<{ submissionId: string }>
@@ -51,6 +52,7 @@ export default async function ReviewPage(props: {
         progress={await blockProgress(db(), submissionId)}
         flags={await openFlags(db(), submissionId)}
         rendered={rendered}
+        photos={photos}
       />
     </LocaleProvider>
   )
