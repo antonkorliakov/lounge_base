@@ -45,6 +45,13 @@
  * замечания), так что сид, собранный «руками», молча разошёлся бы с тем, что
  * может произойти в реальности.
  *
+ * С флагом `--fleet` дополнительно заводятся два лаунжа БЕЗ анкет — в другом
+ * аэропорту, с другой зоной и с неактивными эксплуатационными статусами
+ * (`seedFleet` ниже). Это данные для e2e реестра (`e2e/registry.spec.ts`):
+ * фильтры и приглушение закрытого лаунжа не видны на одном лаунже. Ссылку
+ * заполнения режим не меняет — печатается по-прежнему одна строка, ссылка
+ * основного лаунжа.
+ *
  * `--lounge=<название>` задаёт имя лаунжа (по умолчанию `Primeclass Lounge`).
  * Нужно тому, кто потом ищет засеянную анкету в списке `/admin`: список
  * показывает ВСЕ отправленные анкеты, и на машине, где сид запускали много
@@ -71,6 +78,8 @@ import { saveFieldValue, saveServiceValue } from '../src/submissions/values'
 import { submitSubmission } from '../src/submissions/transitions'
 import { raiseFlag, type FlagReason } from '../src/review/flags'
 import { requestChanges } from '../src/review/decide'
+import { setOperationalStatus } from '../src/registry/status'
+import type { OperationalStatus } from '../src/db/schema'
 import {
   FIELDS,
   SERVICE_ITEMS,
@@ -393,8 +402,80 @@ async function flagAndReturn(db: Db, submissionId: string): Promise<void> {
   }
 }
 
+/**
+ * Пара лаунжей без анкет для e2e реестра — второй аэропорт, другая зона,
+ * неактивные эксплуатационные статусы.
+ *
+ * ИМЕНА ПРОИЗВОДНЫ ОТ `loungeName` (`<имя> IGA Arrival`, `<имя> Marhaba`), а
+ * не фиксированы, как в образце плана. У `lounges.name` нет уникального
+ * ограничения (см. `db/schema.ts` — индексы там на `iata_code` и статус), у
+ * вставки нет дедупликации, и сид выполняется на каждый тест — второй прогон
+ * набора с фиксированными именами дал бы два «Marhaba Lounge», и любой
+ * локатор по имени падал бы strict-mode нарушением ещё до проверяемой логики.
+ * Это тот же урок, который план 2 (Task 8) уже выучил на списке `/admin`
+ * (десятки одинаковых «Primeclass Lounge» на живой машине), и решение то же:
+ * e2e передаёт `--lounge=<уникальное имя прогона>`, и один аргумент управляет
+ * всеми тремя именами — тест находит СВОИ строки по полному имени, а формат
+ * вывода (одна строка — ссылка заполнения) не меняется.
+ *
+ * Классифицирующие поля (`terminal`, `zone`, …) пишутся прямой вставкой — как
+ * и паспорт основного лаунжа выше: это то, что записало бы принятие анкеты
+ * (`classifyingFieldsFrom`), а проводить два полных цикла «заполнить →
+ * принять» ради двух строк реестра — territory принятия, покрытая своими
+ * тестами. А вот СТАТУС ставится настоящим `setOperationalStatus`, не колонкой
+ * в insert: это ровно та функция, которую зовёт экран, она валидирует дату и
+ * пишет событие истории — засеянный статус без события был бы состоянием,
+ * которое приложение само произвести не может (правило этого файла целиком).
+ */
+async function seedFleet(db: Db, baseName: string): Promise<void> {
+  const fleet: {
+    lounge: typeof lounges.$inferInsert
+    status: OperationalStatus
+    until: string | null
+  }[] = [
+    {
+      lounge: {
+        name: `${baseName} IGA Arrival`, provider: 'IGA',
+        country: 'Turkey', city: 'Istanbul',
+        airport: 'Istanbul Airport', iataCode: 'IST',
+        terminal: 't2', terminalType: 'international',
+        zone: ['arrival'], airsideLandside: 'airside',
+      },
+      status: 'under_renovation',
+      until: '2026-09-15',
+    },
+    {
+      lounge: {
+        name: `${baseName} Marhaba`, provider: 'dnata',
+        country: 'UAE', city: 'Dubai',
+        airport: 'Dubai International', iataCode: 'DXB',
+        terminal: 't3', terminalType: 'international',
+        zone: ['departure'], airsideLandside: 'airside',
+      },
+      status: 'closed',
+      until: null,
+    },
+  ]
+
+  for (const entry of fleet) {
+    const [row] = await db.insert(lounges).values(entry.lounge).returning()
+    const changed = await setOperationalStatus(db, {
+      loungeId: row!.id,
+      status: entry.status,
+      until: entry.until,
+      comment: null,
+      actor: 'seed-dev',
+    })
+    if (!changed.ok) {
+      throw new Error(
+        `seed-dev: статус ${entry.lounge.name} отклонён — ${changed.error.ru}`,
+      )
+    }
+  }
+}
+
 const LOUNGE_OPTION = '--lounge='
-const FLAGS = ['--complete', '--submitted', '--changes-requested']
+const FLAGS = ['--complete', '--submitted', '--changes-requested', '--fleet']
 
 /**
  * Разбирает аргументы и ОТКАЗЫВАЕТСЯ на незнакомом. Раньше лишний аргумент
@@ -480,6 +561,10 @@ async function main(): Promise<void> {
   const complete = submitted || modes.has('--complete')
 
   await ensureReviewer(db)
+
+  if (modes.has('--fleet')) {
+    await seedFleet(db, loungeName)
+  }
 
   const [lounge] = await db
     .insert(lounges)
