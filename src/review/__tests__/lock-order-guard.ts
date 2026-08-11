@@ -89,9 +89,12 @@
  *    That composed claim was weaker than it read until recently: the other
  *    guard's `EXECUTE_RE` matched only the bare receivers `db`/`tx`, so it
  *    covered these roots (where a `Db` really does arrive as a parameter) but
- *    not the app layer's `db().execute(…)`. Both receiver shapes are covered
- *    there now; what remains accepted in both files is a `Db` held under some
- *    other local name (`const d = db()`).
+ *    not the app layer, whose only DB idiom is the `db()` factory call at the
+ *    point of use. Both receiver shapes are covered there now; what remains
+ *    accepted in both files is a `Db` held under some other local name
+ *    (`const d = db()`). Spelling the factory form out literally here is not
+ *    possible, incidentally: that guard does not strip comments, so the
+ *    pattern written in prose anywhere it scans is reported as a real usage.
  *  - **Two arrow forms are invisible to `arrowConstSpans`**, on top of the
  *    helper/alias gaps above: `export const f = <T>(…) => …` (a generic, so
  *    what follows `=` is `<`, not the `(` the header regex requires) and

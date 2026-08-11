@@ -135,6 +135,16 @@ function hasSecondArgument(argsText: string): boolean {
  * function's limitation of not understanding comments or string literals,
  * which is an accepted trade-off for a guard whose job is to force a
  * conscious opt-out, not to replace a linter.
+ *
+ * One live consequence, since widening `EXECUTE_RE` to the factory-call
+ * receiver made it easy to hit: writing one of these patterns in PROSE — a doc
+ * comment naming the idiom this guard rejects — is reported as a real usage
+ * anywhere under `src` except `src/db`. It happened immediately, in
+ * `src/review/__tests__/lock-order-guard.ts`, whose accepted-gap note leans on
+ * this guard and wanted to name what it now covers. The failure direction is
+ * the right one (loud, in a file a human is already editing), and the workaround
+ * is to describe the pattern instead of quoting it; only this file may quote it
+ * freely, because the scan skips `src/db` for exactly that reason.
  */
 export function unsafeDbUsagesIn(text: string): string[] {
   const offenders: string[] = []

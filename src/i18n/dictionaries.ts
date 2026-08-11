@@ -1,7 +1,38 @@
 import type { Localized } from '@/form-schema'
+import type { FlagReason } from '@/review/flags'
 
 export const LOCALES = ['en', 'ru'] as const
 export type Locale = (typeof LOCALES)[number]
+
+/**
+ * Подписи к кодам замечаний — ОДИН экземпляр на обе стороны анкеты: ревьюер
+ * выбирает код на экране проверки (`FieldRow`), заполняющий читает его на
+ * экране правок (`FixesOnly`). Пока подписи жили только в `FieldRow`, вторая
+ * половина этого пути была тупиком: код выбирался, писался в `field_flags`,
+ * доезжал через два слоя до заполняющего и там пропадал — тот видел лишь
+ * свободный текст комментария.
+ *
+ * Живут здесь, а не рядом с `FLAG_REASONS` в `src/review/flags.ts`, по
+ * причине сборки: `flags.ts` тянет drizzle и `@/db/schema`, а оба читателя —
+ * клиентские компоненты, так что импорт ЗНАЧЕНИЯ оттуда затащил бы слой БД в
+ * клиентский бандл. Импорт `FlagReason` — только тип (`import type`), он
+ * стирается компилятором. Это же и делает список неспособным разойтись с
+ * источником: `satisfies Record<FlagReason, Localized>` требует ключ на каждый
+ * код, а `FlagReason` выведен из самого `FLAG_REASONS` — пятый код, добавленный
+ * там, ломает компиляцию здесь, а не тихо доезжает до человека без подписи.
+ * Именно это разошлось в прошлый раз: `{ id: FlagReason }[]` отвергал неверный
+ * код, но не ПРОПУЩЕННЫЙ.
+ *
+ * Формулировки — те же, что ревьюер видит на чипах, дословно: две стороны
+ * должны называть одну претензию одним словом, иначе заполняющий читает не то
+ * замечание, которое было поставлено.
+ */
+export const FLAG_REASON_LABELS = {
+  empty: { en: 'not filled in', ru: 'не заполнено' },
+  needs_detail: { en: 'needs detail', ru: 'нужна расшифровка' },
+  contradicts: { en: 'contradicts another answer', ru: 'противоречит другому полю' },
+  wrong_format: { en: 'wrong format', ru: 'неверный формат' },
+} as const satisfies Record<FlagReason, Localized>
 
 export const UI = {
   'form.next': { en: 'Next', ru: 'Далее' },
