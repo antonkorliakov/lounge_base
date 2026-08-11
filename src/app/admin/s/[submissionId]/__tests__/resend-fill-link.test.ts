@@ -42,6 +42,9 @@ import type { OutgoingMail } from '@/notify/messages'
 const holder = vi.hoisted(() => ({
   db: undefined as Db | undefined,
   sent: [] as { to: string; subject: string; text: string }[],
+  /** Отправка падает — единственный сбой, который этот код обязан отличать от
+   *  «отправлять некому» (см. последний сценарий). */
+  failSend: false,
 }))
 
 vi.mock('@/db/client', () => ({
@@ -64,6 +67,11 @@ vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 vi.mock('@/notify/mailer', () => ({
   createMailer: () => ({
     async send(message: OutgoingMail): Promise<void> {
+      // Отказ ИМЕННО отправки, а не построения почтальона: `createMailer` может
+      // бросить и сам (нет `MAIL_FROM` при заданном `SMTP_URL` — см.
+      // `notify/mailer.ts`), но для вызывающего это один и тот же случай, он
+      // ловит оба одним `try`.
+      if (holder.failSend) throw new Error('smtp is down')
       holder.sent.push(message)
     },
   }),
@@ -158,6 +166,7 @@ describe('resendFillLinkAction: письмо описывает тот экра�
   beforeEach(async () => {
     holder.db = await createTestDb()
     holder.sent = []
+    holder.failSend = false
   })
 
   it('анкета на проверке: отказ с объяснением, ни письма, ни нового токена', async () => {
@@ -296,6 +305,47 @@ describe('resendFillLinkAction: письмо описывает тот экра�
     expect(holder.sent).toEqual([])
     expect(await tokenCount(db, submissionId)).toBe(0)
   })
+
+  /**
+   * Упавшая отправка — ОТКАЗ, а не `ok: true` с уведомлением, и это единственное
+   * место, где пересылка расходится с `requestChangesAction`/`approveAction`.
+   * У тех `notice` рядом с `ok: true` значит ровно одно: «решение по анкете
+   * состоялось (транзакция закоммичена), а уведомление о нём не ушло». У
+   * пересылки решения нет — письмо и есть всё её действие, так что не ушедшее
+   * письмо это «не произошло ничего», и показывать его как успех значило бы
+   * сказать проверяющему, что у оператора появилась ссылка, которой у него нет.
+   *
+   * Проверяется здесь, потому что этот случай недостижим ни из браузера (e2e не
+   * видит письма вовсе — консольный почтальон не печатает тело), ни из тестов
+   * построителей: он про то, как действие поступает с исключением, а не про то,
+   * какой текст сложился.
+   */
+  it('письмо не отправилось: отказ, а не успех с уведомлением', async () => {
+    const db = holder.db!
+    const submissionId = await seed(db, { status: 'changes_requested', flags: 1 })
+    holder.failSend = true
+
+    // Сбой попадает в лог (`console.error` в самом действии) — глушится, чтобы
+    // ожидаемая ошибка не читалась в выводе теста как настоящая.
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const result = await resendFillLinkAction(submissionId)
+
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error('unreachable')
+      expect(result.error.en).toMatch(/no new link/i)
+      expect(result.error.ru).toMatch(/новой ссылки у оператора нет/)
+      expect(errors).toHaveBeenCalled()
+    } finally {
+      // Тест, который трогает общий `holder`, убирает за собой сам, а не
+      // полагается на `beforeEach` соседа — тот же приём, что у `holder.broken`
+      // в тесте маршрута фото.
+      holder.failSend = false
+      errors.mockRestore()
+    }
+
+    expect(holder.sent).toEqual([])
+  })
 })
 
 /**
@@ -314,6 +364,7 @@ describe('requestChangesAction: письмо о возврате называе�
   beforeEach(async () => {
     holder.db = await createTestDb()
     holder.sent = []
+    holder.failSend = false
   })
 
   it('два открытых замечания — «2 answer(s)», и ссылка ведёт на эту анкету', async () => {
