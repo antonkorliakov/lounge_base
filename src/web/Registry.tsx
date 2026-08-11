@@ -64,6 +64,10 @@ const UNAPPROVED_XLSX: Localized = {
   en: 'Excel, incl. unapproved',
   ru: 'Excel, включая непринятые',
 }
+const ALL_LOUNGES_XLSX: Localized = {
+  en: 'Excel, all lounges incl. unapproved',
+  ru: 'Excel, все лаунжи, включая непринятые',
+}
 
 export function Registry(props: {
   rows: RegistryTableRow[]
@@ -113,6 +117,17 @@ export function Registry(props: {
           <a href={exportHref('format=xlsx')}>Excel</a>
           <a href={exportHref('format=csv')}>CSV</a>
           <a href={exportHref('format=xlsx&includeUnapproved=1')}>{pick(UNAPPROVED_XLSX)}</a>
+          {/* «Выгрузить все лаунжи целиком» (спецификация) — БЕЗ фильтра
+              страницы, поэтому ссылка не через `exportHref`. Показывается
+              только когда фильтр сужает страницу: без фильтра она отдала бы
+              байт в байт тот же файл, что соседняя, и различались бы они
+              только подписью. `includeUnapproved=1` — часть смысла «все
+              лаунжи»: умолчание «только принятые» молча выкинуло бы лаунж без
+              единой принятой анкеты, и файл был бы не «все лаунжи», а «все
+              проверенные»; подпись говорит об этом явно. */}
+          {props.query !== '' && (
+            <a href="/admin/export?format=xlsx&includeUnapproved=1">{pick(ALL_LOUNGES_XLSX)}</a>
+          )}
         </div>
       </header>
 

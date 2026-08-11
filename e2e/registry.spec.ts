@@ -259,6 +259,13 @@ test('выгрузка уходит с текущим фильтром: сост
 }) => {
   const fleet = seedFleet('export')
   await openRegistry(page, watched)
+
+  // Пока фильтра нет, ссылки «все лаунжи» нет: она отдала бы байт в байт тот
+  // же файл, что «Excel, incl. unapproved», различаясь только подписью.
+  await expect(
+    page.getByRole('link', { name: 'Excel, all lounges incl. unapproved', exact: true }),
+  ).toHaveCount(0)
+
   await searchFor(page, fleet.base)
 
   // Прогон засеял ровно три лаунжа со своим базовым именем: основной
@@ -293,8 +300,8 @@ test('выгрузка уходит с текущим фильтром: сост
   // ── «Excel, incl. unapproved» — реестр как есть, тем же фильтром ──────────
   // Имена строк читаются из КОЛОНКИ, найденной по заголовку, а не по номеру:
   // сдвиг колонок — отдельный класс дефекта, закрытый в roundtrip.test.ts.
-  const namesInXlsx = async (): Promise<string[]> => {
-    const file = await download('Excel, incl. unapproved')
+  const namesInXlsx = async (link = 'Excel, incl. unapproved'): Promise<string[]> => {
+    const file = await download(link)
     expect(file.suggestedFilename()).toBe('lounges.xlsx')
     const book = await read(readFileSync(await file.path()))
     const sheet = book.worksheets[0]!
@@ -323,4 +330,14 @@ test('выгрузка уходит с текущим фильтром: сост
 
   const filtered = await namesInXlsx()
   expect(filtered).toEqual([fleet.iga])
+
+  // ── «Все лаунжи целиком» — вторая половина строки спецификации ───────────
+  // Страница сужена до одной строки, а файл по этой ссылке несёт все три
+  // лаунжа прогона: фильтр ссылке не передаётся. Superset, не равенство —
+  // дев-база копит лаунжи прошлых прогонов, и их состав тесту не принадлежит.
+  const everything = await namesInXlsx('Excel, all lounges incl. unapproved')
+  expect(everything).toEqual(
+    expect.arrayContaining([fleet.base, fleet.iga, fleet.marhaba]),
+  )
+  expect(everything.length).toBeGreaterThan(filtered.length)
 })
