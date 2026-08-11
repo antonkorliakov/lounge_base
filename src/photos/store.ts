@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm'
-import { PHOTO_SLOTS } from '@/form-schema'
+import { photoSlotByKey } from '@/form-schema'
 import { photos } from '@/db/schema'
 import type { Db } from '@/db/types'
 import { assertEditable, fail, type SaveResult } from '@/submissions/editable'
@@ -24,7 +24,7 @@ export async function attachPhoto(
     caption: string | null
   },
 ): Promise<SaveResult> {
-  const slot = PHOTO_SLOTS.find((s) => s.key === input.slot)
+  const slot = photoSlotByKey(input.slot)
   if (!slot) {
     return fail('Unknown photo slot', 'Неизвестный слот фото')
   }

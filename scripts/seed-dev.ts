@@ -42,7 +42,7 @@ import { lounges, submissions, photos } from '../src/db/schema'
 import { issueFillToken } from '../src/access/tokens'
 import { saveFieldValue, saveServiceValue } from '../src/submissions/values'
 import { submitSubmission } from '../src/submissions/transitions'
-import { raiseFlag } from '../src/review/flags'
+import { raiseFlag, type FlagReason } from '../src/review/flags'
 import { requestChanges } from '../src/review/decide'
 import {
   FIELDS,
@@ -247,10 +247,16 @@ async function fillComplete(db: Db, submissionId: string): Promise<void> {
  */
 const SERVICE_FLAG_KEY = '2.1'
 
-const SEEDED_FLAGS: { key: string; reason: 'wrong_format' | 'needs_detail' | 'empty'; comment: string }[] = [
+// `FlagReason` импортируется, а не переписывается здесь объединением строк:
+// пятая причина в `FLAG_REASONS` (`src/review/flags.ts`) не должна требовать
+// правки ещё и сида, а локальный union молча разошёлся бы с настоящим.
+const SEEDED_FLAGS: { key: string; reason: FlagReason; comment: string }[] = [
   { key: 'I.2', reason: 'wrong_format', comment: 'Field flag: give the full legal name, not the short one.' },
   { key: SERVICE_FLAG_KEY, reason: 'needs_detail', comment: 'Service flag: Wifi is marked available — state the time limit and any details.' },
-  { key: 'entrance', reason: 'empty', comment: 'Photo flag: the entrance shot is too dark to see the signage. Please retake it.' },
+  // `wrong_format`, а не `empty`: снимок в слоте есть, претензия к тому, ЧТО на
+  // нём видно. `empty` («не заполнено») противоречил бы и самому замечанию, и
+  // тому, что сид кладёт в этот слот настоящую картинку.
+  { key: 'entrance', reason: 'wrong_format', comment: 'Photo flag: the entrance shot is too dark to see the signage. Please retake it.' },
 ]
 
 /**

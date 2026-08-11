@@ -1,7 +1,7 @@
 import { del, put } from '@vercel/blob'
 import { NextResponse } from 'next/server'
 import type { Localized } from '@/form-schema'
-import { PHOTO_SLOTS } from '@/form-schema'
+import { photoSlotByKey } from '@/form-schema'
 import { db } from '@/db/client'
 import { resolveFillToken } from '@/access/tokens'
 import { attachPhoto } from '@/photos/store'
@@ -73,7 +73,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   // Слот проверяем здесь же, а не только внутри attachPhoto: иначе на
   // заведомо неверный слот мы сначала закачаем файл в blob и лишь потом
   // откажем — лишний трафик и висящий (orphaned) блоб на пустом месте.
-  if (!PHOTO_SLOTS.some((s) => s.key === slot)) {
+  if (!photoSlotByKey(slot)) {
     return NextResponse.json({ error: UNKNOWN_SLOT }, { status: 400 })
   }
 

@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   FIELDS,
-  PHOTO_SLOTS,
-  SERVICE_ITEMS,
+  fieldByKey,
+  photoSlotByKey,
+  serviceItemByKey,
   type Localized,
   type ServiceValueInput,
 } from '@/form-schema'
@@ -150,7 +151,7 @@ export function FillForm(props: {
    * about what the server holds.
    */
   function photoUploaded(slotKey: string, url: string): void {
-    const slotDef = PHOTO_SLOTS.find((s) => s.key === slotKey)
+    const slotDef = photoSlotByKey(slotKey)
     setPhotos((prev) => ({
       ...prev,
       [slotKey]: slotDef?.extra ? [...(prev[slotKey] ?? []), url] : [url],
@@ -185,16 +186,20 @@ export function FillForm(props: {
         <p>{pick(submitError)}</p>
         {submitMissing && (
           <ul>
+            {/* Все три поиска — схемные (`fieldByKey`/`serviceItemByKey`/
+                `photoSlotByKey`), а не локальные сканы по массивам: ключ не
+                должен разрешаться здесь иначе, чем он разрешается на экране
+                правок (`fixTargetFor`) или в маршруте загрузки. */}
             {submitMissing.fieldKeys.map((key) => {
-              const field = FIELDS.find((f) => f.key === key)
+              const field = fieldByKey(key)
               return <li key={`field:${key}`}>{field ? pick(field.label) : key}</li>
             })}
             {submitMissing.serviceKeys.map((key) => {
-              const item = SERVICE_ITEMS.find((i) => i.key === key)
+              const item = serviceItemByKey(key)
               return <li key={`service:${key}`}>{item ? pick(item.label) : key}</li>
             })}
             {submitMissing.photoSlots.map((key) => {
-              const slot = PHOTO_SLOTS.find((s) => s.key === key)
+              const slot = photoSlotByKey(key)
               return <li key={`photo:${key}`}>{slot ? pick(slot.label) : key}</li>
             })}
           </ul>
