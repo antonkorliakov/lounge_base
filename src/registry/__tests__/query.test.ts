@@ -5,7 +5,7 @@ import type { Db } from '@/db/types'
 import type { SubmissionStatus } from '@/db/schema'
 import { lounges, submissions } from '@/db/schema'
 import {
-  listRegistry, filterOptions, daysInSubmissionStatus, type RegistryRow,
+  listRegistry, filterOptions, countLounges, daysInSubmissionStatus, type RegistryRow,
 } from '../query'
 
 async function seed(db: Db): Promise<void> {
@@ -56,6 +56,19 @@ describe('реестр', () => {
     const rows = await listRegistry(db, {})
 
     expect(names(rows)).toEqual(['IGA Lounge Arrival', 'Marhaba Lounge', 'Primeclass Lounge'])
+  })
+
+  it('счётчик лаунжей равен размеру нефильтрованного реестра', async () => {
+    // Ровно то равенство, на котором стоит `countLounges` (см. его
+    // комментарий): «показано N из M» на экране считает M одним `count(*)`,
+    // не загружая реестр целиком. Обе стороны проверяются независимо от
+    // третьего числа (3 — сколько лаунжей сеет `seed`), чтобы равенство
+    // «пусто == пусто» не прошло вакуумно.
+    const db = await createTestDb()
+    await seed(db)
+
+    expect(await countLounges(db)).toBe(3)
+    expect((await listRegistry(db, {})).length).toBe(3)
   })
 
   it('показывает последнюю анкету лаунжа', async () => {

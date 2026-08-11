@@ -1,5 +1,5 @@
 import {
-  and, arrayContains, desc, eq, ilike, inArray, or, type SQL,
+  and, arrayContains, count, desc, eq, ilike, inArray, or, type SQL,
 } from 'drizzle-orm'
 import type { Db } from '@/db/types'
 import type { OperationalStatus, SubmissionStatus } from '@/db/schema'
@@ -165,6 +165,26 @@ export async function listRegistry(
     .leftJoin(latest, eq(latest.loungeId, lounges.id))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(lounges.country, lounges.city, lounges.name)
+}
+
+/**
+ * Размер НЕфильтрованного реестра — знаменатель для «показано N из M» на
+ * экране. Образец плана считал его как `(await listRegistry(db, {})).length`:
+ * загрузить весь реестр с его join'ом последних анкет, чтобы выбросить всё,
+ * кроме числа строк, — на каждый показ страницы.
+ *
+ * `count(*)` по `lounges` — это ТО ЖЕ число, и не по совпадению, а по
+ * устройству `listRegistry`: он начинается с `lounges` (`leftJoin`, лаунж без
+ * анкет не выпадает — см. комментарий у самого join'а) и присоединяет
+ * подзапрос с `distinct on (lounge_id)` (максимум одна строка на лаунж), так
+ * что нефильтрованный реестр — ровно одна строка на лаунж. Join здесь не
+ * дублируется, потому что он на ответ не влияет; равенство закреплено тестом
+ * (`__tests__/query.test.ts`), чтобы будущее изменение формы `listRegistry`
+ * не развело числитель со знаменателем молча.
+ */
+export async function countLounges(db: Db): Promise<number> {
+  const rows = await db.select({ value: count() }).from(lounges)
+  return rows[0]?.value ?? 0
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
