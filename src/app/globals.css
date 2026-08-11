@@ -191,6 +191,29 @@ button:disabled { opacity: .4; }
 .nav-dot-untouched { border: 1.5px solid #cbd0d6; }
 
 .review-pane { padding: 16px 20px; }
+/* Подпись анкеты: какой это лаунж и в каком состоянии анкета. Стоит над
+   заголовком блока, потому что отвечает на вопросы, которые возникают ДО
+   любого решения по блоку, — а экран не отвечал на них вовсе.
+
+   Состояние — «пилюлей» с рамкой по цвету, а не только текстом: экран
+   открывается на 27 блоках и подвале с решениями, и статус обязан читаться
+   боковым зрением, иначе он снова окажется тем, чего никто не заметил. Цвет
+   один из уже принятых на этом экране (тот же зелёный подтверждения, тот же
+   красный/янтарный замечаний), а не своя палитра. Текст рядом с пилюлей несёт
+   то же объяснение, что и `title` выключенных кнопок (`state.note`), потому
+   что `title` не существует ни на touch-устройстве, ни для скринридера. */
+.review-head { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #e4e6ea; }
+.review-head h1 { margin: 0 0 7px; font-size: 19px; }
+.review-iata { font-weight: 400; font-size: 15px; opacity: .55; }
+.review-state { margin: 0; font-size: 13px; opacity: .85; }
+.review-state b {
+  display: inline-block; margin-right: 7px; padding: 1px 8px;
+  border: 1px solid #cbd0d6; border-radius: 999px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: .02em;
+}
+.review-state-submitted b { border-color: #1d4ed8; color: #1d4ed8; }
+.review-state-changes_requested b { border-color: #b45309; color: #b45309; }
+.review-state-approved b { border-color: #16a34a; color: #15803d; }
 .frow { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid #f0f1f3; align-items: flex-start; }
 .frow-key { flex: 0 0 220px; opacity: .7; font-size: 14px; }
 .frow-value { flex: 1; font-size: 14px; }
@@ -296,7 +319,15 @@ button:disabled { opacity: .4; }
   .block-nav,
   .frow,
   .frow-editor,
+  .review-head,
   .review-foot { border-color: #2a2d34; }
+  /* Пилюля состояния: рамка и текст одного цвета, поэтому в тёмном режиме
+     нужны оба — синий #1d4ed8 и зелёный #15803d на тёмном фоне читаются как
+     тёмное на тёмном. Тот же довод, что у пастельных фонов выше. */
+  .review-state b { border-color: #3a3f47; }
+  .review-state-submitted b { border-color: #60a5fa; color: #93c5fd; }
+  .review-state-changes_requested b { border-color: #d97706; color: #fcd34d; }
+  .review-state-approved b { border-color: #22c55e; color: #86efac; }
   .frow-act { border-color: #2a2d34; }
   .chip { border-color: #2a2d34; }
   /* Фон плитки — это поля вокруг снимка, который не заполнил её целиком

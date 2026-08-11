@@ -2,14 +2,30 @@
 
 import { useState } from 'react'
 import { useLocale } from '@/i18n/context'
+import { FLAG_REASON_LABELS } from '@/i18n/dictionaries'
 import type { FlagReason } from '@/review/flags'
 
-const REASONS: { id: FlagReason; en: string; ru: string }[] = [
-  { id: 'empty', en: 'not filled in', ru: 'не заполнено' },
-  { id: 'needs_detail', en: 'needs detail', ru: 'нужна расшифровка' },
-  { id: 'contradicts', en: 'contradicts another answer', ru: 'противоречит другому полю' },
-  { id: 'wrong_format', en: 'wrong format', ru: 'неверный формат' },
-]
+/**
+ * Коды замечаний для чипов — ВЫВЕДЕНЫ из подписей, а не перечислены здесь.
+ *
+ * Раньше на этом месте стоял массив `{ id: FlagReason; en; ru }[]` с
+ * перечисленными от руки четырьмя кодами и их подписями — рядом с
+ * `FLAG_REASONS` (`@/review/flags`), который эта ветка уже сделала
+ * единственным источником кодов. Тот тип отвергает НЕВЕРНЫЙ id, но не
+ * пропущенный: пятый код компилировался бы молча, не появлялся бы среди чипов
+ * вовсе (то есть проверяющий не смог бы его выбрать), а уже стоящее замечание
+ * с этим кодом рисовалось бы общей подписью «Flag» — причина, выбранная
+ * проверяющим, доходила бы до оператора как отсутствие причины.
+ *
+ * Подписи теперь живут в `@/i18n/dictionaries` (`FLAG_REASON_LABELS`,
+ * `satisfies Record<FlagReason, Localized>` — пятый код в `FLAG_REASONS` ломает
+ * компиляцию там, плюс тест `src/i18n/__tests__/dictionaries.test.ts` идёт от
+ * самого массива в рантайме). Один экземпляр на обе стороны анкеты: те же
+ * подписи читает заполняющий на экране правок (`FixesOnly`). Здесь остаётся
+ * только порядок чипов — и он тоже не отдельный список, а порядок ключей той
+ * карты.
+ */
+const REASON_IDS = Object.keys(FLAG_REASON_LABELS) as FlagReason[]
 
 export type ExistingFlag = { id: string; reason: FlagReason | null; comment: string }
 
@@ -51,10 +67,23 @@ export function FieldRow(props: {
    */
   photos?: { urls: string[]; required: boolean }
   flag: ExistingFlag | null
+  /**
+   * Предлагать ли отметить этот ответ. Готовый ответ от `ReviewScreen`
+   * (`state.flagging` из `@/app/admin/s/[submissionId]/gates`), а не статус
+   * анкеты: строка о правилах перехода анкеты знать не должна — тот же приём,
+   * что и `photos.required` выше.
+   *
+   * `false` — кнопки нет совсем, а не выключена: причина одна на весь экран и
+   * стоит в подписи состояния наверху, а до 58 выключенных кнопок с одинаковым
+   * `title` в одном блоке — это шум. Уже стоящее замечание при этом
+   * по-прежнему видно, и снять его по-прежнему можно: снятие только убавляет
+   * состояние и ввести в заблуждение оператора не может.
+   */
+  canFlag: boolean
   onRaise: (reason: FlagReason | null, comment: string) => void
   onResolve: (flagId: string) => void
 }): React.JSX.Element {
-  const { locale, t } = useLocale()
+  const { locale, t, pick } = useLocale()
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState<FlagReason | null>(null)
   const [comment, setComment] = useState('')
@@ -135,8 +164,15 @@ export function FieldRow(props: {
           {valueArea}
           <div className="frow-comment">
             <b>
-              {REASONS.find((r) => r.id === props.flag?.reason)?.[locale] ??
-                (locale === 'ru' ? 'Замечание' : 'Flag')}
+              {/* Общая подпись остаётся ровно для одного случая — замечания
+                  БЕЗ кода: `raiseFlag` принимает `reason: null` (проверяющий
+                  может ничего не выбрать), и это не пропущенный код, а
+                  отсутствие кода. Неизвестного кода здесь быть не может:
+                  `toFlagReason` (`@/review/flags`) сужает всё, чего нет в
+                  `FLAG_REASONS`, к `null` ещё при чтении из базы. */}
+              {props.flag.reason
+                ? pick(FLAG_REASON_LABELS[props.flag.reason])
+                : locale === 'ru' ? 'Замечание' : 'Flag'}
             </b>
             {props.flag.comment}
             <button
@@ -160,14 +196,14 @@ export function FieldRow(props: {
         {open && (
           <div className="frow-editor">
             <div className="frow-chips">
-              {REASONS.map((item) => (
+              {REASON_IDS.map((id) => (
                 <button
-                  key={item.id}
+                  key={id}
                   type="button"
-                  className={`chip ${reason === item.id ? 'chip-on' : ''}`}
-                  onClick={() => setReason(reason === item.id ? null : item.id)}
+                  className={`chip ${reason === id ? 'chip-on' : ''}`}
+                  onClick={() => setReason(reason === id ? null : id)}
                 >
-                  {item[locale]}
+                  {pick(FLAG_REASON_LABELS[id])}
                 </button>
               ))}
             </div>
@@ -197,9 +233,11 @@ export function FieldRow(props: {
           </div>
         )}
       </div>
-      <button type="button" className="frow-act" onClick={() => setOpen(true)}>
-        {locale === 'ru' ? 'отметить' : 'flag'}
-      </button>
+      {props.canFlag && (
+        <button type="button" className="frow-act" onClick={() => setOpen(true)}>
+          {locale === 'ru' ? 'отметить' : 'flag'}
+        </button>
+      )}
     </div>
   )
 }

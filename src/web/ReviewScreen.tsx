@@ -10,14 +10,15 @@ import { keysOfBlock } from '@/review/blocks'
 import { BlockNav } from './BlockNav'
 import { FieldRow } from './FieldRow'
 import {
-  flagAction, unflagAction, confirmBlockAction,
+  flagAction, unflagAction, confirmBlockAction, unconfirmBlockAction,
   requestChangesAction, approveAction, resendFillLinkAction,
   type ActionResult,
 } from '@/app/admin/s/[submissionId]/actions'
 // `import type` — стирается при компиляции, так что серверный модуль (а с ним
-// `@/submissions/editable` и `drizzle-orm`) в браузерный бандл не попадает; то
-// же соглашение, что у `SubmissionStatus` в `FillForm.tsx`.
-import type { ResendGate } from '@/app/admin/s/[submissionId]/resend-gate'
+// `@/submissions/editable`, `@/review/blocks` и `drizzle-orm`) в браузерный
+// бандл не попадает; то же соглашение, что у `SubmissionStatus` в
+// `FillForm.tsx`.
+import type { ReviewState } from '@/app/admin/s/[submissionId]/gates'
 
 /**
  * Обязательность слота — из схемы (`PHOTO_SLOTS`), тем же источником, каким
@@ -28,8 +29,62 @@ import type { ResendGate } from '@/app/admin/s/[submissionId]/resend-gate'
  */
 const PHOTO_SLOT_REQUIRED = new Map(PHOTO_SLOTS.map((slot) => [slot.key, slot.required]))
 
+/**
+ * Подсказки для двух условий, которые не зависят от статуса анкеты, а значит не
+ * приходят в `ReviewState` (см. его `decisions`): они считаются из тех же
+ * данных, которые экран и так показывает, — из числа открытых замечаний.
+ *
+ * Тексты СЛОВО В СЛОВО те, которыми откажут сами транзакции решений
+ * (`confirmBlock` в `@/review/blocks`, `requestChanges` в `@/review/decide`) —
+ * подсказка обязана называть ту же причину, что и отказ, иначе проверяющий
+ * читает два разных объяснения одного правила. Импортировать их оттуда нельзя:
+ * там они стоят прямо в аргументах `fail(...)` и наружу не выведены. Это
+ * остаточный риск расхождения, названный вслух, а не спрятанный: правило и
+ * отказ по-прежнему живут на сервере в одном месте каждый, здесь только
+ * подсказка о них.
+ */
+const BLOCK_HAS_OPEN_FLAGS: Localized = {
+  en: 'Resolve the flags in this block first',
+  ru: 'Сначала снимите замечания в этом блоке',
+}
+
+const NOTHING_FLAGGED: Localized = {
+  en: 'Flag at least one answer before sending it back',
+  ru: 'Отметьте хотя бы один ответ, прежде чем возвращать',
+}
+
 export function ReviewScreen(props: {
   submissionId: string
+  /**
+   * Какой это лаунж — та же строка, по которой проверяющий пришёл сюда из
+   * списка `/admin`, и то же название, которое уходит оператору в письмах
+   * (см. `page.tsx`, где сказано, почему из `lounges`, а не из ответа `I.2`).
+   * До этого экран не называл анкету никак: по закладке или из второй вкладки
+   * нельзя было понять, чью анкету открыли, — при 27 блоках и 129 ответах, из
+   * которых название лаунжа один из ответов и сам может быть спорным.
+   */
+  lounge: { name: string; iata: string }
+  /**
+   * Состояние анкеты и применимые в нём шаги — готовый ответ, посчитанный на
+   * сервере (`reviewStateFor` в `@/app/admin/s/[submissionId]/gates`), а не
+   * статус и не правила. Компонент получает решение, а не данные для его
+   * принятия: тот же приём, что и у `photos.required` ниже, и здесь по той же
+   * причине особенно — правила живут в `REVIEW_STATUSES` (`@/review/blocks`) и
+   * `EDITABLE_STATUSES` (`@/submissions/editable`), а их импорт как значений
+   * затащил бы `drizzle-orm` в браузерный бандл.
+   *
+   * Кнопки выключаются, а не исчезают: пропавшая кнопка не объясняет ничего, а
+   * выключенная несёт в `title` ту же причину, которую вернуло бы серверное
+   * действие, — и та же причина (буквально тот же `Localized`, а не второй
+   * текст о том же) стоит видимой строкой в подписи состояния наверху, потому
+   * что `title` не существует ни на touch-устройстве, ни для скринридера. Это
+   * подсказка, НЕ защита: гейты стоят в самих серверных действиях и
+   * транзакциях решений (`confirmBlock`, `requestChanges`,
+   * `approveSubmission`, `resendFillLinkAction`, `unconfirmBlockAction`),
+   * потому что серверное действие вызывается по сети напрямую и клиентский
+   * компонент ему не преграда.
+   */
+  state: ReviewState
   progress: BlockState[]
   flags: FlagRow[]
   rendered: Record<string, RenderedCell>
@@ -43,22 +98,6 @@ export function ReviewScreen(props: {
    * как и раньше.
    */
   photos: Record<string, string[]>
-  /**
-   * Готовый ответ на «можно ли переслать оператору ссылку», посчитанный на
-   * сервере (`resendGateFor` в `@/app/admin/s/[submissionId]/resend-gate`) —
-   * не статус анкеты и не правило. Компонент получает решение, а не данные для
-   * его принятия: тот же приём, что и `photos.required` выше, и по той же
-   * причине здесь особенно — правило живёт в `EDITABLE_STATUSES`
-   * (`src/submissions/editable.ts`), а его импорт затащил бы `drizzle-orm` в
-   * браузерный бандл.
-   *
-   * Кнопка выключается, а не исчезает: пропавшая кнопка не объясняет ничего, а
-   * выключенная несёт в `title` ту же причину, которую вернуло бы серверное
-   * действие. Это подсказка, НЕ защита — гейт стоит в самом
-   * `resendFillLinkAction`, потому что серверное действие вызывается по сети и
-   * клиентский компонент ему не преграда.
-   */
-  resend: ResendGate
 }): React.JSX.Element {
   const { locale, pick } = useLocale()
   const [current, setCurrent] = useState(BLOCKS[0]!.key)
@@ -69,6 +108,19 @@ export function ReviewScreen(props: {
   const block = BLOCKS.find((b) => b.key === current)!
   const keys = keysOfBlock(current)
   const openInBlock = keys.filter((key) => flagByKey.has(key)).length
+
+  /**
+   * Подтверждён ли ОТКРЫТЫЙ СЕЙЧАС блок — читается из того же `progress`,
+   * которым размечена навигация, а не из отдельного состояния: кнопка внизу и
+   * точка в навигации не могут разойтись, потому что смотрят в одно и то же.
+   * Заодно это единственная причина, по которой кнопка «снять подтверждение»
+   * не нуждается ни в каком знании о том, КАК `confirmed` посчитан: изменится
+   * правило (например, подтверждение перестанет считаться действительным
+   * после правки данных) — кнопка сама начнёт снова предлагать подтвердить.
+   */
+  const decisions = props.state.decisions
+  const decisionHint = decisions.allowed ? undefined : pick(decisions.reason)
+  const blockConfirmed = props.progress.find((b) => b.blockKey === current)?.confirmed ?? false
 
   // Тот же приём, что и в `FillForm` (план 1): `error` несёт `Localized`
   // целиком, а не заранее выбранную строку — `pick()` внизу выбирает нужный
@@ -97,6 +149,19 @@ export function ReviewScreen(props: {
       <BlockNav progress={props.progress} current={current} onSelect={setCurrent} />
 
       <section className="review-pane">
+        {/* Чья анкета и в каком она состоянии — до всего остального. Экран
+            показывал 27 блоков решений, не называя ни того, ни другого:
+            проверяющий B принимал анкету, пока у A открыта вкладка, и A
+            продолжал работать, ничего не зная (см. `state` в пропсах). */}
+        <header className="review-head">
+          <h1>
+            {props.lounge.name} <span className="review-iata">{props.lounge.iata}</span>
+          </h1>
+          <p className={`review-state review-state-${props.state.status}`}>
+            <b>{pick(props.state.label)}</b> {pick(props.state.note)}
+          </p>
+        </header>
+
         <h2>{pick(block.label)}</h2>
         {keys.map((key) => {
           const cell = props.rendered[key]
@@ -120,6 +185,14 @@ export function ReviewScreen(props: {
                   : undefined
               }
               flag={flagByKey.get(key) ?? null}
+              // Отмечать ответы предлагается только там, откуда замечание ещё
+              // дойдёт до оператора (см. `flagging` в `gates.ts`: возврат на
+              // правку или экран правок по его ссылке). На принятой анкете
+              // кнопки нет вовсе, а не выключена: строк на экране до 58, и
+              // 58 выключенных кнопок с одинаковым `title` — это шум вместо
+              // объяснения. Объяснение стоит одной строкой в подписи
+              // состояния наверху, тем же текстом (`state.note`).
+              canFlag={props.state.flagging.allowed}
               onRaise={(reason: FlagReason | null, comment: string) =>
                 void run(() => flagAction(props.submissionId, key, reason, comment))
               }
@@ -136,27 +209,63 @@ export function ReviewScreen(props: {
         <div className="review-foot">
           <button
             type="button"
+            disabled={!decisions.allowed || props.flags.length === 0}
+            title={decisionHint ?? (props.flags.length === 0 ? pick(NOTHING_FLAGGED) : undefined)}
             onClick={() => void run(() => requestChangesAction(props.submissionId))}
           >
             {locale === 'ru' ? 'Вернуть на правку' : 'Request changes'} · {props.flags.length}
           </button>
           <button
             type="button"
-            disabled={!props.resend.allowed}
-            title={props.resend.allowed ? undefined : pick(props.resend.reason)}
+            disabled={!props.state.resend.allowed}
+            title={props.state.resend.allowed ? undefined : pick(props.state.resend.reason)}
             onClick={() => void run(() => resendFillLinkAction(props.submissionId))}
           >
             {locale === 'ru' ? 'Переслать ссылку' : 'Resend link'}
           </button>
+          {/* ОДНА кнопка на два направления, по текущему состоянию блока, а не
+              вторая кнопка рядом. «Подтвердить блок» была единственной и не
+              выключалась после нажатия: один промах мыши шёл в счёт 27/27
+              навсегда, `unconfirmBlock` существовал в `@/review/blocks` без
+              единого вызывающего, и обойти это можно было только отметив в
+              блоке любое поле, чтобы принятие отказало по замечаниям.
+
+              Подпись «Retract confirmation», а не «Unconfirm block»: `name` в
+              `getByRole` сопоставляется по ПОДСТРОКЕ и без учёта регистра, так
+              что «Unconfirm block» находился бы и по запросу «Confirm block» —
+              та же ловушка, что у кнопок `flag`/`Flag` (см. `e2e/review.spec.ts`),
+              из-за которой тест утверждал бы не про ту кнопку. */}
+          {blockConfirmed ? (
+            <button
+              type="button"
+              disabled={!decisions.allowed}
+              title={decisionHint}
+              onClick={() => void run(() => unconfirmBlockAction(props.submissionId, current))}
+            >
+              {locale === 'ru' ? 'Снять подтверждение' : 'Retract confirmation'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={!decisions.allowed || openInBlock > 0}
+              title={decisionHint ?? (openInBlock > 0 ? pick(BLOCK_HAS_OPEN_FLAGS) : undefined)}
+              onClick={() => void run(() => confirmBlockAction(props.submissionId, current))}
+            >
+              {locale === 'ru' ? 'Подтвердить блок' : 'Confirm block'}
+            </button>
+          )}
+          {/* «Принять» выключается ТОЛЬКО по статусу, хотя у неё есть и другие
+              условия (все блоки подтверждены, ни одного открытого замечания).
+              Это не непоследовательность: те два условия — незаконченная
+              работа проверяющего, и отказ действия называет, СКОЛЬКО именно
+              блоков осталось и сколько замечаний открыто
+              (`approveSubmission`), чего выключенная кнопка сказать не может.
+              Статус же не про незаконченную работу: в нём шага не бывает
+              вовсе, сколько бы ни подтвердили. */}
           <button
             type="button"
-            disabled={openInBlock > 0}
-            onClick={() => void run(() => confirmBlockAction(props.submissionId, current))}
-          >
-            {locale === 'ru' ? 'Подтвердить блок' : 'Confirm block'}
-          </button>
-          <button
-            type="button"
+            disabled={!decisions.allowed}
+            title={decisionHint}
             onClick={() => void run(() => approveAction(props.submissionId))}
           >
             {locale === 'ru' ? 'Принять анкету' : 'Approve'}
