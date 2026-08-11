@@ -35,8 +35,8 @@
  * замечания), так что сид, собранный «руками», молча разошёлся бы с тем, что
  * может произойти в реальности.
  */
-import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { createDb } from '../src/db/client'
 import { lounges, submissions, photos } from '../src/db/schema'
 import { issueFillToken } from '../src/access/tokens'
@@ -159,36 +159,50 @@ function closingServiceValue(item: ServiceItem): ServiceValueInput {
   }
 }
 
+/** Куда сид кладёт синтетические снимки. Не в репозитории (см. `.gitignore`):
+ *  это локальные тестовые данные, как и сама засеянная анкета. */
+const SEED_PHOTO_DIR = resolve(process.cwd(), 'public', 'seed')
+
 /**
- * Настоящая (пусть и синтетическая) картинка для засеянного снимка, как
- * `data:`-URL.
+ * Настоящая (пусть и синтетическая) картинка для засеянного снимка: файл в
+ * `public/seed/`, ссылка вида `/seed/<имя>.svg`.
  *
- * Раньше здесь стоял `https://example.com/seed/<slot>.jpg` — адрес, который
- * существует, но картинкой не отдаётся. Из-за этого КАЖДАЯ миниатюра на
- * экране проверки рисовалась как «Фото не открывается» (`FieldRow`'s
- * `failed`), то есть засеянная анкета выглядела ровно так, как выглядит
- * анкета с битыми ссылками, и отличить одно от другого глазами было нельзя —
- * ни при проверке фото-блока, ни при проверке правок по отмеченному слоту.
- * Проверять на такой анкете «виден ли текущий снимок в слоте» бессмысленно:
- * ответ «нет» ничего не значит.
+ * Дважды исправленное место, и оба раза по одной причине — «снимок на экране
+ * виден» должно быть ПРОВЕРЯЕМЫМ утверждением:
+ *  - `https://example.com/seed/<slot>.jpg` (изначально): адрес существует, но
+ *    картинкой не отдаётся, поэтому КАЖДАЯ миниатюра на экране проверки
+ *    рисовалась как «Фото не открывается» (`FieldRow`'s `failed`) — засеянная
+ *    анкета выглядела точно как анкета с битыми ссылками.
+ *  - `data:image/svg+xml;base64,…`: миниатюра рисовалась, но переход по клику
+ *    — тот, ради которого ревьюер вообще открывает оригинал (`FieldRow`
+ *    оборачивает плитку в `<a href={url} target="_blank">`) — молча не
+ *    работал: Chrome и Firefox блокируют навигацию верхнего уровня на `data:`
+ *    URL, а `onError` при этом не срабатывает, так что плитка даже не
+ *    вырождалась в честную `frow-photo-dead`. Тихо не работающая ссылка на
+ *    единственном экране, где открыть оригинал — вся задача, хуже битой:
+ *    следующий проверяющий решит, что так и надо.
  *
- * `data:`-URL, а не файл в `public/` и не настоящая загрузка в blob: сид
- * работает вообще без сети и без `BLOB_READ_WRITE_TOKEN` (в CI его нет — см.
- * комментарий в `e2e/fill.spec.ts`), а `<img src>` принимает `data:` наравне
- * с `http:`. SVG, а не JPEG: несколько сотен байт вместо бинарной строки на
- * пол-килобайта, и на плитке видно название слота — так на экране проверки
- * сразу понятно, какой снимок к какому слоту привязан, чего одноцветная
- * заливка не даёт. Ограничения `MAX_PHOTO_BYTES`/`EXTENSION_BY_TYPE`
+ * Файл в `public/`, а не загрузка в blob: сид работает без сети и без
+ * `BLOB_READ_WRITE_TOKEN` (в CI его нет — см. комментарий в `e2e/fill.spec.ts`),
+ * а `public/` отдаётся `next dev` прямо с диска, так что файл, записанный
+ * сидом уже после старта сервера, доступен сразу. Ссылка от корня (`/seed/…`),
+ * а не абсолютная: тот же origin, что и у страницы, и никакой привязки к порту.
+ * SVG, а не JPEG: несколько сотен байт, и на плитке видно название слота — так
+ * сразу понятно, какой снимок к какому слоту привязан, чего одноцветная заливка
+ * не даёт. Ограничения `MAX_PHOTO_BYTES`/`EXTENSION_BY_TYPE`
  * (`src/app/api/photos/route.ts`) к этому пути не относятся: они проверяют
  * ЗАГРУЖАЕМЫЙ файл, а сид пишет строку в `photos` напрямую, как и раньше.
  */
-function seedPhotoUrl(label: string): string {
+function seedPhotoUrl(name: string, label: string): string {
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240">` +
     `<rect width="320" height="240" fill="#dbe6f4"/>` +
     `<text x="160" y="120" font-family="sans-serif" font-size="22" ` +
     `text-anchor="middle" fill="#1f3352">${label}</text></svg>`
-  return `data:image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')}`
+
+  mkdirSync(SEED_PHOTO_DIR, { recursive: true })
+  writeFileSync(join(SEED_PHOTO_DIR, `${name}.svg`), svg, 'utf8')
+  return `/seed/${name}.svg`
 }
 
 async function fillComplete(db: Db, submissionId: string): Promise<void> {
@@ -216,36 +230,49 @@ async function fillComplete(db: Db, submissionId: string): Promise<void> {
       submissionId,
       slot: slot.key,
       blobKey: `seed/${slot.key}.svg`,
-      url: seedPhotoUrl(slot.label.en),
+      url: seedPhotoUrl(slot.key, slot.label.en),
     })
   }
 
+  // Не один дополнительный снимок, а два. Один — минимум, чтобы дотянуть до
+  // MIN_PHOTOS; второй нужен, чтобы накопительный слот действительно СОДЕРЖАЛ
+  // несколько снимков: именно про это замечание вида «один из дополнительных
+  // снимков непригоден», и только на таком слоте видно, что «Убрать» относится
+  // к конкретному снимку, а загрузка добавляет ещё один (см. `PhotoSlots`).
+  // Заодно удаление одного из них оставляет анкету полной, так что проверять
+  // удаление можно, не ломая отправку.
   const extraSlot = PHOTO_SLOTS.find((slot) => slot.extra)
-  const extraNeeded = Math.max(1, MIN_PHOTOS - namedSlots.length)
+  const extraNeeded = Math.max(2, MIN_PHOTOS - namedSlots.length)
   if (extraSlot) {
     for (let i = 0; i < extraNeeded; i += 1) {
       await db.insert(photos).values({
         submissionId,
         slot: extraSlot.key,
         blobKey: `seed/${extraSlot.key}-${i}.svg`,
-        url: seedPhotoUrl(`${extraSlot.label.en} ${i + 1}`),
+        url: seedPhotoUrl(`${extraSlot.key}-${i}`, `${extraSlot.label.en} ${i + 1}`),
       })
     }
   }
 }
 
 /**
- * Ключи для трёх засеянных замечаний — по одному на каждую категорию
- * отмечаемых ключей, чтобы экран правок открывался сразу со всеми тремя
- * контролами.
+ * Ключи засеянных замечаний — по одному на каждую категорию отмечаемых ключей,
+ * чтобы экран правок открывался сразу со всеми контролами.
  *
  * `I.2` (Lounge Full Name) — плоское текстовое поле, самое простое для правки
  * руками; `2.1` (Wifi Access) — реальная позиция услуг из списка `yesNo`, та
  * же, на которой стоят e2e-тесты услуг; `entrance` — обязательный
- * именованный слот фото (не `additional`), то есть тот случай, где новая
- * загрузка ЗАМЕНЯЕТ снимок.
+ * именованный слот фото, то есть тот случай, где новая загрузка ЗАМЕНЯЕТ
+ * снимок; `additional` — накопительный слот, где она НЕ заменяет, а добавляет.
+ *
+ * Последний ключ здесь потому, что это отдельный контрол, а не тот же самый:
+ * у накопительного слота подпись «Добавить», и единственный правдивый ответ на
+ * замечание — убрать негодный снимок, чего у именованного слота нет и не нужно
+ * (см. `PhotoSlots`). Пока замечания на нём не было, эту разницу нельзя было
+ * увидеть на засеянной анкете вообще — а именно на ней её и проверяют руками.
  */
 const SERVICE_FLAG_KEY = '2.1'
+const EXTRA_PHOTO_FLAG_KEY = PHOTO_SLOTS.find((slot) => slot.extra)!.key
 
 // `FlagReason` импортируется, а не переписывается здесь объединением строк:
 // пятая причина в `FLAG_REASONS` (`src/review/flags.ts`) не должна требовать
@@ -257,6 +284,7 @@ const SEEDED_FLAGS: { key: string; reason: FlagReason; comment: string }[] = [
   // нём видно. `empty` («не заполнено») противоречил бы и самому замечанию, и
   // тому, что сид кладёт в этот слот настоящую картинку.
   { key: 'entrance', reason: 'wrong_format', comment: 'Photo flag: the entrance shot is too dark to see the signage. Please retake it.' },
+  { key: EXTRA_PHOTO_FLAG_KEY, reason: 'wrong_format', comment: 'Extra photo flag: one of the additional shots is unusable — please remove it.' },
 ]
 
 /**

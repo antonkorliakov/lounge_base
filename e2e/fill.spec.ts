@@ -259,9 +259,9 @@ test('отказ при загрузке фото виден рядом со с�
 })
 
 /**
- * Экран правок со всеми тремя категориями отмеченных ответов сразу — поле,
- * позиция услуг, слот фото (`--changes-requested` в `scripts/seed-dev.ts`
- * ставит по одному замечанию на каждую).
+ * Экран правок со всеми категориями отмеченных ответов сразу — поле, позиция
+ * услуг, именованный слот фото и накопительный слот (`--changes-requested` в
+ * `scripts/seed-dev.ts` ставит по замечанию на каждую).
  *
  * До этого экран рисовал контрол только для полей: у 58 позиций услуг и 4
  * слотов фото — 48% всего, что можно отметить — заполняющий видел комментарий
@@ -278,14 +278,17 @@ test('отказ при загрузке фото виден рядом со с�
  * `BLOB_READ_WRITE_TOKEN`, которого в CI нет (см. тест про отказ загрузки
  * выше). Проверяется, что контрол загрузки и текущий снимок слота на экране
  * есть; снятие замечания при загрузке покрыто интеграционным тестом маршрута
- * (`src/app/api/photos/__tests__/upload-route.test.ts`).
+ * (`src/app/api/photos/__tests__/upload-route.test.ts`). УДАЛЕНИЕ снимка, в
+ * отличие от загрузки, блоб-токена не требует (удаление блоба — best-effort,
+ * см. `DELETE /api/photos`), поэтому единственный правдивый ответ на замечание
+ * по накопительному слоту проходится здесь целиком, до снятия замечания.
  */
-test('экран правок: у каждой из трёх категорий есть рабочий контрол, и правка снимает своё замечание', async ({ page }) => {
+test('экран правок: у каждой категории есть рабочий контрол, и правка снимает своё замечание', async ({ page }) => {
   const url = seed({ changesRequested: true })
   await page.goto(url)
 
   await expect(page.getByRole('heading', { name: 'Changes requested' })).toBeVisible()
-  await expect(page.locator('.fix-card')).toHaveCount(3)
+  await expect(page.locator('.fix-card')).toHaveCount(4)
   // Ни одна карточка не должна остаться без контрола — а если осталась, она
   // теперь громкая, а не пустая (см. `FixesOnly`'s `fix-unmatched`).
   await expect(page.locator('.fix-unmatched')).toHaveCount(0)
@@ -296,6 +299,9 @@ test('экран правок: у каждой из трёх категорий 
   })
   const photoCard = page.locator('.fix-card').filter({
     has: page.getByRole('heading', { name: 'Entrance' }),
+  })
+  const extraCard = page.locator('.fix-card').filter({
+    has: page.getByRole('heading', { name: 'Additional Photos' }),
   })
 
   // Позиция услуг: наличие (то, что раньше жило только в первом проходе и на
@@ -310,23 +316,35 @@ test('экран правок: у каждой из трёх категорий 
   await expect(serviceCard.locator('input[type="number"]')).toHaveCount(1)
   await expect(serviceCard.locator('textarea')).toHaveCount(1)
 
-  // Слот фото: что лежит сейчас — и чем заменить.
+  // Именованный слот фото: что лежит сейчас — и чем заменить.
   await expect(photoCard.locator('img')).toHaveCount(1)
   await expect(photoCard.locator('input[type="file"]')).toHaveCount(1)
   await expect(photoCard.getByText('Replace')).toBeVisible()
+  // И убрать снимок у него нельзя: замена и есть ответ на замечание.
+  await expect(photoCard.locator('.photo-remove')).toHaveCount(0)
 
-  await expect(page.getByText('Flagged answers you have not changed yet: 3 / 3')).toBeVisible()
+  // Накопительный слот: подпись «Добавить», потому что загрузка ДОБАВЛЯЕТ
+  // (`attachPhoto` не удаляет прежние строки у `extra`-слота) — раньше здесь
+  // стояло «Заменить», и нажатие добавляло четвёртый снимок, оставляя
+  // непригодный на месте. Плюс по кнопке «Убрать» на каждый снимок: без неё у
+  // этого замечания не было правдивого ответа вовсе.
+  await expect(extraCard.getByText('Add photo')).toBeVisible()
+  await expect(extraCard.getByText('Replace')).toHaveCount(0)
+  await expect(extraCard.locator('img')).toHaveCount(2)
+  await expect(extraCard.locator('.photo-remove')).toHaveCount(2)
+
+  await expect(page.getByText('Flagged answers you have not changed yet: 4 / 4')).toBeVisible()
 
   // ── Правка поля ───────────────────────────────────────────────────────────
   await page.getByLabel(/Lounge Full Name/).fill('Primeclass Lounge Istanbul Airport')
   await expect(page.getByText('Saved')).toBeVisible()
   await expect(fieldCard.getByText('Changed', { exact: true })).toBeVisible()
-  await expect(page.getByText('Flagged answers you have not changed yet: 2 / 3')).toBeVisible()
+  await expect(page.getByText('Flagged answers you have not changed yet: 3 / 4')).toBeVisible()
 
   // Перезагрузка перечитывает открытые замечания с сервера — единственный
   // способ увидеть, что `clearFlagsFor` действительно сработал по этому ключу.
   await page.reload()
-  await expect(page.locator('.fix-card')).toHaveCount(2)
+  await expect(page.locator('.fix-card')).toHaveCount(3)
   await expect(page.getByLabel(/Lounge Full Name/)).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Wifi Access' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
@@ -336,10 +354,26 @@ test('экран правок: у каждой из трёх категорий 
   await expect(page.getByText('Saved')).toBeVisible()
 
   await page.reload()
-  await expect(page.locator('.fix-card')).toHaveCount(1)
+  await expect(page.locator('.fix-card')).toHaveCount(2)
   await expect(page.getByRole('heading', { name: 'Wifi Access' })).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
-  await expect(page.getByText('Flagged answers you have not changed yet: 1 / 1')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Additional Photos' })).toBeVisible()
+  await expect(page.getByText('Flagged answers you have not changed yet: 2 / 2')).toBeVisible()
+
+  // ── Правка накопительного слота: убрать негодный снимок ───────────────────
+  // Единственный правдивый ответ на это замечание, и он проходится здесь
+  // целиком: удаление не требует блоб-токена, так что видно и снятие
+  // замечания после перезагрузки, а не только исчезнувшую плитку.
+  await extraCard.locator('.photo-remove').first().click()
+  await expect(extraCard.locator('img')).toHaveCount(1)
+  await expect(extraCard.getByText('Changed', { exact: true })).toBeVisible()
+
+  await page.reload()
+  await expect(page.locator('.fix-card')).toHaveCount(1)
+  await expect(page.getByRole('heading', { name: 'Additional Photos' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
+  // Снимок действительно ушёл с сервера, а не только из состояния страницы.
+  await expect(page.locator('.photo-slot img')).toHaveCount(1)
 })
 
 test('III.3.2: повторный выбор «allowed» не стирает возраст', async ({ page }) => {
