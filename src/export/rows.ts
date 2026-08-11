@@ -15,6 +15,25 @@ export type ExportOptions = {
 export type ExportCell = string | number | null
 
 /**
+ * Один атрибут позиции услуг в ячейку файла — правило общее для плоской
+ * выгрузки и листа одной анкеты (`single.ts`), поэтому оно названо один раз:
+ * `null` — пустая ячейка; булев `bookingRequired` — 'yes'/'no' строчными, в
+ * том же регистре, что и хранимые id соседней колонки `available`
+ * ('yes'/'no'/'not_allowed'), чтобы одна строка не отвечала на два вопроса в
+ * двух регистрах; число (`price`, `slotMinutes`) остаётся числом — xlsx и
+ * CSV различают числовые ячейки, и получатель иначе сортирует «10» перед
+ * «9»; остальное — строка как хранится.
+ */
+export function serviceAttributeCell(
+  raw: string | number | boolean | null | undefined,
+): ExportCell {
+  if (raw === null || raw === undefined) return null
+  if (typeof raw === 'boolean') return raw ? 'yes' : 'no'
+  if (typeof raw === 'number') return raw
+  return String(raw)
+}
+
+/**
  * Значение одного поля анкеты в ячейку файла.
  *
  * Само форматирование — общий `formatFieldValue` из `@/form-schema`
@@ -34,8 +53,13 @@ export type ExportCell = string | number | null
  * не пишет, но выгрузка читает базу, а не обещания писателя; колонки для
  * такого ключа всё равно нет, и `put` ниже его молча уронил бы — здесь это
  * решение принято явно, а не по совпадению устройства `put`.
+ *
+ * Экспортируется для листа одной анкеты (`single.ts`): обе формы выгрузки —
+ * один потребитель в смысле параметров показа (ячейка файла живёт без
+ * экрана), и их ячейки обязаны совпадать не по дисциплине ревью, а потому,
+ * что это один вызов.
  */
-function renderField(fieldKey: string, value: unknown): ExportCell {
+export function renderField(fieldKey: string, value: unknown): ExportCell {
   const field = fieldByKey(fieldKey)
   if (!field) return null
   if (typeof value === 'number') return value
@@ -126,13 +150,7 @@ export async function buildFlatRows(
         const value = values.services[item.key]
         if (!value) continue
         for (const attribute of SERVICE_ATTRIBUTES) {
-          const raw = value[attribute]
-          const cell: ExportCell =
-            raw === null || raw === undefined ? null
-            : typeof raw === 'boolean' ? (raw ? 'yes' : 'no')
-            : typeof raw === 'number' ? raw
-            : String(raw)
-          put(`${item.key}.${attribute}`, cell)
+          put(`${item.key}.${attribute}`, serviceAttributeCell(value[attribute]))
         }
       }
 
