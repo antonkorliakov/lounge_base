@@ -55,6 +55,15 @@ export const UI = {
     en: 'Upload failed. Please try again.',
     ru: 'Не удалось загрузить. Попробуйте ещё раз.',
   },
+  // Намеренно НЕ то же самое, что `photos.missing`: «нет фото» — про
+  // оператора, который снимок не приложил, а это — про приложенный снимок,
+  // который не открывается (мёртвая ссылка, удалённый файл). Ревьюер должен
+  // различать их, потому что замечание оператору уместно только в первом
+  // случае.
+  'photos.loadFailed': {
+    en: 'Photo will not open',
+    ru: 'Фото не открывается',
+  },
   'fixes.title': { en: 'Changes requested', ru: 'Требуются правки' },
   'fixes.intro': {
     en: 'The reviewer flagged these answers. Everything else is accepted.',

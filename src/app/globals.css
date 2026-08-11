@@ -128,12 +128,33 @@ button:disabled { opacity: .4; }
 .frow { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid #f0f1f3; align-items: flex-start; }
 .frow-key { flex: 0 0 220px; opacity: .7; font-size: 14px; }
 .frow-value { flex: 1; font-size: 14px; }
-/* Миниатюра размером ~120px — достаточно, чтобы узнать сцену на глаз (вход,
-   стойка регистрации, ориентиры), но не полноразмерная картинка на каждой
-   из четырёх-пяти позиций слота. Клик открывает оригинал в новой вкладке. */
+/* Миниатюра 160×120 — достаточно, чтобы узнать сцену на глаз (вход, стойка
+   регистрации, ориентиры), но не полноразмерная картинка на каждой из
+   четырёх-пяти позиций слота. Клик открывает оригинал в новой вкладке.
+
+   `contain`, а не `cover`: `cover` срезал у кадра 4:3 около четверти ширины —
+   то есть ровно края кадра. Для слота `landmarks` (III.5.5, «ориентиры
+   рядом») края и есть предмет проверки: ориентир стоит у границы кадра, а
+   не в центре, и обрезанная миниатюра позволяет подтвердить блок по снимку,
+   на котором проверяемого объекта не видно. Аргумент «120 пикселей хватает
+   узнать сцену» к обрезке не относится вовсе: он о размере, а не о том, что
+   часть сцены отсутствует. Бокс 160×120 — 4:3, самая частая пропорция
+   телефонной камеры, так что горизонтальный снимок заполняет плитку целиком
+   при том же визуальном весе; вертикальный вписывается с полями по бокам, и
+   поля видны как поля (фон плитки), а не как кадр. */
 .frow-photos { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
-.frow-photo { display: block; border: 1px solid #e0e3e8; border-radius: 8px; overflow: hidden; line-height: 0; }
-.frow-photo img { width: 120px; height: 120px; object-fit: cover; display: block; }
+.frow-photo { display: block; border: 1px solid #e0e3e8; border-radius: 8px; overflow: hidden; line-height: 0; background: #f4f5f7; }
+.frow-photo img { width: 160px; height: 120px; object-fit: contain; display: block; }
+/* Плитка снимка, который не открылся (см. `FieldRow`'s `failed`): тот же
+   размер и то же место в ряду, но с читаемым текстом вместо браузерного
+   значка битой картинки — поэтому здесь возвращается `line-height`, снятый
+   у `.frow-photo` ради картинки. */
+.frow-photo-dead {
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  width: 160px; height: 120px; box-sizing: border-box; padding: 8px;
+  line-height: 1.3; font-size: 12px; color: #92400e; background: #fffbeb;
+  border-color: #f3dca6; text-decoration: none;
+}
 .frow-act { flex: 0 0 auto; opacity: 0; border: 1px solid #e0e3e8; border-radius: 5px; background: none; font: inherit; font-size: 12px; padding: 2px 8px; cursor: pointer; }
 /* Наведение существует только на устройствах с мышью/трекпадом — на
    touch-устройстве `:hover` либо никогда не срабатывает, либо "залипает"
@@ -207,7 +228,12 @@ button:disabled { opacity: .4; }
   .review-foot { border-color: #2a2d34; }
   .frow-act { border-color: #2a2d34; }
   .chip { border-color: #2a2d34; }
-  .frow-photo { border-color: #2a2d34; }
+  /* Фон плитки — это поля вокруг снимка, который не заполнил её целиком
+     (`object-fit: contain`), поэтому в тёмном режиме он должен быть тёмным:
+     светлая подложка иначе рисует вокруг каждого вертикального кадра две
+     яркие полосы. Тот же довод, что и у пастельных фонов выше. */
+  .frow-photo { border-color: #2a2d34; background: #1a1c21; }
+  .frow-photo-dead { background: #2a2416; border-color: #5b4a23; color: #fcd34d; }
   .nav-current { background: #1b2735; }
   .frow-flagged { background: #2a1616; }
   .frow-comment { background: none; border-color: #5b2323; color: #fca5a5; }

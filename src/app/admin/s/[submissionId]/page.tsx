@@ -38,10 +38,11 @@ export default async function ReviewPage(props: {
     photos[photo.slot] = [...(photos[photo.slot] ?? []), photo.url]
   }
 
+  // `photos` идёт только в `ReviewScreen` (и дальше в `FieldRow`), а не в
+  // `renderValues`: текстового представления у снимка нет — см. `RenderedCell`.
   const rendered = renderValues({
     fields: values.fields,
     services: values.services,
-    photos,
     locale: 'en',
   })
 

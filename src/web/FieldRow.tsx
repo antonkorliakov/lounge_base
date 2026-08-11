@@ -28,8 +28,17 @@ export function FieldRow(props: {
   /**
    * Только для фото-слотов (см. `ReviewScreen.tsx`, блок `kind: 'photos'`).
    * `undefined` — обычное поле/позиция услуг, показывается `value` как текст,
-   * как и раньше. Массив (пустой или нет) — фото-слот: показывается галерея
-   * миниатюр или `photos.missing`, а `value` игнорируется.
+   * как и раньше. Объект — фото-слот: показывается галерея миниатюр или
+   * отметка о пустом слоте, а `value` игнорируется.
+   *
+   * `required` приходит из схемы через `ReviewScreen` (`PHOTO_SLOTS`) и решает
+   * только одно: писать ли «нет фото» на пустом слоте. Сторона заполнения
+   * спрашивает снимок исключительно у обязательных слотов
+   * (`PhotoSlots.tsx`'s `slot.required &&`), а сторона проверки писала «нет
+   * фото» у любого пустого — включая `additional` (`required: false`). Слово
+   * «нет фото» на необязательном слоте читается как недоделка, и ревьюер мог
+   * отметить `empty` оператору, который всё сделал правильно; хуже того, две
+   * стороны одной анкеты расходились в том, что вообще считается пропуском.
    *
    * Раньше `renderValues` схлопывал URL до счётчика ("3"), и это была
    * единственная информация, которую получал ревьюер об одном из 27
@@ -40,7 +49,7 @@ export function FieldRow(props: {
    * письменными инструкциями (`III.5.1`/`III.5.5`) — a bare count answers
    * none of that.
    */
-  photos?: string[]
+  photos?: { urls: string[]; required: boolean }
   flag: ExistingFlag | null
   onRaise: (reason: FlagReason | null, comment: string) => void
   onResolve: (flagId: string) => void
@@ -50,23 +59,64 @@ export function FieldRow(props: {
   const [reason, setReason] = useState<FlagReason | null>(null)
   const [comment, setComment] = useState('')
 
+  /**
+   * URL-ы, картинка по которым не загрузилась. Без этого состояния мёртвая
+   * ссылка рисуется как рамка 120×120 с браузерным значком битой картинки, а
+   * `alt` внутри `line-height: 0` (см. `globals.css`, `.frow-photo`) не
+   * читается как текст — то есть ревьюер не может отличить «файла больше нет»
+   * от «оператор снял белую стену» и отметит оператора за второе, когда правда
+   * первое. Проверяющему это встречается сразу: `scripts/seed-dev.ts` сеет
+   * `https://example.com/seed/<slot>.jpg`, что картинкой не является, так что
+   * в dev в таком состоянии КАЖДАЯ миниатюра.
+   *
+   * Плитка заменяется явной надписью, но остаётся ссылкой: открыть URL —
+   * первое, чем проверяют, дело в файле или в сети.
+   */
+  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set())
+  const markFailed = (url: string): void =>
+    setFailed((prev) => new Set(prev).add(url))
+
   // Миниатюра, а не голая ссылка на каждое из пяти фото (утомительно
   // открывать по одной) и не голая ссылка без превью (недостаточно, чтобы
-  // узнать вход по картинке размером 40 пикселей). ~120px даёт узнать сцену
-  // на глаз; клик открывает оригинал в новой вкладке для полной проверки —
-  // тот же компромисс, что и в галереях фотоприложений.
+  // узнать вход по картинке размером 40 пикселей). Плитка 160×120 даёт узнать
+  // сцену на глаз; клик открывает оригинал в новой вкладке для полной
+  // проверки — тот же компромисс, что и в галереях фотоприложений.
   const valueArea =
     props.photos === undefined ? (
       props.value
-    ) : props.photos.length === 0 ? (
-      <p className="field-hint">{t('photos.missing')}</p>
+    ) : props.photos.urls.length === 0 ? (
+      // На необязательном слоте пусто — это не пропуск, и «нет фото» там
+      // означало бы претензию. Прочерк — тот же знак «ответа нет», каким
+      // размечены все незаполненные поля экрана (см. `renderValues`).
+      <p className="field-hint">{props.photos.required ? t('photos.missing') : '—'}</p>
     ) : (
       <div className="frow-photos">
-        {props.photos.map((url) => (
-          <a key={url} href={url} target="_blank" rel="noreferrer" className="frow-photo">
-            <img src={url} alt={props.label} loading="lazy" />
-          </a>
-        ))}
+        {props.photos.urls.map((url, index) =>
+          failed.has(url) ? (
+            <a
+              key={url}
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="frow-photo frow-photo-dead"
+            >
+              {t('photos.loadFailed')}
+            </a>
+          ) : (
+            <a key={url} href={url} target="_blank" rel="noreferrer" className="frow-photo">
+              {/* Номер в `alt`: у `additional` в слоте несколько снимков, и
+                  без номера пользователь скринридера слышит три ссылки с
+                  одинаковым именем «Additional Photos» без способа их
+                  различить. */}
+              <img
+                src={url}
+                alt={`${props.label} ${index + 1}`}
+                loading="lazy"
+                onError={() => markFailed(url)}
+              />
+            </a>
+          ),
+        )}
       </div>
     )
 

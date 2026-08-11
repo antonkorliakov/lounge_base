@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { BLOCKS, type Localized } from '@/form-schema'
+import { BLOCKS, PHOTO_SLOTS, type Localized } from '@/form-schema'
+import type { RenderedCell } from './renderValues'
 import type { BlockState } from '@/review/blocks'
 import type { FlagRow, FlagReason } from '@/review/flags'
 import { useLocale } from '@/i18n/context'
@@ -14,19 +15,28 @@ import {
   type ActionResult,
 } from '@/app/admin/s/[submissionId]/actions'
 
+/**
+ * Обязательность слота — из схемы (`PHOTO_SLOTS`), тем же источником, каким
+ * пользуется сторона заполнения (`PhotoSlots.tsx` показывает «нет фото»
+ * только при `slot.required`). `FieldRow` сам о слотах ничего не знает и не
+ * должен: он получает уже готовый ответ на вопрос «обязателен ли этот слот» —
+ * шов узкий, одно поле в уже существующем фото-пропе.
+ */
+const PHOTO_SLOT_REQUIRED = new Map(PHOTO_SLOTS.map((slot) => [slot.key, slot.required]))
+
 export function ReviewScreen(props: {
   submissionId: string
   progress: BlockState[]
   flags: FlagRow[]
-  rendered: Record<string, { label: string; value: string }>
+  rendered: Record<string, RenderedCell>
   /**
    * URL-ы фото по слоту — отдельно от `rendered`, потому что `rendered`
-   * плоский по конструкции (`Record<string, { label, value: string }>`, см.
-   * `renderValues` в `./renderValues.ts`): значение там всегда строка, а
-   * показать снимок строкой значит показать его счётчик, а не сам снимок
-   * (см. отчёт задачи, находка ревьюера "Photos are unreviewable"). `FieldRow`
-   * получает эти URL-ы напрямую только для блока `kind: 'photos'` — остальные
-   * 26 блоков продолжают идти через `rendered`, как и раньше.
+   * плоский по конструкции (значение — строка, см. `RenderedCell` в
+   * `./renderValues.ts`): показать снимок строкой значит показать его
+   * счётчик, а не сам снимок (см. отчёт задачи, находка ревьюера "Photos are
+   * unreviewable"). `FieldRow` получает эти URL-ы напрямую только для блока
+   * `kind: 'photos'` — остальные 26 блоков продолжают идти через `rendered`,
+   * как и раньше.
    */
   photos: Record<string, string[]>
 }): React.JSX.Element {
@@ -75,7 +85,20 @@ export function ReviewScreen(props: {
               key={key}
               label={cell?.label ?? key}
               value={cell?.value ?? '—'}
-              photos={block.kind === 'photos' ? (props.photos[key] ?? []) : undefined}
+              photos={
+                block.kind === 'photos'
+                  ? {
+                      urls: props.photos[key] ?? [],
+                      // `?? true` — только на случай ключа, которого нет в
+                      // `PHOTO_SLOTS` (то есть рассогласования схемы:
+                      // `blocks.ts` наполняет блок `photos` именно из
+                      // `PHOTO_SLOTS`). Тогда слот считается обязательным —
+                      // прежнее поведение, и лучше лишний раз спросить про
+                      // снимок, чем промолчать о пропущенном.
+                      required: PHOTO_SLOT_REQUIRED.get(key) ?? true,
+                    }
+                  : undefined
+              }
               flag={flagByKey.get(key) ?? null}
               onRaise={(reason: FlagReason | null, comment: string) =>
                 void run(() => flagAction(props.submissionId, key, reason, comment))
