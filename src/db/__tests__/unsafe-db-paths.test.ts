@@ -48,6 +48,30 @@ describe('unsafeDbUsagesIn', () => {
     expect(unsafeDbUsagesIn(text)).toEqual(['tx.execute('])
   })
 
+  // The app layer's only DB idiom: nothing under src/app receives a `Db`, it
+  // calls the `db()` factory at the point of use (40 sites). A version of
+  // EXECUTE_RE scoped to bare `db`/`tx` could not see any of them, so
+  // `await db().execute(sql`…`)` typechecked and passed this guard.
+  it('catches db().execute(...) — the factory-call receiver', () => {
+    const text = `export async function f() {\n  await db().execute(sql\`select 1\`)\n}\n`
+    expect(unsafeDbUsagesIn(text)).toEqual(['db().execute('])
+  })
+
+  it('catches db().execute(...) chained over several lines', () => {
+    const text = `await db()\n  .execute(sql\`select 1\`)\n`
+    expect(unsafeDbUsagesIn(text)).toEqual(['db().execute('])
+  })
+
+  it('catches a factory call that takes an argument', () => {
+    const text = `await db(url).execute(sql\`select 1\`)\n`
+    expect(unsafeDbUsagesIn(text)).toEqual(['db(url).execute('])
+  })
+
+  it('does not flag an unrelated factory whose result has execute()', () => {
+    const text = `queue().execute(job)\n`
+    expect(unsafeDbUsagesIn(text)).toEqual([])
+  })
+
   it('catches a chained .prepare(...) call', () => {
     const text = `const q = db.select().from(x).prepare('named')\n`
     expect(unsafeDbUsagesIn(text)).toEqual(['.prepare('])
