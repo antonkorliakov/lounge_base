@@ -136,6 +136,9 @@ test('реестр показывает оба статуса, приглуша�
   // колонка «Days in form status».
   await expect(page.getByRole('columnheader', { name: 'Lounge status', exact: true })).toBeVisible()
   await expect(page.getByRole('columnheader', { name: 'Form status', exact: true })).toBeVisible()
+  // Последняя колонка спецификации («…, ревьюер»). Никого из лаунжей прогона
+  // не проверяли — колонка есть, значение честное «—», а не пустота.
+  await expect(page.getByRole('columnheader', { name: 'Reviewer', exact: true })).toBeVisible()
 
   // Лаунжи БЕЗ единой анкеты в реестре есть (Global Constraints плана 3:
   // реестр не предрешает, до кого сбор данных дошёл) — у них видны статус и
@@ -146,6 +149,9 @@ test('реестр показывает оба статуса, приглуша�
   await expect(iga).toContainText(statusLabel('under_renovation'))
   await expect(iga).toContainText('→ 2026-09-15')
   await expect(marhaba).toContainText(statusLabel('closed'))
+  // Ячейка ревьюера (последняя колонка) у непроверявшегося лаунжа — «—»;
+  // почта настоящего решения закреплена в review.spec.ts после принятия.
+  await expect(iga.locator('td').last()).toHaveText('—')
 
   // Закрытый приглушён; НЕзакрытый — нет: без второй половины тест не отличил
   // бы «класс вешается по статусу» от «класс вешается на все строки».

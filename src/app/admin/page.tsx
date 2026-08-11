@@ -57,6 +57,7 @@ export default async function AdminHome(props: {
     submissionId: row.submissionId,
     submissionStatus: row.submissionStatus,
     daysInFormStatus: daysInSubmissionStatus(row, now),
+    reviewerId: row.reviewerId,
   }))
 
   return (

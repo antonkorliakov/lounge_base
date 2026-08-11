@@ -450,7 +450,12 @@ test('принять анкету можно только когда снято 
   // «Awaiting review»; из реестра лаунж не исчезает никогда (Global
   // Constraints плана 3) — принятая анкета видна сменившейся подписью.
   await page.goto('/admin')
-  await expect(page.getByRole('row').filter({ hasText: lounge })).toContainText('Approved')
+  const registryRow = page.getByRole('row').filter({ hasText: lounge })
+  await expect(registryRow).toContainText('Approved')
+  // …и колонка «Ревьюер» подписана почтой сессии, принявшей анкету:
+  // `approveSubmission` пишет в `reviewerId` `session.email`, других имён у
+  // ревьюера нет. До решения колонка показывает «—» (см. registry.spec.ts).
+  await expect(registryRow).toContainText(SEED_REVIEWER_EMAIL)
 })
 
 test('блок «Фото»: галерея открывается, слот можно отметить, опустевший слот честно пуст', async ({

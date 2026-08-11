@@ -35,6 +35,10 @@ export type RegistryTableRow = {
   submissionStatus: SubmissionStatus | null
   /** Полных суток в текущем статусе АНКЕТЫ; `null` — анкеты нет. */
   daysInFormStatus: number | null
+  /** Почта ревьюера последнего решения по анкете; `null` — решений ещё не
+   *  было (или анкеты нет вовсе): `reviewerId` пишут только
+   *  `requestChanges`/`approveSubmission`. */
+  reviewerId: string | null
 }
 
 const TITLE: Localized = { en: 'Lounges', ru: 'Лаунжи' }
@@ -50,6 +54,11 @@ const HEADERS: { key: string; label: Localized }[] = [
   // `daysInSubmissionStatus` (`src/registry/query.ts`). Образец плана писал
   // «In status», не говоря какого.
   { key: 'days', label: { en: 'Days in form status', ru: 'Дней в статусе анкеты' } },
+  // Последняя колонка списка из спецификации («…время в текущем статусе
+  // анкеты, ревьюер»). Значение — почта: `requestChanges`/`approveSubmission`
+  // пишут в `reviewerId` то, чем подписана сессия (`session.email`), другого
+  // имени у ревьюера в системе нет.
+  { key: 'reviewer', label: { en: 'Reviewer', ru: 'Ревьюер' } },
 ]
 const UNAPPROVED_XLSX: Localized = {
   en: 'Excel, incl. unapproved',
@@ -177,6 +186,9 @@ export function Registry(props: {
               </td>
               <td>{row.submissionStatus ? submissionLabel(row.submissionStatus) : '—'}</td>
               <td>{row.daysInFormStatus === null ? '—' : `${row.daysInFormStatus}`}</td>
+              {/* «—», как у остальных пустых ячеек этой таблицы: анкету ещё
+                  никто не проверял — обычное состояние, а не ошибка. */}
+              <td>{row.reviewerId ?? '—'}</td>
             </tr>
           ))}
         </tbody>
