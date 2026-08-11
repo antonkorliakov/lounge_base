@@ -13,7 +13,6 @@ import { isFlaggableKey } from '@/review/flags'
 import { LocaleProvider } from '@/i18n/context'
 import { UI } from '@/i18n/dictionaries'
 import { FixesOnly, fixTargetFor, type Flag } from '../FixesOnly'
-import { isBinaryAvailability } from '../ServiceItemCard'
 import type { ServiceValueInput } from '@/form-schema'
 
 /**
@@ -167,7 +166,42 @@ describe('контрол отмеченной позиции услуг', () => 
     // `if (!value) return null` would have rendered nothing here.
     const html = renderFixes([flagFor(WIFI)], { services: {} })
     expect(html).toContain(UI['services.available'].en)
-    expect(html).toContain('type="checkbox"')
+    for (const option of OPTION_LISTS[serviceItemByKey(WIFI)!.availabilityList]) {
+      expect(html, option.id).toContain(`value="${option.id}"`)
+    }
+  })
+
+  /**
+   * The Important this control was rebuilt for: it was a checkbox
+   * (`checked={value?.available === 'yes'}`), so "no" and "nothing said at
+   * all" rendered identically. On the fixes screen that is the whole response
+   * surface for the flag — and "no" is the truthful correction for the most
+   * common reason code (`empty`) — so the filler's only way to state it was to
+   * check the box and uncheck it, with nothing on screen distinguishing the
+   * result from having ignored the flag.
+   *
+   * `selected=""` is what React's server renderer puts on the `<option>`
+   * matching a `<select value=…>`, i.e. this asserts what the filler SEES, not
+   * merely what the component was handed.
+   */
+  it('«нет» видно как сказанное «нет», а не как молчание', () => {
+    const stated = renderFixes([flagFor(WIFI)], {
+      services: {
+        [WIFI]: {
+          available: 'no', chargeType: null, price: null,
+          currency: null, slotMinutes: null, bookingRequired: null, details: null,
+        },
+      },
+    })
+    expect(stated).toContain('<option value="no" selected="">')
+
+    const silent = renderFixes([flagFor(WIFI)], { services: {} })
+    expect(silent).toContain('<option value="" selected="">')
+    expect(silent).not.toContain('<option value="no" selected="">')
+    expect(silent).not.toContain('<option value="yes" selected="">')
+    // И это два РАЗНЫХ экрана, а не одна и та же разметка: ровно то, чего
+    // чекбокс дать не мог.
+    expect(stated).not.toBe(silent)
   })
 
   it('у предлагаемой позиции открыт весь набор атрибутов, а не только наличие', () => {
@@ -212,18 +246,26 @@ describe('контрол отмеченной позиции услуг', () => 
     expect(html).toContain(UI['services.available'].en)
   })
 
-  // Единственная позиция со своим списком наличия (8.3, Vaping policy) —
-  // остальные 57 бинарные, так что ветку с дропдауном легко не заметить
-  // глазами ни на одном экране.
-  it('позиция со своим списком наличия получает дропдаун этого списка', () => {
-    const own = SERVICE_ITEMS.find((item) => !isBinaryAvailability(item))
-    expect(own, 'в схеме нет позиции с собственным списком наличия').toBeDefined()
+  /**
+   * Каждый список наличия, который вообще встречается в схеме, а не только
+   * `yesNo`: 57 позиций из 58 бинарные, и позицию со своим списком (`8.3`,
+   * Vaping policy) легко не заметить глазами ни на одном экране. Перечисление
+   * идёт от самих позиций, так что третий список, добавленный в схему, попадёт
+   * сюда сам — раньше эта проверка держалась на предикате
+   * `isBinaryAvailability`, который существовал только чтобы выбирать между
+   * чекбоксом и дропдауном, и вместе с чекбоксом исчез.
+   */
+  it('каждый список наличия из схемы приходит на экран целиком', () => {
+    const lists = [...new Set(SERVICE_ITEMS.map((item) => item.availabilityList))]
+    expect(lists.length).toBeGreaterThan(1)
 
-    const html = renderFixes([flagFor(own!.key)])
-    expect(html).toContain(UI['services.available'].en)
-    expect(html).not.toContain('type="checkbox"')
-    for (const option of OPTION_LISTS[own!.availabilityList]) {
-      expect(html, option.id).toContain(`value="${option.id}"`)
+    for (const list of lists) {
+      const item = SERVICE_ITEMS.find((i) => i.availabilityList === list)!
+      const html = renderFixes([flagFor(item.key)])
+      expect(html, list).toContain(UI['services.available'].en)
+      for (const option of OPTION_LISTS[list]) {
+        expect(html, `${list}/${option.id}`).toContain(`value="${option.id}"`)
+      }
     }
   })
 

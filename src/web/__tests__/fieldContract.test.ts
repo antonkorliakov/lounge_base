@@ -16,9 +16,9 @@ import { EMPTY_SERVICE_ATTRS } from '../ServiceItemCard'
 
 /**
  * Every attribute a first-pass answer can possibly carry, before Pass 2 has
- * ever touched it. `ServiceAvailabilityInput` (both its binary checkbox and
- * its own-list `<select>`) builds its emitted value as `{ ...EMPTY_SERVICE_
- * ATTRS, ...current, available: <the chosen id> }` — so this, plus an
+ * ever touched it. `ServiceAvailabilityInput` (one `<select>` over the item's
+ * own availability list, all 58 items) builds its emitted value as
+ * `{ ...EMPTY_SERVICE_ATTRS, ...current, available: <the chosen id> }` — so this, plus an
  * `available`, is exactly what reaches the server for the FIRST answer to any
  * service item. This is the value that Critical/R1 made unsaveable:
  * `chargeType: null` on an offered item used to be refused outright.

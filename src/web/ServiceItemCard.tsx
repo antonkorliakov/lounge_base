@@ -64,20 +64,43 @@ export function serviceValueOrEmpty(
 }
 
 /**
- * Whether the item's availability question renders as a checkbox (plain
- * yes/no) rather than as its own dropdown. One definition, because two call
- * sites need it — the control itself and the label that goes with it — and
- * two copies of `availabilityList === 'yesNo'` is precisely the shape of
- * duplication this file exists to remove.
- */
-export function isBinaryAvailability(item: ServiceItem): boolean {
-  return item.availabilityList === 'yesNo'
-}
-
-/**
  * Pass 1's question — "does the lounge have this?" — as a standalone control:
- * a checkbox for the ordinary yes/no item, the item's own option list as a
- * `<select>` for the few that have one (e.g. `8.3` Vaping policy).
+ * the item's own availability option list as a `<select>`, ahead of the same
+ * `—` placeholder every other dropdown in this form uses for "nothing
+ * answered yet" (see `FieldInput`, and `renderValues` on the review side).
+ *
+ * It used to render a plain checkbox for the 57 `yesNo` items and this
+ * `<select>` only for the one item with its own list (`8.3` Vaping policy).
+ * A checkbox has two states and this answer has three, and the state it
+ * could not express is the one a flagged item most often needs: `checked=
+ * available === 'yes'` drew "no" and "nothing said" identically, so a filler
+ * whose truthful correction was "no" — the natural answer to the reviewer's
+ * most common reason code, `empty` — saw a control that already looked like
+ * "no" and could do nothing with it. Doing nothing saved nothing: the flag
+ * stayed open, `serviceItemAnswered` stayed false, `submitSubmission` kept
+ * refusing and naming the item, and the only way out was to check the box and
+ * uncheck it again. On the fixes screen that is the entire response surface
+ * for the flag; on Pass 1 it is the same trap one screen over, since a lounge
+ * that genuinely lacks 40 of the 58 items can only say so by ticking and
+ * unticking 40 boxes. Both screens render this one control, so both are fixed
+ * by the same change rather than by a second availability rule.
+ *
+ * `<select>` rather than a radio pair, though radios answer in one tap: the
+ * Pass 1 row is itself a `<label>` wrapping the item text and the control, so
+ * that a tap anywhere in a 58-row list lands on the answer (see
+ * `ServicesPass1`). A `<label>` cannot wrap a radio GROUP — it forwards to
+ * the first control — so radios would make a tap on the item's name answer
+ * "Yes", which is worse than a slow control: it is a wrong answer nobody
+ * typed. The dropdown also keeps the deliberate un-selection path (`''`,
+ * normalised to `null` at the write boundary, see `saveServiceValue`) that
+ * the checkbox never had.
+ *
+ * The options come from `OPTION_LISTS[item.availabilityList]`, so nothing
+ * here restates what "yes"/"no" are — the last availability condition in the
+ * codebase that was not delegated to the schema (`available === 'yes'`,
+ * review Minor 8) is gone with the checkbox, along with the
+ * `isBinaryAvailability` predicate that only existed to pick between the two
+ * renderings.
  *
  * Emits a whole `ServiceValueInput`, merged over `EMPTY_SERVICE_ATTRS`, so a
  * first answer carries every attribute the server expects and a later one
@@ -93,17 +116,13 @@ export function ServiceAvailabilityInput(props: {
   const { item, value } = props
   const options = OPTION_LISTS[item.availabilityList]
 
-  const emit = (available: string): void =>
-    props.onChange({ ...serviceValueOrEmpty(value), available })
-
-  return isBinaryAvailability(item) ? (
-    <input
-      type="checkbox"
-      checked={value?.available === 'yes'}
-      onChange={(e) => emit(e.target.checked ? 'yes' : 'no')}
-    />
-  ) : (
-    <select value={value?.available ?? ''} onChange={(e) => emit(e.target.value)}>
+  return (
+    <select
+      value={value?.available ?? ''}
+      onChange={(e) =>
+        props.onChange({ ...serviceValueOrEmpty(value), available: e.target.value })
+      }
+    >
       <option value="">—</option>
       {options.map((option) => (
         <option key={option.id} value={option.id}>
@@ -160,27 +179,17 @@ export function ServiceItemCard(props: {
       <h3>{pick(item.label)}</h3>
       {item.hint && <p className="field-hint">{pick(item.hint)}</p>}
 
-      {/* Галочка и дропдаун подписываются по-разному, как и везде в этой
-          карточке: у чекбокса подпись стоит рядом внутри `.field-check`
-          (как у «Нужна бронь» ниже), у списка — над ним отдельной строкой
-          (как у «Платно/бесплатно»). Один вариант на оба выглядел бы
-          сломанным для одного из них: `.pass2-card select` тянется на всю
-          ширину карточки, так что внутри flex-строки `.field-check` подпись
-          оказалась бы выдавлена за край. Из 58 позиций дропдаун только у
-          одной (8.3, Vaping policy) — но именно поэтому её легко не
-          заметить. */}
-      {props.withAvailability &&
-        (isBinaryAvailability(item) ? (
-          <label className="field-check">
-            <ServiceAvailabilityInput item={item} value={props.value} onChange={props.onChange} />
-            {t('services.available')}
-          </label>
-        ) : (
-          <>
-            <label>{t('services.available')}</label>
-            <ServiceAvailabilityInput item={item} value={props.value} onChange={props.onChange} />
-          </>
-        ))}
+      {/* Подпись — отдельной строкой над контролом, как у «Платно/бесплатно»
+          и остальных списков этой карточки. Раньше здесь была вторая ветка
+          для чекбокса (подпись рядом, внутри `.field-check`): контрол
+          наличия стал одним для всех 58 позиций, так что и подписывается он
+          теперь одним способом. */}
+      {props.withAvailability && (
+        <>
+          <label>{t('services.available')}</label>
+          <ServiceAvailabilityInput item={item} value={props.value} onChange={props.onChange} />
+        </>
+      )}
 
       {offered && (
         <>

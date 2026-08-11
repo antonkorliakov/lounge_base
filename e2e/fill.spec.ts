@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Locator, type Page } from '@playwright/test'
 import { execSync } from 'node:child_process'
 
 /**
@@ -39,6 +39,20 @@ async function clickNext(page: Page, times = 1): Promise<void> {
 // src/web/FormShell.tsx: one screen per `fields`-kind entry in BLOCKS.
 const FIELD_STEP_COUNT = 15
 
+/**
+ * Pass 1's availability control for one item, by the item's own label.
+ *
+ * It is a `<select>` for every one of the 58 items now, not a checkbox for 57
+ * of them: a checkbox cannot express "no" as distinct from "nothing said",
+ * which is the answer a returned questionnaire most often needs (see
+ * `ServiceAvailabilityInput`). So these tests say `selectOption('yes')` where
+ * they used to say `check()`, and read the answer back as a value rather than
+ * as a checked state.
+ */
+function availability(page: Page, itemLabel: string): Locator {
+  return page.getByText(itemLabel).locator('..').getByRole('combobox')
+}
+
 test('поле сохраняется автоматически, статус отражает это, переключатель языка меняет подписи и возвращается', async ({ page }) => {
   const url = seed()
   await page.goto(url)
@@ -68,7 +82,7 @@ test('два прохода по услугам: детали спрашиваю
   await expect(page.getByRole('heading', { name: 'What does the lounge offer?' })).toBeVisible()
 
   // Отметить одну услугу — вторую (Runway View) оставить нетронутой.
-  await page.getByText('Wifi Access').locator('..').getByRole('checkbox').check()
+  await availability(page, 'Wifi Access').selectOption('yes')
   await clickNext(page)
 
   await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
@@ -81,7 +95,7 @@ test('два прохода по услугам: детали спрашиваю
 // that Pass 1 has no control to set), so the answer survived only in React
 // state and a reload between passes lost every Pass-1 decision. This test
 // is what that round exists to fix: it never reaches Pass 2 at all, and
-// still expects the checkbox to be checked, saved, and to survive a reload.
+// still expects the Pass-1 answer to be saved and to survive a reload.
 test('выбор в первом проходе по услугам сохраняется и переживает перезагрузку (R1)', async ({ page }) => {
   const url = seed()
   await page.goto(url)
@@ -89,8 +103,7 @@ test('выбор в первом проходе по услугам сохран
   await clickNext(page, FIELD_STEP_COUNT)
   await expect(page.getByRole('heading', { name: 'What does the lounge offer?' })).toBeVisible()
 
-  const wifiRow = page.getByText('Wifi Access').locator('..')
-  await wifiRow.getByRole('checkbox').check()
+  await availability(page, 'Wifi Access').selectOption('yes')
 
   // Wait for the 600ms autosave debounce plus the round trip to actually
   // persist this — before the fix, `validateServiceValue` refused it, so
@@ -102,7 +115,7 @@ test('выбор в первом проходе по услугам сохран
   await clickNext(page, FIELD_STEP_COUNT)
   await expect(page.getByRole('heading', { name: 'What does the lounge offer?' })).toBeVisible()
 
-  await expect(page.getByText('Wifi Access').locator('..').getByRole('checkbox')).toBeChecked()
+  await expect(availability(page, 'Wifi Access')).toHaveValue('yes')
 })
 
 test('отказ сервера показывает ошибку у позиции и НЕ отображается как "Saved" (Critical 2)', async ({ page }) => {
@@ -118,10 +131,13 @@ test('отказ сервера показывает ошибку у позиц�
   // still enforces that a "chargeable" answer needs a price — R1 only
   // removed the "must have SOME chargeType at all" gate, not this
   // internal-consistency rule.
-  await page.getByText('Wifi Access').locator('..').getByRole('checkbox').check()
+  await availability(page, 'Wifi Access').selectOption('yes')
   await clickNext(page)
   await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
 
+  // Pass 2 renders no availability control (`withAvailability` is false
+  // there — availability is Pass 1's question, one Back away), so the card's
+  // only dropdown is still the charge type.
   const wifiCard = page.getByRole('heading', { name: 'Wifi Access' }).locator('..')
   await wifiCard.getByRole('combobox').selectOption('chargeable')
 
@@ -283,9 +299,14 @@ test('экран правок: у каждой из трёх категорий 
   })
 
   // Позиция услуг: наличие (то, что раньше жило только в первом проходе и на
-  // этот экран не попадало вовсе) плюс весь набор атрибутов.
-  await expect(serviceCard.getByRole('checkbox').first()).toBeChecked()
-  await expect(serviceCard.getByRole('combobox')).toHaveValue('complimentary')
+  // этот экран не попадало вовсе) плюс весь набор атрибутов. Два дропдауна в
+  // порядке разметки карточки: наличие, затем «платно/бесплатно» (см.
+  // `ServiceItemCard`). Наличие читается как ЗНАЧЕНИЕ, а не как галочка:
+  // именно этого чекбокс и не мог показать — «нет» у него выглядел так же,
+  // как «ничего не сказано».
+  await expect(serviceCard.getByRole('combobox')).toHaveCount(2)
+  await expect(serviceCard.getByRole('combobox').first()).toHaveValue('yes')
+  await expect(serviceCard.getByRole('combobox').nth(1)).toHaveValue('complimentary')
   await expect(serviceCard.locator('input[type="number"]')).toHaveCount(1)
   await expect(serviceCard.locator('textarea')).toHaveCount(1)
 
