@@ -22,6 +22,18 @@ import { existsSync, readFileSync } from 'node:fs'
 export const SEED_REVIEWER_EMAIL = 'reviewer@easyto.travel'
 
 /**
+ * Адрес, который сид пишет в почтовые поля анкеты (`valueForField`). Живёт
+ * здесь по той же причине, что и адрес проверяющего: `e2e/review.spec.ts` ждёт
+ * ИМЕННО этот адрес в уведомлении «Ссылка отправлена на …» — то есть проверяет,
+ * что экран показал ту почту оператора, которая лежит в анкете. Собранный в
+ * тесте по своей формуле, он молча разошёлся бы с сидовой и проверял бы
+ * совпадение теста с самим собой.
+ */
+export function seedEmailFor(fieldKey: string): string {
+  return `seed-${fieldKey}@example.com`
+}
+
+/**
  * `drizzle-kit push`/Next dev load `.env.local` themselves; a plain `tsx`
  * script does not. Rather than requiring every caller (including
  * `e2e/fill.spec.ts`, which shells out to `npm run seed`) to remember to

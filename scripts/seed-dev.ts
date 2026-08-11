@@ -57,7 +57,12 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { closeDbConnection, loadEnvFile, SEED_REVIEWER_EMAIL } from './dev-support'
+import {
+  closeDbConnection,
+  loadEnvFile,
+  seedEmailFor,
+  SEED_REVIEWER_EMAIL,
+} from './dev-support'
 import { createDb } from '../src/db/client'
 import { lounges, submissions, photos } from '../src/db/schema'
 import { addTeamMember } from '../src/access/team'
@@ -109,7 +114,7 @@ function valueForField(field: Field): unknown {
     case 'text':
     case 'textarea':
       return EMAIL_LABEL.test(field.label.en)
-        ? `seed-${field.key}@example.com`
+        ? seedEmailFor(field.key)
         : `Test value ${field.key}`
 
     case 'date':
