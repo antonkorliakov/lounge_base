@@ -17,6 +17,7 @@
 - `src/form-schema` не импортирует ни React, ни `src/db` — проверяется тестом.
 - Каждое поле и каждый вариант списка имеет обе локали: `en` и `ru`.
 - Английские формулировки полей копируются из xlsx дословно, включая пунктуацию и звёздочки обязательности.
+- **Порядок блокировок: сначала `submissions`, потом дочерние таблицы.** `saveFieldValue`/`saveServiceValue` внутри транзакции берут `FOR UPDATE` на строку анкеты и только затем пишут в `field_values`/`service_values`. Любая транзакция, меняющая статус анкеты, должна трогать `submissions` первой или не трогать дочерние таблицы вовсе. Обратный порядок даёт взаимную блокировку.
 - Все команды запускаются с `/opt/homebrew/bin` в `PATH` (там установлены node и npm).
 
 ---
@@ -817,8 +818,17 @@ export function fieldByKey(key: string): Field | undefined {
 `III.6.4 → airsideLandside`, `III.6.5 → immigration`,
 `III.7.2 → transferMethod`, `III.7.4 → yesNo`, `III.8.2 → overcrowding`.
 
-Поля-шаблоны: `III.2.1` (слот `hours`), `III.3.1` (слот `age`),
-`III.3.2` (слот `age`), `III.3.3` (слоты `childFrom`, `childTo`, `adultFrom`).
+Поля-шаблоны (чистые, без дропдауна): `III.2.1` (слот `hours`),
+`III.3.1` (слот `age`), `III.3.3` (слоты `childFrom`, `childTo`, `adultFrom`).
+
+**`III.3.2` — единственное составное поле.** В источнике у него одновременно
+дропдаун `Allowed / Not allowed` (ячейка B) и фраза с пропуском
+`«Children from ( ) years old can enter unaccompanied»` (ячейка C), и пример
+заполнен обоими. Поэтому у него `type: 'select'`, `optionList:
+'allowedNotAllowed'` **и** непустые `templateText`/`templateSlots` со слотом
+`age`. Возраст остаётся числом, а не текстом: по нему строятся фильтры и
+выгрузка. Слот обязателен при выборе `allowed` и игнорируется при
+`not_allowed` — правило в Task 6, рендер в Task 14.
 
 - [ ] **Step 5: Прогнать тесты**
 
@@ -1316,6 +1326,19 @@ describe('валидация полей', () => {
     expect(validateField(f, { option: 'all', detail: null }).ok).toBe(true)
   })
 
+  it('составное III.3.2 требует возраст при «allowed»', () => {
+    const f = field('III.3.2')
+    expect(validateField(f, { option: 'allowed', detail: null, slots: { age: null } }).ok).toBe(false)
+    expect(validateField(f, { option: 'allowed', detail: null, slots: { age: 10 } }).ok).toBe(true)
+  })
+
+  it('составное III.3.2 не требует возраст при «not_allowed»', () => {
+    const f = field('III.3.2')
+    expect(
+      validateField(f, { option: 'not_allowed', detail: null, slots: { age: null } }).ok,
+    ).toBe(true)
+  })
+
   it('мультивыбор требует хотя бы одного значения', () => {
     const f = field('III.6.6')
     expect(validateField(f, []).ok).toBe(false)
@@ -1393,7 +1416,12 @@ import { OPTION_LISTS } from './option-lists'
 
 export type ValidationResult = { ok: true } | { ok: false; error: Localized }
 
-export type SelectValue = { option: string; detail: string | null }
+export type SelectValue = {
+  option: string
+  detail: string | null
+  /** Только у составных полей — см. TEMPLATE_REQUIRED_BY_OPTION. */
+  slots?: Record<string, number | null>
+}
 export type TemplateValue = Record<string, number | null>
 
 export type ServiceValueInput = {
@@ -1426,6 +1454,15 @@ const DETAIL_REQUIRED_BY_OPTION: Record<string, string[]> = {
   'III.2.4': ['specific'],
 }
 
+/**
+ * Составные поля: выбранный вариант обязывает заполнить слоты шаблона.
+ * `III.3.2` — единственное такое поле в анкете: возраст нужен, только если
+ * детей без сопровождения вообще пускают.
+ */
+const TEMPLATE_REQUIRED_BY_OPTION: Record<string, string[]> = {
+  'III.3.2': ['allowed'],
+}
+
 function isSelectValue(value: unknown): value is SelectValue {
   return (
     typeof value === 'object' &&
@@ -1446,6 +1483,19 @@ function validateSelect(field: Field, value: unknown): ValidationResult {
   const byOption = DETAIL_REQUIRED_BY_OPTION[field.key] ?? []
   const needsDetail = chosen.requiresDetail || byOption.includes(chosen.id)
   if (needsDetail && detail === '') return DETAIL_REQUIRED
+
+  // Составное поле: выбранный вариант может требовать слоты шаблона.
+  const slotsRequiredFor = TEMPLATE_REQUIRED_BY_OPTION[field.key] ?? []
+  if (slotsRequiredFor.includes(chosen.id)) {
+    const slots = value.slots ?? {}
+    for (const slot of field.templateSlots) {
+      const filled = slots[slot.key]
+      if (filled === null || filled === undefined) return REQUIRED
+      if (!Number.isFinite(filled) || filled < 0) {
+        return fail('Enter a non-negative number', 'Введите неотрицательное число')
+      }
+    }
+  }
 
   return ok
 }
@@ -3632,6 +3682,7 @@ export function FieldInput(props: {
       const current = (value ?? { option: '', detail: null }) as {
         option: string
         detail: string | null
+        slots?: Record<string, number | null>
       }
       const chosen = options.find((o) => o.id === current.option)
 
@@ -3655,8 +3706,35 @@ export function FieldInput(props: {
             <textarea
               className="field-detail"
               value={current.detail ?? ''}
-              onChange={(e) => onChange({ option: current.option, detail: e.target.value })}
+              onChange={(e) => onChange({ ...current, detail: e.target.value })}
             />
+          )}
+          {/* Составное поле: у III.3.2 к дропдауну добавляется числовой слот. */}
+          {field.templateSlots.length > 0 && (
+            <div className="field-compound">
+              <p className="field-template">
+                {field.templateText ? pick(field.templateText) : ''}
+              </p>
+              {field.templateSlots.map((slot) => (
+                <span key={slot.key} className="field-slot">
+                  <input
+                    type="number"
+                    min={0}
+                    value={current.slots?.[slot.key] ?? ''}
+                    onChange={(e) =>
+                      onChange({
+                        ...current,
+                        slots: {
+                          ...current.slots,
+                          [slot.key]: e.target.value === '' ? null : Number(e.target.value),
+                        },
+                      })
+                    }
+                  />
+                  {pick(slot.unit)}
+                </span>
+              ))}
+            </div>
           )}
         </div>
       )
