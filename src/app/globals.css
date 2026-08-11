@@ -111,6 +111,61 @@ button {
 }
 button:disabled { opacity: .4; }
 
+.review-screen { display: grid; grid-template-columns: 200px 1fr; min-height: 100dvh; }
+.block-nav { border-right: 1px solid #e4e6ea; padding: 8px 0; overflow-y: auto; }
+.nav-item {
+  display: flex; gap: 8px; align-items: center; width: 100%;
+  padding: 7px 12px; border: 0; background: none; font: inherit;
+  font-size: 13px; text-align: left; cursor: pointer;
+}
+.nav-current { background: #eef4ff; font-weight: 600; }
+.nav-dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; }
+.nav-dot-confirmed { background: #16a34a; }
+.nav-dot-flagged { background: #dc2626; }
+.nav-dot-untouched { border: 1.5px solid #cbd0d6; }
+
+.review-pane { padding: 16px 20px; }
+.frow { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid #f0f1f3; align-items: flex-start; }
+.frow-key { flex: 0 0 220px; opacity: .7; font-size: 14px; }
+.frow-value { flex: 1; font-size: 14px; }
+.frow-act { flex: 0 0 auto; opacity: 0; border: 1px solid #e0e3e8; border-radius: 5px; background: none; font: inherit; font-size: 12px; padding: 2px 8px; cursor: pointer; }
+/* Наведение существует только на устройствах с мышью/трекпадом — на
+   touch-устройстве `:hover` либо никогда не срабатывает, либо "залипает"
+   после тапа, так что скрывать кнопку по умолчанию для ревьюера на
+   планшете означало бы прятать единственный способ отметить поле. На
+   устройствах без настоящего hover (и при пальцевом, а не точном указателе)
+   кнопка видна всегда; на мышиных — только при наведении, как и задумано,
+   чтобы сотни строк не рябили кнопками в покое. Фокус с клавиатуры также
+   всегда проявляет кнопку — иначе таб-навигация делала бы её невидимой,
+   даже когда она уже в фокусе. */
+@media (hover: hover) and (pointer: fine) {
+  .frow:hover .frow-act { opacity: 1; }
+}
+@media (hover: none), (pointer: coarse) {
+  .frow-act { opacity: 1; }
+}
+.frow-act:focus-visible { opacity: 1; }
+.frow-flagged { background: #fff8f8; border-left: 3px solid #dc2626; padding-left: 13px; }
+.frow-comment { margin-top: 6px; padding: 8px 10px; border: 1px solid #f0d5d5; border-radius: 6px; color: #7f1d1d; font-size: 13px; }
+.frow-comment b { display: block; font-size: 11px; text-transform: uppercase; color: #b91c1c; margin-bottom: 3px; }
+.frow-undo { display: block; margin-top: 6px; border: 0; background: none; font: inherit; font-size: 12px; opacity: .6; cursor: pointer; padding: 0; }
+.frow-editor { margin-top: 8px; padding: 10px; border: 1px solid #cfd9ea; border-radius: 7px; }
+.frow-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.chip { border: 1px solid #d3d6db; border-radius: 20px; padding: 3px 10px; background: none; font: inherit; font-size: 12px; cursor: pointer; }
+.chip-on { background: #1a1d21; color: #fff; border-color: #1a1d21; }
+.frow-editor textarea { width: 100%; min-height: 60px; padding: 8px; font: inherit; border: 1px solid #d3d6db; border-radius: 6px; }
+.frow-actions { display: flex; gap: 7px; margin-top: 8px; }
+.bt-flag { background: #dc2626; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+.bt-flag:disabled { opacity: .5; cursor: default; }
+.review-foot { display: flex; gap: 8px; margin-top: 20px; padding-top: 14px; border-top: 1px solid #e4e6ea; }
+.review-error { color: #b91c1c; }
+.review-notice { color: #92400e; }
+.login { max-width: 340px; margin: 12vh auto; display: flex; flex-direction: column; gap: 10px; padding: 0 16px; }
+.login input, .login button { padding: 10px; font: inherit; border-radius: 8px; border: 1px solid #c9ced6; }
+.admin-home { max-width: 640px; margin: 40px auto; padding: 0 16px; }
+.admin-home ul { list-style: none; padding: 0; }
+.admin-home li { padding: 10px 0; border-bottom: 1px solid #f0f1f3; }
+
 @media (prefers-color-scheme: dark) {
   body { background: #111317; color: #f0f1f3; }
   .shell-top,
@@ -131,4 +186,28 @@ button:disabled { opacity: .4; }
   .pass1-row { border-color: #2a2d34; }
   .pass2-card,
   .fix-card { border-color: #2a2d34; }
+
+  /* Экран проверки: пастельные светлые фоны (nav-current, frow-flagged,
+     frow-comment) на тёмном фоне страницы читались бы как светлые пятна с
+     нечитаемым текстом — не просто некрасиво, а нечитаемо. Цвет текста
+     .review-error/.review-notice сознательно не трогается здесь по тому же
+     прецеденту, что уже есть в этом файле: .fix-comment (выше) в тёмном
+     режиме тоже не получает свой собственный цвет текста — эти два случая
+     не идентичны только потому, что их фон здесь меняется, а фон
+     .fix-comment остаётся прозрачным. */
+  .block-nav,
+  .frow,
+  .frow-editor,
+  .review-foot { border-color: #2a2d34; }
+  .frow-act { border-color: #2a2d34; }
+  .chip { border-color: #2a2d34; }
+  .nav-current { background: #1b2735; }
+  .frow-flagged { background: #2a1616; }
+  .frow-comment { background: none; border-color: #5b2323; color: #fca5a5; }
+  .frow-comment b { color: #f87171; }
+  .frow-editor textarea {
+    background: #1a1c21;
+    color: #f0f1f3;
+    border-color: #2a2d34;
+  }
 }
