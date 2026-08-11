@@ -9,27 +9,11 @@ import { singleSubmissionWorkbook } from '../single'
 import { flatColumns } from '../columns'
 import fieldLabels from '@/form-schema/__tests__/fixtures/source-field-labels.json'
 import serviceLabels from '@/form-schema/__tests__/fixtures/source-service-labels.json'
+// Правило чтения книги обратно (без каста из образца плана) — одно на оба
+// файла тестов выгрузки, обоснование в самом хелпере.
+import { read } from './readWorkbook'
 
 const columns = flatColumns()
-
-/**
- * Без единого приведения типов. `xlsx.load` объявлен принимающим НЕ узловый
- * `Buffer`, а собственный exceljs-овский `interface Buffer extends
- * ArrayBuffer {}` (первая строка его `index.d.ts`) — образец плана закрывал
- * этот разрыв кастом `buffer as unknown as ArrayBuffer`, тем самым классом
- * приведения, который эта ветка выпалывала уже пять раз. Честный путь —
- * отдать `load` настоящий `ArrayBuffer`: `new Uint8Array(buffer)` копирует
- * байты в свежий несёженный буфер (тот же приём, с тем же обоснованием, что
- * у `createTestDb` в `db/__tests__/harness.ts`: подложка узлового `Buffer` —
- * `ArrayBufferLike`, срез её мог бы быть и `SharedArrayBuffer`), и exceljs
- * его принимает и типом, и на деле — проверено до того, как тесты на это
- * оперлись.
- */
-async function read(buffer: Buffer): Promise<ExcelJS.Workbook> {
-  const workbook = new ExcelJS.Workbook()
-  await workbook.xlsx.load(new Uint8Array(buffer).buffer)
-  return workbook
-}
 
 /** Все непустые значения первой колонки листа — «оглавление» его строк. */
 function firstColumn(sheet: ExcelJS.Worksheet): string[] {
