@@ -69,9 +69,22 @@ export async function saveServiceValue(
     // meaningful, so they're blanked here rather than carried over from
     // whatever they were before. Without this, un-checking (or reverting)
     // a previously-chargeable item would leave its old chargeType/price/
-    // currency/slotMinutes/bookingRequired sitting in the row for plan 3's
-    // export to read as if they still applied to an item the operator just
-    // said the lounge doesn't have.
+    // currency/slotMinutes/bookingRequired/details sitting in the row for
+    // plan 3's export to read as if they still applied to an item the
+    // operator just said the lounge doesn't have.
+    //
+    // The list is EVERY attribute besides `available` — i.e. exactly
+    // `EMPTY_SERVICE_ATTRS` (`src/web/ServiceItemCard.tsx`), which is also
+    // exactly the set `ServiceItemCard` renders behind its own
+    // `isOfferedAvailability` gate. Naming the rule that way rather than
+    // listing attributes is what keeps the two from drifting: `details` was
+    // left out of the blanking below while being offered-only in the UI, so
+    // flipping a flagged item from "yes" to "no" on the fixes screen kept
+    // `details: 'Free for 4h, then chargeable'` against `available: 'no'` —
+    // and `renderValues` shows `details` to the reviewer, so the review
+    // screen displayed that contradiction verbatim. A new offered-only
+    // attribute must be added here too; if it ever isn't, the same silent
+    // staleness returns for it alone.
     const offered = isOfferedAvailability(item, available)
 
     const row = {
@@ -83,7 +96,7 @@ export async function saveServiceValue(
       currency: offered ? input.value.currency : null,
       slotMinutes: offered ? input.value.slotMinutes : null,
       bookingRequired: offered ? input.value.bookingRequired : null,
-      details: input.value.details,
+      details: offered ? input.value.details : null,
     }
 
     await tx
