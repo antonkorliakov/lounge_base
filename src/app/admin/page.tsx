@@ -53,6 +53,7 @@ export default async function AdminHome(props: {
     zone: row.zone,
     operationalStatus: row.operationalStatus,
     statusUntil: row.statusUntil,
+    statusComment: row.statusComment,
     submissionId: row.submissionId,
     submissionStatus: row.submissionStatus,
     daysInFormStatus: daysInSubmissionStatus(row, now),

@@ -184,7 +184,7 @@ test('фильтр по аэропорту живёт в адресной стр
   await expect(page.getByLabel('Airport')).toHaveValue('Dubai International')
 })
 
-test('статус лаунжа меняется из реестра, виден без перезагрузки и переживает её', async ({
+test('статус лаунжа меняется из реестра, виден без перезагрузки, а правка одной даты не стирает комментарий', async ({
   page,
   watched,
 }) => {
@@ -200,20 +200,38 @@ test('статус лаунжа меняется из реестра, виден
   // Радио-кнопки редактора названы теми же подписями из OPERATIONAL_STATUSES.
   await row.getByRole('radio', { name: statusLabel('under_renovation') }).check()
   await row.getByLabel(/Expected reopening/).fill('2026-12-01')
+  await row.getByLabel('Comment').fill('Food court rebuild')
   await row.getByRole('button', { name: 'Save', exact: true }).click()
 
-  // Успех виден БЕЗ перезагрузки: редактор закрылся, а пилюля и дата пришли
-  // ответом действия (`revalidatePath` после `result.ok` — см.
-  // `setStatusAction`); молча оставшийся «Active» значил бы, что смену видно
-  // только следующему посетителю.
+  // Успех виден БЕЗ перезагрузки: редактор закрылся, а пилюля, дата и
+  // комментарий пришли ответом действия (`revalidatePath` после `result.ok` —
+  // см. `setStatusAction`); молча оставшийся «Active» значил бы, что смену
+  // видно только следующему посетителю. Комментарий — видимым текстом строки,
+  // не `title`: записанное поле обязано быть читаемым (дефект I2 ревью).
   await expect(row.locator('.status-editor')).toHaveCount(0)
   await expect(pill).toHaveText(statusLabel('under_renovation'))
   await expect(row).toContainText('→ 2026-12-01')
+  await expect(row).toContainText('Food court rebuild')
+
+  // ── Правка ОДНОЙ даты не трогает комментарий ────────────────────────────
+  // Ровно сценарий потери данных из ревью: редактор открывают поправить дату,
+  // комментарий не трогают. Поле обязано открыться с ХРАНИМЫМ текстом (а не
+  // пустым — пустое поле молча сохранило бы statusComment = null), и после
+  // сохранения комментарий обязан пережить правку.
+  await pill.click()
+  await expect(row.getByLabel('Comment')).toHaveValue('Food court rebuild')
+  await row.getByLabel(/Expected reopening/).fill('2026-12-15')
+  await row.getByRole('button', { name: 'Save', exact: true }).click()
+
+  await expect(row.locator('.status-editor')).toHaveCount(0)
+  await expect(row).toContainText('→ 2026-12-15')
+  await expect(row).toContainText('Food court rebuild')
 
   // И это сервер, а не состояние клиента: перечитанная страница говорит то же.
   await page.reload()
   await expect(rowFor(page, lounge)).toContainText(statusLabel('under_renovation'))
-  await expect(rowFor(page, lounge)).toContainText('→ 2026-12-01')
+  await expect(rowFor(page, lounge)).toContainText('→ 2026-12-15')
+  await expect(rowFor(page, lounge)).toContainText('Food court rebuild')
 
   // ЧЕГО ЗДЕСЬ НЕТ, И ПОЧЕМУ: отказа сервера на дате вида 2026-02-30
   // (`isCalendarDate` в `src/registry/status.ts`) из настоящего браузера не

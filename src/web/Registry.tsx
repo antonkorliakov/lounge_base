@@ -30,6 +30,7 @@ export type RegistryTableRow = {
   zone: string[] | null
   operationalStatus: OperationalStatus
   statusUntil: string | null
+  statusComment: string | null
   submissionId: string | null
   submissionStatus: SubmissionStatus | null
   /** Полных суток в текущем статусе АНКЕТЫ; `null` — анкеты нет. */
@@ -154,11 +155,21 @@ export function Registry(props: {
                   {operationalLabel(row.operationalStatus)}
                 </button>
                 {row.statusUntil && <span className="row-until">→ {row.statusUntil}</span>}
+                {/* Комментарий к статусу — ВИДИМОЙ строкой, а не `title`:
+                    `title` не существует ни на touch-устройстве, ни для
+                    скринридера (то же правило, по которому `gates.ts` дублирует
+                    причину отказа видимым текстом). Спрятанный комментарий был
+                    бы тем же дефектом I2 на один слой выше — записан, показан,
+                    но не каждому. */}
+                {row.statusComment && (
+                  <span className="row-comment">{row.statusComment}</span>
+                )}
                 {editing === row.loungeId && (
                   <StatusEditor
                     loungeId={row.loungeId}
                     current={row.operationalStatus}
                     until={row.statusUntil}
+                    comment={row.statusComment}
                     statuses={props.statuses}
                     onClose={() => setEditing(null)}
                   />

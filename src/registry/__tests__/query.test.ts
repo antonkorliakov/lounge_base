@@ -20,6 +20,7 @@ async function seed(db: Db): Promise<void> {
     airport: 'Istanbul Airport', iataCode: 'IST',
     terminal: 't2', terminalType: 'international', zone: ['arrival'], airsideLandside: 'airside',
     operationalStatus: 'under_renovation', statusUntil: '2026-09-15',
+    statusComment: 'Реконструкция зоны питания',
   }).returning()
 
   const [dxb] = await db.insert(lounges).values({
@@ -182,6 +183,23 @@ describe('реестр', () => {
     const iga = (await listRegistry(db, { terminal: 't2' }))[0]
     expect(iga?.operationalStatus).toBe('under_renovation')
     expect(iga?.statusUntil).toBe('2026-09-15')
+  })
+
+  /**
+   * Комментарий к статусу — часть строки реестра, а не write-only колонка:
+   * `setOperationalStatus` его записывал, но `listRegistry` не выбирал, и
+   * «Реконструкция зоны питания» не мог прочитать никто (дефект I2 ревью
+   * ветки). Лаунж без комментария несёт `null`, а не пустую строку — экран
+   * по этому различает «нечего показывать» и «показывать пустое».
+   */
+  it('статус лаунжа несёт комментарий; без комментария — null', async () => {
+    const db = await createTestDb()
+    await seed(db)
+
+    const rows = await listRegistry(db, {})
+    expect(rows.find((r) => r.name === 'IGA Lounge Arrival')?.statusComment)
+      .toBe('Реконструкция зоны питания')
+    expect(rows.find((r) => r.name === 'Marhaba Lounge')?.statusComment).toBeNull()
   })
 
   /**
@@ -412,7 +430,7 @@ describe('время в статусе анкеты', () => {
   const row = (statusChangedAt: Date | null): RegistryRow => ({
     loungeId: 'x', name: 'X', provider: null, country: 'Turkey', city: 'Istanbul',
     airport: 'Istanbul Airport', iataCode: 'IST', terminal: null, zone: null,
-    operationalStatus: 'active', statusUntil: null, submissionId: 's1',
+    operationalStatus: 'active', statusUntil: null, statusComment: null, submissionId: 's1',
     submissionStatus: 'submitted', statusChangedAt, decidedAt: null, reviewerId: null,
   })
 

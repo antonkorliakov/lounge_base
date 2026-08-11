@@ -28,6 +28,7 @@ export type RegistryRow = {
   zone: string[] | null
   operationalStatus: OperationalStatus
   statusUntil: string | null
+  statusComment: string | null
   submissionId: string | null
   submissionStatus: SubmissionStatus | null
   statusChangedAt: Date | null
@@ -151,6 +152,11 @@ export async function listRegistry(
       zone: lounges.zone,
       operationalStatus: lounges.operationalStatus,
       statusUntil: lounges.statusUntil,
+      // Комментарий к статусу — не служебное поле, а сама причина хранить
+      // статус с пояснением: «Реконструкция зоны питания» и есть ответ на
+      // вопрос, ждать ли лаунж обратно. Записанный, но никем не читаемый
+      // комментарий был дефектом I2 ревью этой ветки.
+      statusComment: lounges.statusComment,
       submissionId: latest.id,
       submissionStatus: latest.status,
       statusChangedAt: latest.statusChangedAt,

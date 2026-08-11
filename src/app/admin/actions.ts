@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { db } from '@/db/client'
 import { requireSession } from '@/access/session'
-import { setOperationalStatus } from '@/registry/status'
+import { setOperationalStatus, statusHistory } from '@/registry/status'
 import type { OperationalStatus } from '@/db/schema'
 import type { ActionResult } from './s/[submissionId]/actions'
 
@@ -46,4 +46,48 @@ export async function setStatusAction(
 
   revalidatePath('/admin')
   return { ok: true }
+}
+
+/**
+ * Запись истории смен статуса — в готовом для показа виде: статусы остаются
+ * id (подписи у клиента уже есть пропсом `statuses`, см. `StatusEditor`), а
+ * `at` отдаётся ISO-строкой, потому что клиенту от момента смены нужен только
+ * день, а гонять `Date` через сериализацию действия — лишний договор.
+ */
+export type StatusHistoryEntry = {
+  from: OperationalStatus | null
+  to: OperationalStatus
+  until: string | null
+  comment: string | null
+  actor: string
+  at: string
+}
+
+/**
+ * История смен эксплуатационного статуса лаунжа — для раскрывашки в редакторе
+ * статуса. `statusHistory` (`src/registry/status.ts`) существовал и был
+ * покрыт тестами, но не имел ни одного вызывающего в продукте (дефект I2
+ * ревью): историю писали при каждой смене — и никто не мог её открыть.
+ *
+ * Читается ПО ЗАПРОСУ (клик по раскрывашке), а не в строках реестра: реестр
+ * — сотни лаунжей, и грузить N историй ради страницы, где ни одна может не
+ * понадобиться, — это N лишних запросов на показ.
+ *
+ * `requireSession()` — первым оператором, как у всех действий кабинета: это
+ * чтение чужих решений и адресов почты (actor), fill-токену оно не положено.
+ */
+export async function statusHistoryAction(
+  loungeId: string,
+): Promise<StatusHistoryEntry[]> {
+  await requireSession()
+
+  const changes = await statusHistory(db(), loungeId)
+  return changes.map((change) => ({
+    from: change.from,
+    to: change.to,
+    until: change.until,
+    comment: change.comment,
+    actor: change.actor,
+    at: change.at.toISOString(),
+  }))
 }
