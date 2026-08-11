@@ -278,9 +278,39 @@ button:disabled { opacity: .4; }
 .review-notice { color: #92400e; }
 .login { max-width: 340px; margin: 12vh auto; display: flex; flex-direction: column; gap: 10px; padding: 0 16px; }
 .login input, .login button { padding: 10px; font: inherit; border-radius: 8px; border: 1px solid #c9ced6; }
-.admin-home { max-width: 640px; margin: 40px auto; padding: 0 16px; }
-.admin-home ul { list-style: none; padding: 0; }
-.admin-home li { padding: 10px 0; border-bottom: 1px solid #f0f1f3; }
+/* Реестр лаунжей (/admin). Таблица на всю ширину: у неё семь колонок, и
+   узкая колонка «истории», как у прежнего списка (.admin-home, удалён вместе
+   со своим экраном), резала бы её горизонтальной прокруткой. */
+.registry { padding: 20px 24px; }
+.registry-top { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.registry-top h1 { margin: 0; font-size: 20px; }
+.registry-count { opacity: .6; font-size: 13px; }
+.registry-export { margin-left: auto; display: flex; gap: 10px; font-size: 13px; }
+.registry-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 14px; }
+.rf { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.rf select, .rf-search { padding: 6px 8px; font: inherit; font-size: 13px; border: 1px solid #c9ced6; border-radius: 6px; }
+.registry-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.registry-table th {
+  text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+  opacity: .6; padding: 8px 10px; border-bottom: 1px solid #e4e6ea;
+}
+.registry-table td { padding: 10px; border-bottom: 1px solid #f2f3f5; vertical-align: top; }
+/* Приглушение закрытого лаунжа — требование спеки («приглушение закрытых»):
+   строка остаётся в реестре (Global Constraints плана 3), но не спорит за
+   внимание с действующими. */
+.row-dim { opacity: .55; }
+.row-sub { display: block; font-size: 11px; opacity: .6; margin-top: 2px; }
+.row-until { display: block; font-size: 11px; opacity: .7; margin-top: 3px; }
+/* Пилюля статуса — кнопка редактора; min-height: 44px от глобального button
+   ей не нужен, это встрочный элемент таблицы, а не отдельное действие формы. */
+.pill-btn { min-height: 0; border: 1px solid #c9ced6; border-radius: 20px; background: none; font: inherit; font-size: 12px; padding: 3px 10px; cursor: pointer; }
+.status-editor { margin-top: 8px; padding: 10px; border: 1px solid #cfd9ea; border-radius: 8px; max-width: 280px; }
+.se-opt { display: flex; gap: 7px; align-items: center; padding: 4px 0; font-size: 13px; }
+.se-sub { margin: 6px 0 0 20px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.se-sub input { width: 100%; padding: 5px 7px; font: inherit; border: 1px solid #d3d6db; border-radius: 5px; }
+.se-actions { display: flex; gap: 6px; margin-top: 9px; }
+.se-actions button { min-height: 0; padding: 6px 12px; font-size: 13px; }
+.se-error { color: #b91c1c; font-size: 12px; }
 
 @media (prefers-color-scheme: dark) {
   body { background: #111317; color: #f0f1f3; }
@@ -345,4 +375,21 @@ button:disabled { opacity: .4; }
     color: #f0f1f3;
     border-color: #2a2d34;
   }
+
+  /* Реестр: те же замены, что и выше по файлу, — светлые рамки на тёмные,
+     контролам тёмный фон, тёмно-красному тексту ошибки светлый тон
+     (b91c1c на тёмном фоне читается как тёмное на тёмном — тот же довод,
+     что у пилюли состояния экрана проверки). */
+  .registry-table th,
+  .registry-table td { border-color: #2a2d34; }
+  .rf select,
+  .rf-search,
+  .se-sub input {
+    background: #1a1c21;
+    color: #f0f1f3;
+    border-color: #2a2d34;
+  }
+  .pill-btn { border-color: #3a3f47; }
+  .status-editor { border-color: #2a2d34; }
+  .se-error { color: #fca5a5; }
 }

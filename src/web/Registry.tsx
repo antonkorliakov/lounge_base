@@ -1,0 +1,175 @@
+'use client'
+
+import Link from 'next/link'
+import { useState } from 'react'
+import type { Localized } from '@/form-schema'
+import { OPTION_LISTS } from '@/form-schema'
+import type { RegistryFilters } from '@/registry/query'
+import type { OperationalStatus, SubmissionStatus } from '@/db/schema'
+import { useLocale } from '@/i18n/context'
+import { RegistryFiltersBar, type FilterOptions, type SubmissionStateOption } from './RegistryFilters'
+import { StatusEditor, type OperationalStatusMeta } from './StatusEditor'
+
+/**
+ * Строка таблицы реестра — уже посчитанная сервером, а не сырой
+ * `RegistryRow`: `daysInFormStatus` вычисляет страница
+ * (`daysInSubmissionStatus` живёт в `src/registry/query.ts`, который тянет
+ * drizzle значениями — образец плана импортировал его прямо в этот
+ * клиентский модуль). Клиент получает готовые ответы, не правила — то же
+ * соглашение, что у `gates.ts`.
+ */
+export type RegistryTableRow = {
+  loungeId: string
+  name: string
+  provider: string | null
+  country: string
+  city: string
+  airport: string
+  iataCode: string
+  terminal: string | null
+  zone: string[] | null
+  operationalStatus: OperationalStatus
+  statusUntil: string | null
+  submissionId: string | null
+  submissionStatus: SubmissionStatus | null
+  /** Полных суток в текущем статусе АНКЕТЫ; `null` — анкеты нет. */
+  daysInFormStatus: number | null
+}
+
+const TITLE: Localized = { en: 'Lounges', ru: 'Лаунжи' }
+const HEADERS: { key: string; label: Localized }[] = [
+  { key: 'lounge', label: { en: 'Lounge', ru: 'Лаунж' } },
+  { key: 'airport', label: { en: 'Airport', ru: 'Аэропорт' } },
+  { key: 'terminal', label: { en: 'Terminal', ru: 'Терминал' } },
+  { key: 'zone', label: { en: 'Zone', ru: 'Зона' } },
+  { key: 'operational', label: { en: 'Lounge status', ru: 'Статус лаунжа' } },
+  { key: 'submission', label: { en: 'Form status', ru: 'Статус анкеты' } },
+  // Именно СТАТУСА АНКЕТЫ: у строки реестра два независимых статуса, а у
+  // эксплуатационного времени смены не хранится вовсе — см.
+  // `daysInSubmissionStatus` (`src/registry/query.ts`). Образец плана писал
+  // «In status», не говоря какого.
+  { key: 'days', label: { en: 'Days in form status', ru: 'Дней в статусе анкеты' } },
+]
+const UNAPPROVED_XLSX: Localized = {
+  en: 'Excel, incl. unapproved',
+  ru: 'Excel, включая непринятые',
+}
+
+export function Registry(props: {
+  rows: RegistryTableRow[]
+  total: number
+  query: string
+  filters: RegistryFilters
+  options: FilterOptions
+  statuses: OperationalStatusMeta[]
+  submissionStates: SubmissionStateOption[]
+}): React.JSX.Element {
+  const { locale, pick } = useLocale()
+  const [editing, setEditing] = useState<string | null>(null)
+
+  const operationalLabel = (id: OperationalStatus): string => {
+    const meta = props.statuses.find((status) => status.id === id)
+    return meta ? pick(meta.label) : id
+  }
+
+  const submissionLabel = (id: SubmissionStatus): string => {
+    const state = props.submissionStates.find((item) => item.id === id)
+    return state ? pick(state.label) : id
+  }
+
+  // Зона хранится id-ами опций (`classifyingFieldsFrom` пишет ответ III.6.6
+  // как есть); показываются подписи, как и в фильтре. Значение мимо списка
+  // (запись миграцией/руками) показывается как есть, а не прячется.
+  const zoneLabel = (id: string): string => {
+    const option = OPTION_LISTS.zone.find((item) => item.id === id)
+    return option ? pick(option.label) : id
+  }
+
+  const exportHref = (extra: string): string =>
+    `/admin/export?${props.query === '' ? '' : `${props.query}&`}${extra}`
+
+  return (
+    <main className="registry">
+      <header className="registry-top">
+        <h1>{pick(TITLE)}</h1>
+        <span className="registry-count">
+          {locale === 'ru'
+            ? `показано ${props.rows.length} из ${props.total}`
+            : `${props.rows.length} of ${props.total}`}
+        </span>
+        {/* Выгрузка уходит с ТЕКУЩИМ фильтром: ссылки несут ту же строку
+            запроса, из которой построена страница. */}
+        <div className="registry-export">
+          <a href={exportHref('format=xlsx')}>Excel</a>
+          <a href={exportHref('format=csv')}>CSV</a>
+          <a href={exportHref('format=xlsx&includeUnapproved=1')}>{pick(UNAPPROVED_XLSX)}</a>
+        </div>
+      </header>
+
+      <RegistryFiltersBar
+        query={props.query}
+        filters={props.filters}
+        options={props.options}
+        statuses={props.statuses}
+        submissionStates={props.submissionStates}
+      />
+
+      <table className="registry-table">
+        <thead>
+          <tr>
+            {HEADERS.map((header) => (
+              <th key={header.key}>{pick(header.label)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {props.rows.map((row) => (
+            <tr
+              key={row.loungeId}
+              className={row.operationalStatus === 'closed' ? 'row-dim' : undefined}
+            >
+              <td>
+                {/* Ссылка на экран проверки — тот же путь, которым ходит
+                    e2e/review.spec.ts (`openSeededSubmission`): имя лаунжа
+                    открывает его последнюю анкету. Лаунж без анкет открыть
+                    нечем — имя остаётся текстом. */}
+                {row.submissionId ? (
+                  <Link href={`/admin/s/${row.submissionId}`}>{row.name}</Link>
+                ) : (
+                  row.name
+                )}
+                <span className="row-sub">
+                  {[row.provider, row.city, row.country].filter(Boolean).join(' · ')}
+                </span>
+              </td>
+              <td>{row.iataCode}</td>
+              <td>{row.terminal ?? '—'}</td>
+              <td>{row.zone && row.zone.length > 0 ? row.zone.map(zoneLabel).join(', ') : '—'}</td>
+              <td>
+                <button
+                  type="button"
+                  className="pill-btn"
+                  onClick={() => setEditing(editing === row.loungeId ? null : row.loungeId)}
+                >
+                  {operationalLabel(row.operationalStatus)}
+                </button>
+                {row.statusUntil && <span className="row-until">→ {row.statusUntil}</span>}
+                {editing === row.loungeId && (
+                  <StatusEditor
+                    loungeId={row.loungeId}
+                    current={row.operationalStatus}
+                    until={row.statusUntil}
+                    statuses={props.statuses}
+                    onClose={() => setEditing(null)}
+                  />
+                )}
+              </td>
+              <td>{row.submissionStatus ? submissionLabel(row.submissionStatus) : '—'}</td>
+              <td>{row.daysInFormStatus === null ? '—' : `${row.daysInFormStatus}`}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </main>
+  )
+}

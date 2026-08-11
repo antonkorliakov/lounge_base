@@ -120,16 +120,18 @@ async function expectRendered(watched: Watched, marker: Locator): Promise<void> 
   }).toPass({ timeout: 20_000 })
 }
 
-/** Открывает засеянную анкету так же, как проверяющий: из списка «Awaiting
- *  review». Возвращает URL экрана проверки — по нему сценарии возвращаются на
- *  анкету после того, как она вышла из статуса `submitted` и из списка. */
+/** Открывает засеянную анкету так же, как проверяющий: из реестра лаунжей
+ *  (`/admin`, план 3 — прежде здесь был список «Awaiting review»). Имя лаунжа
+ *  в строке реестра — ссылка на последнюю анкету. Возвращает URL экрана
+ *  проверки — по нему сценарии возвращаются на анкету после того, как она
+ *  вышла из статуса `submitted`. */
 async function openSeededSubmission(
   page: Page,
   watched: Watched,
   lounge: string,
 ): Promise<string> {
   await page.goto('/admin')
-  await expect(page.getByRole('heading', { name: 'Awaiting review' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Lounges' })).toBeVisible()
 
   await page.getByRole('link', { name: lounge }).click()
 
@@ -315,10 +317,15 @@ test('замечание, возврат на правку, исправлени
   await expect(row(page, FULL_NAME)).toContainText('Primeclass Lounge Istanbul Ltd')
   await expect(page.getByRole('button', { name: CONFIRM_BLOCK })).toBeEnabled()
 
-  // И анкета снова в списке «Awaiting review» — то есть статус действительно
-  // вернулся в `submitted`, а не остался `changes_requested`.
+  // И строка реестра снова называет анкету «Under review» — то есть статус
+  // действительно вернулся в `submitted`, а не остался `changes_requested`.
+  // Прежний список «Awaiting review» показывал ТОЛЬКО `submitted`, и
+  // доказательством было само присутствие в нём; реестр показывает все лаунжи
+  // всегда, так что присутствие строки больше ничего не доказывает —
+  // доказательство теперь подпись статуса анкеты (та же формулировка, что у
+  // пилюли состояния экрана проверки: один источник, `reviewStateFor`).
   await page.goto('/admin')
-  await expect(page.getByRole('link', { name: lounge })).toHaveCount(1)
+  await expect(page.getByRole('row').filter({ hasText: lounge })).toContainText('Under review')
 })
 
 test('принять анкету можно только когда снято последнее замечание и подтверждены все блоки', async ({
@@ -437,10 +444,13 @@ test('принять анкету можно только когда снято 
   // нечем, поэтому кнопки «отметить» нет ни на одной строке блока.
   await expect(page.locator('.frow-act')).toHaveCount(0)
 
-  // Принятая анкета уходит из списка «Awaiting review» — единственный видимый
-  // след успеха: `approveAction` при удачном письме не возвращает уведомления.
+  // Строка реестра называет анкету принятой — видимый след успеха за
+  // пределами самого экрана проверки: `approveAction` при удачном письме не
+  // возвращает уведомления. Прежде здесь проверялось исчезновение из списка
+  // «Awaiting review»; из реестра лаунж не исчезает никогда (Global
+  // Constraints плана 3) — принятая анкета видна сменившейся подписью.
   await page.goto('/admin')
-  await expect(page.getByRole('link', { name: lounge })).toHaveCount(0)
+  await expect(page.getByRole('row').filter({ hasText: lounge })).toContainText('Approved')
 })
 
 test('блок «Фото»: галерея открывается, слот можно отметить, опустевший слот честно пуст', async ({
@@ -586,7 +596,7 @@ test('вход в кабинет: ответ формы не выдаёт сос
   // открывает кабинет и действительно одноразовый.
   const loginUrl = loginLinkFor(SEED_REVIEWER_EMAIL)
   await page.goto(loginUrl)
-  await expectRendered(watched, page.getByRole('heading', { name: 'Awaiting review' }))
+  await expectRendered(watched, page.getByRole('heading', { name: 'Lounges' }))
   expect(new URL(page.url()).pathname).toBe('/admin')
 
   // И она одноразовая: `consumeLoginToken` помечает токен использованным одним
