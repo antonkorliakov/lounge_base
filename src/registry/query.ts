@@ -36,6 +36,24 @@ export type RegistryRow = {
 }
 
 /**
+ * Какая анкета лаунжа считается «его» анкетой в строке реестра:
+ *
+ *  - `latest` — последняя по времени создания, независимо от статуса. Взгляд
+ *    экрана реестра: где сейчас находится сбор данных по лаунжу.
+ *  - `latestApproved` — последняя ПРИНЯТАЯ. Взгляд плоской выгрузки
+ *    (`src/export/rows.ts`) в режиме «только принятые»: лаунж, у которого
+ *    после принятия открыли новую черновую анкету, не перестал иметь
+ *    проверенные данные, и выгрузка обязана продолжать отдавать именно их —
+ *    взгляд `latest` потерял бы такой лаунж целиком, пока новая анкета не
+ *    принята.
+ *
+ * Живёт здесь, а не в выгрузке, потому что «последняя» — правило этого модуля
+ * (distinct on + полный порядок с tie-break по id, см. `latestSubmissionFor`),
+ * и второй его экземпляр в `src/export` разъезжался бы с первым.
+ */
+export type SubmissionScope = 'latest' | 'latestApproved'
+
+/**
  * Последняя анкета каждого лаунжа. Отдельного поля `current_submission_id`
  * нет намеренно — оно потребовало бы синхронизации и рассинхронизировалось бы.
  *
@@ -61,7 +79,7 @@ export type RegistryRow = {
  * то другую при неизменных данных. Правило теперь названо: при равном
  * `createdAt` берётся строка с большим `id`.
  */
-function latestSubmissionFor(db: Db) {
+function latestSubmissionFor(db: Db, scope: SubmissionScope) {
   return db
     .selectDistinctOn([submissions.loungeId], {
       id: submissions.id,
@@ -72,6 +90,11 @@ function latestSubmissionFor(db: Db) {
       reviewerId: submissions.reviewerId,
     })
     .from(submissions)
+    // Сужение ДО distinct on, а не фильтром по готовой строке реестра: иначе
+    // «последняя принятая» превратилась бы в «последняя, если она принята» —
+    // это разные множества ровно в случае «черновик после принятия», ради
+    // которого взгляд и существует (см. `SubmissionScope`).
+    .where(scope === 'latestApproved' ? eq(submissions.status, 'approved') : undefined)
     .orderBy(submissions.loungeId, desc(submissions.createdAt), desc(submissions.id))
     .as('latest')
 }
@@ -79,8 +102,9 @@ function latestSubmissionFor(db: Db) {
 export async function listRegistry(
   db: Db,
   filters: RegistryFilters,
+  scope: SubmissionScope = 'latest',
 ): Promise<RegistryRow[]> {
-  const latest = latestSubmissionFor(db)
+  const latest = latestSubmissionFor(db, scope)
   const conditions: SQL[] = []
 
   if (filters.country) conditions.push(eq(lounges.country, filters.country))

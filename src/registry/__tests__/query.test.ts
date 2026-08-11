@@ -260,6 +260,109 @@ describe('реестр', () => {
 })
 
 /**
+ * Второй взгляд на те же лаунжи: не «последняя анкета», а «последняя ПРИНЯТАЯ».
+ * Нужен плоской выгрузке (`src/export/rows.ts`): лаунж, у которого после
+ * принятия открыли новую черновую анкету, не перестал иметь проверенные
+ * данные — а взгляд «последняя анкета» его для выгрузки «только принятые»
+ * потерял бы вовсе. Живёт в этом модуле, а не в выгрузке, потому что выбор
+ * «последней» анкеты (distinct on + полный порядок с tie-break по id) — правило
+ * этого модуля, и второй его экземпляр в `src/export` разъезжался бы с первым.
+ */
+describe('взгляд «последняя принятая анкета»', () => {
+  const approvedOn = new Date('2026-01-20')
+
+  /** Лаунж с принятой январской анкетой и мартовским черновиком после неё. */
+  async function seedReopened(db: Db): Promise<{ approvedId: string; draftId: string }> {
+    const [lounge] = await db.insert(lounges).values({
+      name: 'Reopened', country: 'Turkey', city: 'Istanbul',
+      airport: 'Istanbul Airport', iataCode: 'IST',
+    }).returning()
+
+    const [approved] = await db.insert(submissions).values({
+      loungeId: lounge!.id, status: 'approved',
+      createdAt: new Date('2026-01-10'), decidedAt: approvedOn,
+    }).returning()
+    const [draft] = await db.insert(submissions).values({
+      loungeId: lounge!.id, status: 'draft', createdAt: new Date('2026-03-01'),
+    }).returning()
+
+    return { approvedId: approved!.id, draftId: draft!.id }
+  }
+
+  it('лаунж с черновиком после принятия несёт принятую анкету, а не черновик', async () => {
+    const db = await createTestDb()
+    const { approvedId } = await seedReopened(db)
+
+    const rows = await listRegistry(db, {}, 'latestApproved')
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.submissionId).toBe(approvedId)
+    expect(rows[0]?.submissionStatus).toBe('approved')
+    expect(rows[0]?.decidedAt).toEqual(approvedOn)
+  })
+
+  it('взгляд по умолчанию не изменился: тот же лаунж несёт черновик', async () => {
+    const db = await createTestDb()
+    const { draftId } = await seedReopened(db)
+
+    const rows = await listRegistry(db, {})
+
+    expect(rows[0]?.submissionId).toBe(draftId)
+    expect(rows[0]?.submissionStatus).toBe('draft')
+  })
+
+  it('из нескольких принятых берётся последняя', async () => {
+    const db = await createTestDb()
+    const { approvedId } = await seedReopened(db)
+    const rows = await listRegistry(db, {}, 'latestApproved')
+    const loungeId = rows[0]!.loungeId
+
+    const [later] = await db.insert(submissions).values({
+      loungeId, status: 'approved',
+      createdAt: new Date('2026-02-15'), decidedAt: new Date('2026-02-20'),
+    }).returning()
+
+    const again = await listRegistry(db, {}, 'latestApproved')
+    expect(again[0]?.submissionId).toBe(later!.id)
+    expect(again[0]?.submissionId).not.toBe(approvedId)
+  })
+
+  /**
+   * Лаунж без единой принятой анкеты остаётся в списке с пустыми колонками
+   * анкеты — реестр по-прежнему показывает все лаунжи (leftJoin), а «убрать
+   * непринятые» — это фильтр `submissionStatus`, который с этим взглядом
+   * складывается как обычно. Выгрузка пользуется именно этой парой.
+   */
+  it('лаунж без принятых анкет — в списке, но с пустой анкетой', async () => {
+    const db = await createTestDb()
+    const [lounge] = await db.insert(lounges).values({
+      name: 'Draft Only', country: 'Turkey', city: 'Istanbul',
+      airport: 'Istanbul Airport', iataCode: 'IST',
+    }).returning()
+    await db.insert(submissions).values({ loungeId: lounge!.id, status: 'draft' })
+
+    const rows = await listRegistry(db, {}, 'latestApproved')
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.submissionId).toBeNull()
+    expect(rows[0]?.submissionStatus).toBeNull()
+  })
+
+  it('фильтр по статусу анкеты отсекает лаунжи без принятой анкеты', async () => {
+    const db = await createTestDb()
+    await seedReopened(db)
+    await db.insert(lounges).values({
+      name: 'Never Filled', country: 'Turkey', city: 'Istanbul',
+      airport: 'Istanbul Airport', iataCode: 'IST',
+    })
+
+    const rows = await listRegistry(db, { submissionStatus: ['approved'] }, 'latestApproved')
+
+    expect(rows.map((r) => r.name)).toEqual(['Reopened'])
+  })
+})
+
+/**
  * Значения для выпадающих списков фильтров. В плане эта функция была в образце
  * кода, но ни в одном тесте — а её ответ прямо определяет, что проверяющий
  * вообще может выбрать на экране реестра.
