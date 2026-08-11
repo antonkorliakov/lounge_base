@@ -38,6 +38,19 @@ export type OutgoingMail = { to: string; subject: string; text: string }
  * notifications section. `loginMail`, below, is English too, but for a
  * related-yet-distinct reason specific to its own recipients: see its own
  * comment.
+ *
+ * WHEN THIS MAIL MAY BE SENT AT ALL — separate from the language question,
+ * and the reason `fillLinkMail` exists below. Every sentence here is a claim
+ * about the review, and all of them hold in exactly one state: the
+ * questionnaire is `changes_requested` AND at least one flag is still open.
+ * That is also exactly the state in which the link it carries opens the fixes
+ * screen (`FillForm`'s `status === 'changes_requested' && flags.length > 0`
+ * branch, which renders `FixesOnly`). Sent from anywhere else it lies twice
+ * over — about a return that did not happen, and about what the link opens.
+ * `fillLinkMail` is the builder for every other state; `sendFillLink`
+ * (`src/app/admin/s/[submissionId]/actions.ts`) is the one place that chooses
+ * between them — both the return-for-fixes decision and the resend button go
+ * through it — and says there why it chooses that way.
  */
 export function changesRequestedMail(input: {
   to: string
@@ -54,6 +67,52 @@ export function changesRequestedMail(input: {
       '',
       'Everything else is accepted — you only need to fix what is flagged:',
       input.fillUrl,
+    ].join('\n'),
+  }
+}
+
+/**
+ * A fresh fill link and nothing else — the mail for handing an operator back
+ * access to a form that is still theirs to fill in: a draft whose link expired
+ * or was lost, or a returned questionnaire whose flags have all been answered
+ * but not yet resubmitted. In both, the link opens the ordinary form, so this
+ * says only that, and makes no claim about a review having happened.
+ *
+ * It exists because the alternative was `changesRequestedMail` with a
+ * `flagCount` of zero, which produced "0 answer(s) need a correction" under a
+ * subject line announcing changes nobody requested. A count-shaped sentence
+ * cannot be made honest for a state where there is nothing to count, so this
+ * is a separate builder rather than a conditional inside that one.
+ *
+ * What it deliberately does NOT say:
+ *  - Nothing about earlier links being replaced or revoked. `issueFillToken`
+ *    only inserts a row; every earlier token stays valid until it expires on
+ *    its own (only the SHA-256 hash is stored, so a specific one can never be
+ *    identified again to revoke it — see `src/access/tokens.ts`). "This
+ *    replaces your old link" would be a plain falsehood.
+ *  - Nothing about how long it lasts. The TTL is the caller's argument
+ *    (`ttlDays`), not this module's knowledge; a stated window would be one
+ *    more sentence that can silently drift out of true — the failure this
+ *    whole builder exists to avoid. `loginMail` may state its window only
+ *    because `LOGIN_TTL_MINUTES` is a real exported constant and a test pins
+ *    the mail against it (see `__tests__/messages.test.ts`).
+ *
+ * English, same recorded decision as the mails above.
+ */
+export function fillLinkMail(input: {
+  to: string
+  loungeName: string
+  fillUrl: string
+}): OutgoingMail {
+  return {
+    to: input.to,
+    subject: `${input.loungeName} — onboarding form link`,
+    text: [
+      `Here is a link to the onboarding form for ${input.loungeName}:`,
+      '',
+      input.fillUrl,
+      '',
+      'If an earlier link no longer works, use this one instead.',
     ].join('\n'),
   }
 }

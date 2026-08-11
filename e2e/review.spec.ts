@@ -220,19 +220,40 @@ test('замечание, возврат на правку, исправлени
   // Блок с открытым замечанием подтвердить нельзя — кнопка выключена.
   await expect(page.getByRole('button', { name: CONFIRM_BLOCK })).toBeDisabled()
 
-  // ── «Переслать ссылку» показывает подтверждение с адресом оператора ───────
+  // ── «Переслать ссылку» на анкете, которая ещё на проверке, — недоступно ───
+  // Анкета в `submitted` закрыта заполняющему (`EDITABLE_STATUSES`), поэтому
+  // пересылать нечего: ссылка открыла бы экран «форма закрыта», а письмо о
+  // возврате на правку объявило бы возврат, которого не было. Проверяющий
+  // узнаёт это ДО нажатия — кнопка выключена и несёт причину, — а не после.
+  //
+  // Проверяется здесь только эта, клиентская половина гейта: что серверное
+  // действие отказывает само (и при отказе не шлёт письма и не выписывает
+  // токен), проверяет
+  // `src/app/admin/s/[submissionId]/__tests__/resend-fill-link.test.ts` — из
+  // браузера письмо не видно вовсе (консольный почтальон не печатает тело, а
+  // stdout сервера тесту недоступен, см. сценарий входа ниже).
+  const resend = page.getByRole('button', { name: 'Resend link' })
+  await expect(resend).toBeDisabled()
+  await expect(resend).toHaveAttribute('title', /under review/)
+
+  // ── Вернуть на правку ─────────────────────────────────────────────────────
+  await clickAndAwaitAction(page, page.getByRole('button', { name: /Request changes/ }))
+
+  // ── А теперь «Переслать ссылку» показывает подтверждение с адресом ────────
+  // Кнопка включается без перезагрузки: `requestChangesAction` вызывает
+  // `revalidatePath` на этот же адрес, так что ответ действия несёт заново
+  // отрисованную страницу — вместе с новым `resend` из `resendGateFor`.
+  await expect(resend).toBeEnabled()
   // Единственное свидетельство успеха у этого действия: нового замечания не
   // появляется, цвет блока не меняется, и до появления `notice` «письмо ушло»
   // и «ничего не произошло» выглядели для проверяющего одинаково. Адрес —
   // тот, что лежит в анкете (`II.1.3`, его читает `contactEmail`), а не
   // придуманный тестом.
-  await page.getByRole('button', { name: 'Resend link' }).click()
+  await resend.click()
   await expect(page.locator('.review-notice')).toHaveText(
     `Link sent to ${seedEmailFor('II.1.3')}.`,
   )
-
-  // ── Вернуть на правку ─────────────────────────────────────────────────────
-  await clickAndAwaitAction(page, page.getByRole('button', { name: /Request changes/ }))
+  await expect(page.locator('.review-error')).toHaveCount(0)
 
   // ── Заполняющий видит только отмеченное ──────────────────────────────────
   const filler = await context.newPage()

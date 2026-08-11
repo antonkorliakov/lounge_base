@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { changesRequestedMail, approvedMail, loginMail } from '../messages'
+import { changesRequestedMail, fillLinkMail, approvedMail, loginMail } from '../messages'
 import { LOGIN_TTL_MINUTES } from '@/access/team'
 
 describe('письма', () => {
@@ -38,10 +38,50 @@ describe('письма', () => {
   it('тема письма не пустая ни в одном случае', () => {
     const mails = [
       changesRequestedMail({ to: 'a@b.c', loungeName: 'L', fillUrl: 'u', flagCount: 1 }),
+      fillLinkMail({ to: 'a@b.c', loungeName: 'L', fillUrl: 'u' }),
       approvedMail({ to: 'a@b.c', loungeName: 'L' }),
       loginMail({ to: 'a@b.c', loginUrl: 'u' }),
     ]
     for (const mail of mails) expect(mail.subject.trim()).not.toBe('')
+  })
+
+  /**
+   * Ровно тот дефект, ради которого `fillLinkMail` и появился: пересылка
+   * ссылки уходила через `changesRequestedMail`, то есть письмом «changes
+   * requested» с телом «N answer(s) need a correction» — на анкете, где
+   * возврата на правку не было (а при нуле открытых замечаний ещё и с «0
+   * answer(s)»). Проверяется ОТСУТСТВИЕ утверждений, а не только наличие
+   * ссылки: письмо с верной ссылкой и придуманным поводом — это ровно то, что
+   * было, и «ссылка на месте» такое письмо считает исправным.
+   */
+  it('пересылка ссылки: ссылка на месте, а утверждений про проверку нет', () => {
+    const fillUrl = 'https://app.test/f/abc'
+    const mail = fillLinkMail({
+      to: 'operator@lounge.test',
+      loungeName: 'Primeclass Lounge',
+      fillUrl,
+    })
+
+    expect(mail.to).toBe('operator@lounge.test')
+    expect(mail.subject).toContain('Primeclass Lounge')
+    expect(mail.subject).not.toMatch(/changes requested/i)
+    expect(mail.text).toContain(fillUrl)
+    expect(mail.text).not.toMatch(/correction|flagged|accepted|changes requested|approved/i)
+
+    // Ничего не пересчитывает: у этого состояния нечего считать, так что
+    // цифры в тексте не место — кроме самой ссылки, где они принадлежат
+    // токену, а не утверждению письма.
+    const withoutLink = mail.text
+      .split('\n')
+      .filter((line) => !line.includes(fillUrl))
+      .join('\n')
+    expect(withoutLink).not.toMatch(/\d/)
+
+    // Два обещания, которые это письмо намеренно НЕ даёт, потому что не может
+    // их сдержать: старые ссылки не отзываются (`issueFillToken` только
+    // добавляет строку), а срок жизни — аргумент вызывающего, не знание этого
+    // модуля. См. его собственный комментарий.
+    expect(mail.text).not.toMatch(/replaces|revok|no longer valid|expires in|valid for/i)
   })
 
   // Pins two claims the login mail makes about the link it carries: that

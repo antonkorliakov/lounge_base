@@ -10,6 +10,7 @@ import { submissions } from '@/db/schema'
 import { LocaleProvider } from '@/i18n/context'
 import { ReviewScreen } from '@/web/ReviewScreen'
 import { renderValues } from '@/web/renderValues'
+import { resendGateFor } from './resend-gate'
 
 export default async function ReviewPage(props: {
   params: Promise<{ submissionId: string }>
@@ -24,12 +25,20 @@ export default async function ReviewPage(props: {
   // отрисовала бы экран проверки с 27 пустыми блоками, а не понятным 404 —
   // ревьюер увидел бы анкету, которая выглядит пустой, а не анкету,
   // которой не существует.
+  //
+  // Заодно читается статус — тем же самым запросом, без второго обращения:
+  // от него зависит, можно ли пересылать оператору ссылку заполнения (см.
+  // `./resend-gate.ts`). Экран проверки сам по себе от статуса не зависит:
+  // отмечать и подтверждать блоки имеет смысл на любой анкете, до которой
+  // проверяющий дошёл, а `confirmBlock`/`requestChanges`/`approveSubmission`
+  // проверяют свои условия сами, внутри транзакции.
   const found = await db()
-    .select({ id: submissions.id })
+    .select({ id: submissions.id, status: submissions.status })
     .from(submissions)
     .where(eq(submissions.id, submissionId))
     .limit(1)
-  if (found.length === 0) notFound()
+  const row = found[0]
+  if (!row) notFound()
 
   const values = await loadSubmissionValues(db(), submissionId)
   const photoRows = await listPhotos(db(), submissionId)
@@ -54,6 +63,7 @@ export default async function ReviewPage(props: {
         flags={await openFlags(db(), submissionId)}
         rendered={rendered}
         photos={photos}
+        resend={resendGateFor(row.status)}
       />
     </LocaleProvider>
   )

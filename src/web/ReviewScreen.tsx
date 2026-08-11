@@ -14,6 +14,10 @@ import {
   requestChangesAction, approveAction, resendFillLinkAction,
   type ActionResult,
 } from '@/app/admin/s/[submissionId]/actions'
+// `import type` — стирается при компиляции, так что серверный модуль (а с ним
+// `@/submissions/editable` и `drizzle-orm`) в браузерный бандл не попадает; то
+// же соглашение, что у `SubmissionStatus` в `FillForm.tsx`.
+import type { ResendGate } from '@/app/admin/s/[submissionId]/resend-gate'
 
 /**
  * Обязательность слота — из схемы (`PHOTO_SLOTS`), тем же источником, каким
@@ -39,6 +43,22 @@ export function ReviewScreen(props: {
    * как и раньше.
    */
   photos: Record<string, string[]>
+  /**
+   * Готовый ответ на «можно ли переслать оператору ссылку», посчитанный на
+   * сервере (`resendGateFor` в `@/app/admin/s/[submissionId]/resend-gate`) —
+   * не статус анкеты и не правило. Компонент получает решение, а не данные для
+   * его принятия: тот же приём, что и `photos.required` выше, и по той же
+   * причине здесь особенно — правило живёт в `EDITABLE_STATUSES`
+   * (`src/submissions/editable.ts`), а его импорт затащил бы `drizzle-orm` в
+   * браузерный бандл.
+   *
+   * Кнопка выключается, а не исчезает: пропавшая кнопка не объясняет ничего, а
+   * выключенная несёт в `title` ту же причину, которую вернуло бы серверное
+   * действие. Это подсказка, НЕ защита — гейт стоит в самом
+   * `resendFillLinkAction`, потому что серверное действие вызывается по сети и
+   * клиентский компонент ему не преграда.
+   */
+  resend: ResendGate
 }): React.JSX.Element {
   const { locale, pick } = useLocale()
   const [current, setCurrent] = useState(BLOCKS[0]!.key)
@@ -122,6 +142,8 @@ export function ReviewScreen(props: {
           </button>
           <button
             type="button"
+            disabled={!props.resend.allowed}
+            title={props.resend.allowed ? undefined : pick(props.resend.reason)}
             onClick={() => void run(() => resendFillLinkAction(props.submissionId))}
           >
             {locale === 'ru' ? 'Переслать ссылку' : 'Resend link'}
