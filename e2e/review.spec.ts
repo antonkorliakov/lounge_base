@@ -137,6 +137,14 @@ async function openSeededSubmission(
   // Экран проверки всегда открывается на первом блоке.
   await expect(page.getByRole('heading', { name: BLOCKS[0]!.label.en })).toBeVisible()
 
+  // Экран называет анкету — тем же именем, по которому в него только что
+  // перешли из списка. Раньше не называл ничем: по закладке или из второй
+  // вкладки нельзя было понять, чью анкету открыли, а название лаунжа — один
+  // из 129 проверяемых ответов, который сам может быть спорным.
+  await expect(page.getByRole('heading', { name: lounge, level: 1 })).toBeVisible()
+  // И называет состояние. Анкета только что засеяна в `submitted`.
+  await expect(page.locator('.review-state b')).toHaveText('Under review')
+
   return page.url()
 }
 
@@ -202,6 +210,17 @@ async function clickAndAwaitAction(page: Page, button: Locator): Promise<void> {
 
 const APPROVE = 'Approve'
 const CONFIRM_BLOCK = 'Confirm block'
+/**
+ * Кнопка обратного хода. Стоит НА МЕСТЕ «Confirm block» на подтверждённом
+ * блоке — одна кнопка на два направления, — поэтому по этому имени искать
+ * можно, а по `CONFIRM_BLOCK` на подтверждённом блоке нельзя: там её нет.
+ *
+ * Подпись не «Unconfirm block» именно из-за этого теста: `name` в `getByRole`
+ * сопоставляется по подстроке и без учёта регистра, так что «Unconfirm block»
+ * находился бы и по запросу `CONFIRM_BLOCK` — тот же капкан, что у
+ * `flag`/`Flag` (см. `flag()` выше).
+ */
+const RETRACT = 'Retract confirmation'
 
 test('замечание, возврат на правку, исправление и повторная отправка — полный круг', async ({
   page,
@@ -238,6 +257,23 @@ test('замечание, возврат на правку, исправлени
 
   // ── Вернуть на правку ─────────────────────────────────────────────────────
   await clickAndAwaitAction(page, page.getByRole('button', { name: /Request changes/ }))
+
+  // ── Экран сразу говорит, что анкеты на проверке больше нет ────────────────
+  // До этого `revalidatePath` перерисовывал экран, который выглядел ТОЧНО так
+  // же: те же четыре решения, ни слова о смене состояния, — и следующее
+  // нажатие «Подтвердить блок» отказывало «анкета сейчас не на проверке», что
+  // читается как поломка в конце уже сделанной работы. Проверяется без
+  // перезагрузки: состояние приходит тем же ответом действия.
+  await expect(page.locator('.review-state b')).toHaveText('Returned to the operator')
+  await expect(page.locator('.review-state')).toContainText('The operator is correcting it')
+  for (const name of [CONFIRM_BLOCK, APPROVE, 'Request changes']) {
+    const button = page.getByRole('button', { name })
+    await expect(button, name).toBeDisabled()
+    await expect(button, name).toHaveAttribute('title', /operator is correcting it/)
+  }
+  // А отмечать ответы по-прежнему можно: замечание, поставленное сейчас,
+  // появится у оператора на экране правок (см. `flagging` в `gates.ts`).
+  await expect(page.locator('.frow-act').first()).toBeAttached()
 
   // ── А теперь «Переслать ссылку» показывает подтверждение с адресом ────────
   // Кнопка включается без перезагрузки: `requestChangesAction` вызывает
@@ -299,8 +335,11 @@ test('принять анкету можно только когда снято 
   const navItems = page.locator('.nav-item')
 
   // Условия перепроверяются в момент решения, поэтому проверяем их через
-  // настоящий отказ действия, а не через выключенную кнопку: «Принять» не
-  // выключается никогда.
+  // настоящий отказ действия, а не через выключенную кнопку: по НИМ «Принять»
+  // не выключается — отказ называет, сколько блоков осталось и сколько
+  // замечаний открыто, чего выключенная кнопка сказать не может. Выключается
+  // она только по статусу анкеты, где шага не бывает вовсе (проверяется ниже,
+  // на принятой анкете).
   await expect(navItems).toHaveCount(BLOCKS.length)
 
   await approve.click()
@@ -314,6 +353,31 @@ test('принять анкету можно только когда снято 
   await expect(page.locator('.review-error')).toHaveText(
     `${BLOCKS.length - 1} block(s) not confirmed`,
   )
+
+  // ── Подтверждение можно отозвать ──────────────────────────────────────────
+  // Обратного хода не было НИГДЕ в продукте: `unconfirmBlock` существовал без
+  // единого вызывающего, а «Подтвердить блок» не выключалась и после нажатия —
+  // один промах мыши шёл в счёт 27/27 навсегда, и обойти это можно было только
+  // отметив в блоке любое поле, чтобы принятие отказало по замечаниям.
+  //
+  // На подтверждённом блоке «Confirm block» не просто выключена — её нет:
+  // кнопка одна и отражает состояние блока. Поэтому сначала проверяется
+  // именно это, иначе тест не отличил бы «есть обратный ход» от «появилась
+  // вторая кнопка рядом».
+  const retract = page.getByRole('button', { name: RETRACT })
+  await expect(confirm).toHaveCount(0)
+  await expect(retract).toBeEnabled()
+
+  await retract.click()
+  await expect(navItems.first()).not.toHaveClass(/nav-confirmed/)
+  await expect(retract).toHaveCount(0)
+  // И это не косметика: принятие снова считает блок неподтверждённым.
+  await approve.click()
+  await expect(page.locator('.review-error')).toHaveText(
+    `${BLOCKS.length} block(s) not confirmed`,
+  )
+  await confirm.click()
+  await expect(navItems.first()).toHaveClass(/nav-confirmed/)
 
   // Замечание в уже подтверждённом блоке: подтверждение не отзывается (это
   // осознанно, см. `blockProgress`), но принять анкету нельзя — открытые
@@ -337,12 +401,41 @@ test('принять анкету можно только когда снято 
   for (let index = 0; index < BLOCKS.length; index += 1) {
     const item = navItems.nth(index)
     await item.click()
-    await confirm.click()
+    // Первый блок к этому моменту уже подтверждён, и на подтверждённом блоке
+    // кнопки «Confirm block» нет — на её месте «Retract confirmation». Ждём,
+    // пока подвал покажет одну из двух (клик по блоку меняет состояние
+    // клиента, а не грузит страницу, но ждать всё равно нужно чего-то
+    // определённого, а не «успело перерисоваться»), и подтверждаем только то,
+    // что не подтверждено.
+    await expect(confirm.or(retract)).toBeVisible()
+    if (await confirm.isVisible()) await confirm.click()
     await expect(item).toHaveClass(/nav-confirmed/)
   }
 
   await clickAndAwaitAction(page, approve)
   await expect(page.locator('.review-error')).toHaveCount(0)
+
+  // ── Принятая анкета говорит об этом сама ──────────────────────────────────
+  // Ровно то состояние, в котором экран был опаснее всего: он выглядел так же,
+  // как открытый на проверку, и предлагал все решения. Проверяющий B принимал
+  // анкету, пока у A открыта вкладка (или A приходил по закладке), A отмечал
+  // ответы — каждый вызов отвечал `{ok: true}`, потому что `raiseFlag` слеп к
+  // статусу, — замечания ложились на решённую анкету, отправить их было уже
+  // нечем, и только потом «Подтвердить»/«Принять» отказывали.
+  await expect(page.locator('.review-state b')).toHaveText('Approved')
+  await expect(page.locator('.review-state')).toContainText('The decision is final')
+  for (const name of [APPROVE, RETRACT, 'Request changes', 'Resend link']) {
+    const button = page.getByRole('button', { name })
+    await expect(button, name).toBeDisabled()
+  }
+  await expect(page.getByRole('button', { name: APPROVE })).toHaveAttribute(
+    'title',
+    /decision is final/,
+  )
+  // И отмечать больше нечего: на принятой анкете замечание сохранилось бы
+  // (`raiseFlag` статус не проверяет — осознанно), но передать его оператору
+  // нечем, поэтому кнопки «отметить» нет ни на одной строке блока.
+  await expect(page.locator('.frow-act')).toHaveCount(0)
 
   // Принятая анкета уходит из списка «Awaiting review» — единственный видимый
   // след успеха: `approveAction` при удачном письме не возвращает уведомления.
