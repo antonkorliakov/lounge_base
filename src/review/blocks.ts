@@ -1,7 +1,10 @@
 import { and, eq, sql } from 'drizzle-orm'
+import { unionAll } from 'drizzle-orm/pg-core'
 import { BLOCKS, keysOfBlock } from '@/form-schema'
 import type { Db, Tx } from '@/db/types'
-import { blockReviews, fieldFlags, submissions } from '@/db/schema'
+import {
+  blockReviews, fieldFlags, fieldValues, photos, serviceValues, submissions,
+} from '@/db/schema'
 import type { SubmissionStatus } from '@/db/schema'
 import { fail, type SaveResult } from '@/submissions/editable'
 import { openFlags } from './flags'
@@ -124,6 +127,28 @@ export const REVIEW_STATUSES: ReadonlySet<SubmissionStatus> = new Set(['submitte
  * after it has committed — never straddling it. There is no longer a window,
  * of any width, in which a block can end up confirmed while carrying a flag
  * that was ever actually committed to `field_flags`.
+ *
+ * **`confirmedAt` is written by the DATABASE's clock, and by
+ * `clock_timestamp()` specifically — both halves matter**, because
+ * `blockProgress` below compares this value with `field_values.updatedAt` /
+ * `service_values.updatedAt` / `photos.uploadedAt` to decide whether a
+ * confirmation still covers the data it was given for. Two timestamps only
+ * order correctly under `<` if they come from one clock, and this row used to
+ * be written by two different ones: `now()` on the insert path (Postgres) and
+ * `new Date()` on the conflict path (the Node process, a different host in
+ * production). Both are now `clock_timestamp()`, and `submissions/values.ts`
+ * writes its `updatedAt` the same way, so every timestamp in the comparison
+ * comes from the Postgres server — app/DB clock skew cannot invert it.
+ *
+ * `clock_timestamp()` rather than `now()` because `now()` is TRANSACTION START
+ * time, which is taken *before* this function's `FOR UPDATE` acquires the
+ * lock. A `saveFieldValue` transaction can therefore begin, block on the lock
+ * this function holds, and then write an `updatedAt` stamped earlier than the
+ * `confirmedAt` of the confirmation it is invalidating — the whole lock wait
+ * is that window's width. `clock_timestamp()` is read when the statement
+ * actually runs, so the two writes are stamped in the order the lock forces
+ * them into: whichever transaction holds the lock stamps and commits before
+ * the other's stamp is taken at all.
  */
 export async function confirmBlock(
   db: Db,
@@ -152,7 +177,7 @@ export async function confirmBlock(
     const inserted = await tx
       .insert(blockReviews)
       .select(
-        sql`select ${input.submissionId}::uuid, ${input.blockKey}::text, ${input.reviewer}::text, now()
+        sql`select ${input.submissionId}::uuid, ${input.blockKey}::text, ${input.reviewer}::text, clock_timestamp()
             where not exists (
               select 1 from ${fieldFlags}
               where ${fieldFlags.submissionId} = ${input.submissionId}
@@ -162,7 +187,7 @@ export async function confirmBlock(
       )
       .onConflictDoUpdate({
         target: [blockReviews.submissionId, blockReviews.blockKey],
-        set: { confirmedBy: input.reviewer, confirmedAt: new Date() },
+        set: { confirmedBy: input.reviewer, confirmedAt: sql`clock_timestamp()` },
       })
       .returning({ blockKey: blockReviews.blockKey })
 
@@ -223,8 +248,107 @@ export async function unconfirmBlock(
 }
 
 /**
+ * When each answer in a submission was last WRITTEN, keyed the same way flags
+ * are: `field_values.fieldKey`, `service_values.itemKey`, `photos.slot`. Epoch
+ * milliseconds rather than `Date` because the only thing done with these is a
+ * comparison, and `Date` comparison in JS needs `.getTime()` anyway.
+ *
+ * ONE query for the whole submission (`UNION ALL` of three trivial
+ * `WHERE submission_id = $1` scans), not one per block and not one per table.
+ * `blockProgress` runs on every review-screen render and inside every
+ * `approveSubmission`, so the cost that matters is round trips, and the naive
+ * shape here — join the timestamps per block, 27 times — would have been 27
+ * round trips against a table it has already fully read. The per-block
+ * partition is done in memory afterwards, exactly as `blockProgress` already
+ * does for `openFlags`: one read, one in-memory fold. Row count is bounded by
+ * the questionnaire (≈150 field/service keys plus however many photos exist),
+ * not by anything user-controlled.
+ *
+ * A photo slot legitimately has several rows; the fold keeps the maximum, so
+ * "when was this slot last written" means "when did its newest photo arrive".
+ * A key that no longer belongs to any block (a removed question whose rows
+ * outlive it) simply appears in no block's fold — the same behaviour, and the
+ * same limitation, the flag partition already has.
+ */
+async function lastWrittenAtByKey(
+  db: Db | Tx,
+  submissionId: string,
+): Promise<Map<string, number>> {
+  const rows = await unionAll(
+    db
+      .select({ key: fieldValues.fieldKey, at: fieldValues.updatedAt })
+      .from(fieldValues)
+      .where(eq(fieldValues.submissionId, submissionId)),
+    db
+      .select({ key: serviceValues.itemKey, at: serviceValues.updatedAt })
+      .from(serviceValues)
+      .where(eq(serviceValues.submissionId, submissionId)),
+    db
+      .select({ key: photos.slot, at: photos.uploadedAt })
+      .from(photos)
+      .where(eq(photos.submissionId, submissionId)),
+  )
+
+  const latest = new Map<string, number>()
+  for (const row of rows) {
+    const at = row.at.getTime()
+    const seen = latest.get(row.key)
+    if (seen === undefined || at > seen) latest.set(row.key, at)
+  }
+  return latest
+}
+
+/**
  * All 27 blocks with their confirmed state and open-flag count — what the
  * reviewer's navigation renders.
+ *
+ * **`confirmed` is DERIVED, not just read.** A `block_reviews` row says "a
+ * human looked at these answers and vouched for them"; it keeps saying that
+ * about answers that changed afterwards, so a row alone is not enough. A block
+ * counts as confirmed here only while its confirmation is at least as new as
+ * every answer in it (`confirmedAt >= max(updatedAt/uploadedAt of its keys)`).
+ *
+ * This closes a path that made approval vouch for data no human ever saw
+ * (whole-branch review of plan 2, I1): a submission in `changes_requested`
+ * whose last open flag has already been cleared falls through both of
+ * `FillForm`'s gates and shows the filler the whole 19-step form. Editing any
+ * UNFLAGGED answer there was accepted by `assertEditable`, found no flag for
+ * `clearFlagsFor` to clear, and left that answer's block confirmed — after
+ * which `approveSubmission` saw 27/27 confirmed with zero flags and copied the
+ * classifying fields into `lounges`.
+ *
+ * Derived rather than maintained (i.e. rather than only having every writer
+ * call something that unconfirms the block) because the maintained version has
+ * to be REMEMBERED at each call site, and this branch's ledger is mostly
+ * defects of exactly that shape. A new writer of `field_values`,
+ * `service_values` or `photos` is covered here by existing in the union above;
+ * there is nothing for it to forget. `clearFlagsFor` (`flags.ts`) also
+ * unconfirms the block on every accepted save now — that is not a second copy
+ * of this rule but the complement to it, covering the one thing a timestamp
+ * cannot see: a DELETE leaves no row and no timestamp, so REMOVING a photo
+ * makes a block's newest timestamp go *backwards* and is invisible here.
+ *
+ * `>=` (equal counts as still confirmed), not `>`: Postgres stamps
+ * microseconds but a JS `Date` truncates to milliseconds, so two writes inside
+ * the same millisecond arrive here indistinguishable, and any comparison has
+ * to define that case. It is defined the safe way round by construction rather
+ * than by preference — every writer of these timestamps takes the same
+ * `submissions` `FOR UPDATE` lock this module's `confirmBlock` takes, so an
+ * edit that lands AFTER a confirmation cannot be stamped in the same
+ * millisecond as it: it has to wait for the confirming transaction to commit
+ * and release the lock first. Equal timestamps therefore never mean "edited
+ * after confirming"; they only happen when the edit came first, which is the
+ * confirmation doing its job. The other choice (`>`, equal counts as edited)
+ * would report a block as unconfirmed the instant it was legitimately
+ * confirmed whenever the two happened to share a millisecond — which is
+ * routine in tests and would make the confirmation look like it did not stick.
+ *
+ * Both this and `approveSubmission` (`decide.ts`) read the rule from HERE —
+ * `approveSubmission` calls this function from inside its own locked
+ * transaction rather than doing its own `block_reviews` count, so "confirmed"
+ * cannot come to mean one thing on the screen and another at the moment of
+ * approval. That is why this takes `Db | Tx` (see below) and why the
+ * comparison lives in this function rather than in its caller.
  *
  * `Db | Tx`, same reason `openFlags` (`flags.ts`) already takes `Db | Tx`:
  * Task 4's decision functions read block state from inside their own
@@ -252,25 +376,42 @@ export async function unconfirmBlock(
  * reviewer's UI sees the flag right next to the confirmation, and Task 4's
  * approval gate checks open flags globally regardless of any block's
  * confirmed state.
+ *
+ * What the derivation deliberately does NOT distinguish: a save that did not
+ * change anything still moves `updatedAt`, because the autosave writes on every
+ * debounce and `saveFieldValue` has no before/after comparison. So a filler who
+ * opens the form and touches an already-correct answer un-confirms its block
+ * and the reviewer looks again for nothing. That is the conservative direction
+ * (extra re-confirmation, never a confirmation that outlived its data) and it
+ * is where the cost of this fix actually lands.
  */
 export async function blockProgress(
   db: Db | Tx,
   submissionId: string,
 ): Promise<BlockState[]> {
   const confirmed = await db
-    .select({ blockKey: blockReviews.blockKey })
+    .select({ blockKey: blockReviews.blockKey, confirmedAt: blockReviews.confirmedAt })
     .from(blockReviews)
     .where(eq(blockReviews.submissionId, submissionId))
-  const confirmedKeys = new Set(confirmed.map((row) => row.blockKey))
+  const confirmedAt = new Map(
+    confirmed.map((row) => [row.blockKey, row.confirmedAt.getTime()] as const),
+  )
 
   const flags = await openFlags(db, submissionId)
+  const writtenAt = await lastWrittenAtByKey(db, submissionId)
 
   return BLOCKS.map((block) => {
-    const keys = new Set(keysOfBlock(block.key))
+    const keys = keysOfBlock(block.key)
+    const keySet = new Set(keys)
+    const vouchedAt = confirmedAt.get(block.key)
+    const lastWrite = keys.reduce(
+      (newest, key) => Math.max(newest, writtenAt.get(key) ?? -Infinity),
+      -Infinity,
+    )
     return {
       blockKey: block.key,
-      confirmed: confirmedKeys.has(block.key),
-      openFlagCount: flags.filter((f) => keys.has(f.fieldKey)).length,
+      confirmed: vouchedAt !== undefined && lastWrite <= vouchedAt,
+      openFlagCount: flags.filter((f) => keySet.has(f.fieldKey)).length,
     }
   })
 }

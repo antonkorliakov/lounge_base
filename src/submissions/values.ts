@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import type { ServiceValueInput } from '@/form-schema'
 import {
   fieldByKey,
@@ -12,6 +12,33 @@ import type { Db, Tx } from '@/db/types'
 import { assertEditable, fail, type SaveResult } from './editable'
 
 export type { SaveResult }
+
+/**
+ * Когда ответ был записан — по часам БАЗЫ, и именно `clock_timestamp()`.
+ * Оба уточнения обязательны, потому что этот столбец больше не просто
+ * бухгалтерия: `blockProgress` (`src/review/blocks.ts`) сравнивает его с
+ * `block_reviews.confirmedAt`, чтобы решить, покрывает ли подтверждение
+ * ревьюера те данные, за которые его давали. Сравнение `<` осмысленно только
+ * между показаниями ОДНИХ часов, а здесь раньше стояло `new Date()` — часы
+ * node-процесса, в проде это другая машина, чем postgres, и расхождение часов
+ * могло перевернуть порядок в опасную сторону («правка старше подтверждения»,
+ * то есть блок остаётся подтверждённым).
+ *
+ * `clock_timestamp()`, а не `now()` (и не значение по умолчанию у столбца,
+ * которое как раз `now()`): `now()` — время НАЧАЛА транзакции, взятое до того,
+ * как `assertEditable` получит блокировку `submissions`. Транзакция записи
+ * может начаться, застрять на блокировке, которую держит `confirmBlock`, и
+ * записать `updatedAt` со штампом раньше `confirmedAt` того подтверждения,
+ * которое она обесценивает; ширина этого окна — всё время ожидания
+ * блокировки. `clock_timestamp()` читается в момент выполнения оператора,
+ * поэтому два писателя штампуются в том порядке, в который их выстроила
+ * блокировка.
+ *
+ * Ставится и на INSERT, и на UPDATE, а не только на UPDATE: у первого
+ * значения ключа `updatedAt` иначе взялся бы из `defaultNow()`, то есть из
+ * `now()`, — то же окно, только для впервые появившегося ответа.
+ */
+const WRITTEN_AT = sql`clock_timestamp()`
 
 export async function saveFieldValue(
   db: Db,
@@ -31,10 +58,15 @@ export async function saveFieldValue(
 
     await tx
       .insert(fieldValues)
-      .values({ submissionId: input.submissionId, fieldKey: input.fieldKey, value: input.value })
+      .values({
+        submissionId: input.submissionId,
+        fieldKey: input.fieldKey,
+        value: input.value,
+        updatedAt: WRITTEN_AT,
+      })
       .onConflictDoUpdate({
         target: [fieldValues.submissionId, fieldValues.fieldKey],
-        set: { value: input.value, updatedAt: new Date() },
+        set: { value: input.value, updatedAt: WRITTEN_AT },
       })
 
     return { ok: true }
@@ -101,10 +133,10 @@ export async function saveServiceValue(
 
     await tx
       .insert(serviceValues)
-      .values(row)
+      .values({ ...row, updatedAt: WRITTEN_AT })
       .onConflictDoUpdate({
         target: [serviceValues.submissionId, serviceValues.itemKey],
-        set: { ...row, updatedAt: new Date() },
+        set: { ...row, updatedAt: WRITTEN_AT },
       })
 
     return { ok: true }
