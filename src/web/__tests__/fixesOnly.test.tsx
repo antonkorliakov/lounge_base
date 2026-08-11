@@ -76,6 +76,7 @@ function renderFixes(
         token="test-token"
         photos={options.photos ?? {}}
         onPhotoUploaded={() => {}}
+        onPhotoRemoved={() => {}}
         touched={options.touched ?? new Set()}
       />
     </LocaleProvider>,
@@ -305,6 +306,60 @@ describe('контрол отмеченного слота фото', () => {
     // `attachPhoto` действительно заменяет его на сервере.
     expect(html).toContain(UI['photos.replace'].en)
     expect(html).not.toContain(UI['photos.upload'].en)
+    // И убрать снимок у именованного слота нельзя: замена и есть ответ на
+    // замечание, а удаление обязательного снимка только сделало бы анкету
+    // неполной.
+    expect(html).not.toContain(UI['photos.remove'].en)
+  })
+
+  /**
+   * Накопительный слот. Подпись выбиралась по «есть ли уже снимки», так что
+   * непустой `additional` читался как «Заменить» — но `attachPhoto` пропускает
+   * DELETE для `slot.extra`, а `FillForm.photoUploaded` дописывает в конец, то
+   * есть нажатие ДОБАВЛЯЛО четвёртый снимок и оставляло тот, который ревьюер
+   * назвал непригодным. Слот достижим: `keysOfBlock('photos')` включает
+   * `additional`, и замечание по нему поставить можно.
+   *
+   * Проверяется на слоте, взятом из схемы по `extra`, а не по имени
+   * `'additional'`: правило — «накопительный слот», а не «слот с таким
+   * ключом».
+   */
+  describe('накопительный слот', () => {
+    const extra = PHOTO_SLOTS.find((slot) => slot.extra)!
+    const named = PHOTO_SLOTS.find((slot) => !slot.extra)!
+
+    it('в схеме есть и накопительный слот, и именованный', () => {
+      expect(extra, 'нет ни одного extra-слота — проверки ниже пусты').toBeDefined()
+      expect(named, 'нет ни одного именованного слота').toBeDefined()
+    })
+
+    it('подпись говорит «добавить», а не «заменить» — потому что добавляет', () => {
+      const html = renderFixes([flagFor(extra.key)], {
+        photos: { [extra.key]: ['https://example.test/a1.jpg'] },
+      })
+      expect(html).toContain(UI['photos.add'].en)
+      expect(html).not.toContain(UI['photos.replace'].en)
+    })
+
+    it('и с пустым слотом подпись та же: пустота ничего не меняет в поведении', () => {
+      const html = renderFixes([flagFor(extra.key)], { photos: {} })
+      expect(html).toContain(UI['photos.add'].en)
+      expect(html).not.toContain(UI['photos.replace'].en)
+    })
+
+    // Без этой кнопки у замечания по накопительному слоту не было ПРАВДИВОГО
+    // ответа: четвёртый снимок не убирает непригодный третий.
+    it('каждый снимок можно убрать — по кнопке на снимок', () => {
+      const html = renderFixes([flagFor(extra.key)], {
+        photos: { [extra.key]: ['https://example.test/a1.jpg', 'https://example.test/a2.jpg'] },
+      })
+      const buttons = html.match(/class="photo-remove"/g) ?? []
+      expect(buttons).toHaveLength(2)
+      // Нумерация в доступном имени: три кнопки «Убрать» подряд иначе
+      // неразличимы для скринридера (тот же довод, что у `FieldRow`).
+      expect(html).toContain(`${UI['photos.remove'].en}: ${extra.label.en} 1`)
+      expect(html).toContain(`${UI['photos.remove'].en}: ${extra.label.en} 2`)
+    })
   })
 })
 

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createTestDb } from '@/db/__tests__/harness'
 import type { Db } from '@/db/types'
 import { lounges, submissions, photos, fieldFlags, blockReviews } from '@/db/schema'
+import { PHOTO_SLOTS } from '@/form-schema'
 import { issueFillToken } from '@/access/tokens'
 import { raiseFlag, openFlags } from '@/review/flags'
 
@@ -51,7 +52,7 @@ vi.mock('@/db/client', () => ({
   },
 }))
 
-const { POST } = await import('../route')
+const { POST, DELETE } = await import('../route')
 const { clearFlagAfterSave } = await import('@/app/clear-flag-after-save')
 
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xd9])
@@ -64,6 +65,14 @@ function uploadRequest(token: string, slot: string): Request {
   return new Request('http://localhost/api/photos', { method: 'POST', body })
 }
 
+function deleteRequest(token: string, slot: string, url: string): Request {
+  return new Request('http://localhost/api/photos', {
+    method: 'DELETE',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token, slot, url }),
+  })
+}
+
 /**
  * A questionnaire already returned for changes, with a flag open on two
  * photo slots and the photos block previously confirmed by the reviewer.
@@ -71,7 +80,10 @@ function uploadRequest(token: string, slot: string): Request {
  * decides whether an upload is allowed at all, and that is the state a
  * flagged photo is actually re-uploaded in.
  */
-async function seedFlaggedPhotos(db: Db): Promise<{ token: string; submissionId: string }> {
+async function seedFlaggedPhotos(
+  db: Db,
+  options: { status?: 'changes_requested' | 'submitted' } = {},
+): Promise<{ token: string; submissionId: string }> {
   const [lounge] = await db
     .insert(lounges)
     .values({
@@ -81,7 +93,7 @@ async function seedFlaggedPhotos(db: Db): Promise<{ token: string; submissionId:
     .returning()
   const [submission] = await db
     .insert(submissions)
-    .values({ loungeId: lounge!.id, status: 'changes_requested' })
+    .values({ loungeId: lounge!.id, status: options.status ?? 'changes_requested' })
     .returning()
   const submissionId = submission!.id
 
@@ -156,8 +168,163 @@ describe('POST /api/photos снимает замечание по загруже
     expect(open.map((f) => f.fieldKey).sort()).toEqual(['entrance', 'reception'])
   })
 
+  /**
+   * ПОРЯДОК, а не только наличие вызова. Все три теста выше остаются зелёными,
+   * если перенести `clearFlagAfterSave` ВЫШЕ `if (!result.ok) return` — то есть
+   * если отказанная загрузка начнёт снимать замечание, хотя в анкете ничего не
+   * изменилось. Ровно тот класс, в котором Task 7 сам признался («тест не
+   * увидел бы и перевёрнутый порядок вызовов»), и тот же, что у не
+   * проверявшегося потолка размера.
+   *
+   * Отказ берётся настоящий и самый вероятный: анкету уже отправили
+   * (`submitted`), так что `attachPhoto`'s `assertEditable` откажет — снимок в
+   * `photos` не попадёт, и замечание обязано остаться там, где было.
+   */
+  it('ОТКАЗАННАЯ загрузка не снимает ни замечания, ни подтверждения блока', async () => {
+    const db = holder.db!
+    const { token, submissionId } = await seedFlaggedPhotos(db, { status: 'submitted' })
+
+    const response = await POST(uploadRequest(token, 'entrance'))
+    expect(response.status).toBe(400)
+
+    const rows = await db
+      .select({ slot: photos.slot })
+      .from(photos)
+      .where(eq(photos.submissionId, submissionId))
+    expect(rows).toEqual([])
+
+    const open = await openFlags(db, submissionId)
+    expect(open.map((f) => f.fieldKey).sort()).toEqual(['entrance', 'reception'])
+
+    const confirmed = await db
+      .select({ blockKey: blockReviews.blockKey })
+      .from(blockReviews)
+      .where(eq(blockReviews.submissionId, submissionId))
+    expect(confirmed.map((r) => r.blockKey)).toEqual(['photos'])
+  })
+
   afterEach(() => {
     holder.broken = false
+  })
+})
+
+/**
+ * `DELETE /api/photos` — единственный правдивый ответ на замечание по
+ * накопительному слоту (`additional`): загрузка там ДОБАВЛЯЕТ, так что
+ * четвёртый снимок не убирает тот, который ревьюер назвал непригодным.
+ *
+ * Проверяется через настоящий маршрут по той же причине, что и загрузка: сама
+ * `removePhoto` уже покрыта, не хватало именно того, кто её позовёт — и того,
+ * что при этом снимается замечание, а чужую анкету тронуть нельзя.
+ */
+describe('DELETE /api/photos убирает снимок накопительного слота', () => {
+  const EXTRA = PHOTO_SLOTS.find((slot) => slot.extra)!.key
+
+  beforeEach(async () => {
+    holder.db = await createTestDb()
+    holder.broken = false
+  })
+
+  async function seedExtraPhotos(
+    db: Db,
+    submissionId: string,
+    urls: string[],
+  ): Promise<void> {
+    for (const [index, url] of urls.entries()) {
+      await db.insert(photos).values({
+        submissionId, slot: EXTRA, blobKey: `${EXTRA}-${index}`, url,
+      })
+    }
+  }
+
+  it('убирает именно названный снимок и снимает замечание по слоту', async () => {
+    const db = holder.db!
+    const { token, submissionId } = await seedFlaggedPhotos(db)
+    const raised = await raiseFlag(db, {
+      submissionId, fieldKey: EXTRA, reason: 'wrong_format',
+      comment: 'the second extra shot is unusable', reviewer: 'reviewer-1',
+    })
+    expect(raised.ok).toBe(true)
+    await seedExtraPhotos(db, submissionId, ['https://blob.test/a1.jpg', 'https://blob.test/a2.jpg'])
+
+    const response = await DELETE(deleteRequest(token, EXTRA, 'https://blob.test/a2.jpg'))
+    expect(response.status).toBe(200)
+
+    const rows = await db
+      .select({ url: photos.url })
+      .from(photos)
+      .where(eq(photos.submissionId, submissionId))
+    expect(rows.map((r) => r.url)).toEqual(['https://blob.test/a1.jpg'])
+
+    // Снято замечание по этому слоту — и только по нему.
+    const open = await openFlags(db, submissionId)
+    expect(open.map((f) => f.fieldKey).sort()).toEqual(['entrance', 'reception'])
+  })
+
+  /**
+   * Тот самый довод, по которому маршрут ищет снимок по `(submissionId, slot,
+   * url)`, а не принимает `photoId` от клиента: fill-токен удостоверяет
+   * анкету, а `removePhoto` сам берёт `submissionId` из найденной строки и ни с
+   * чем его не сверяет. Здесь выборка ограничена анкетой токена, так что чужой
+   * снимок недостижим даже при точном знании его URL.
+   */
+  it('чужой снимок не удаляется по валидному токену другой анкеты', async () => {
+    const db = holder.db!
+    const mine = await seedFlaggedPhotos(db)
+    const theirs = await seedFlaggedPhotos(db)
+    await seedExtraPhotos(db, theirs.submissionId, ['https://blob.test/theirs.jpg'])
+
+    const response = await DELETE(deleteRequest(mine.token, EXTRA, 'https://blob.test/theirs.jpg'))
+    expect(response.status).toBe(400)
+
+    const rows = await db
+      .select({ url: photos.url })
+      .from(photos)
+      .where(eq(photos.submissionId, theirs.submissionId))
+    expect(rows.map((r) => r.url)).toEqual(['https://blob.test/theirs.jpg'])
+  })
+
+  // Та же проверка порядка, что и у загрузки: отказ `removePhotoAt` (анкета уже
+  // отправлена) не должен снимать замечание — в анкете ничего не изменилось.
+  it('ОТКАЗАННОЕ удаление не снимает замечание', async () => {
+    const db = holder.db!
+    const { token, submissionId } = await seedFlaggedPhotos(db, { status: 'submitted' })
+    const raised = await raiseFlag(db, {
+      submissionId, fieldKey: EXTRA, reason: 'wrong_format',
+      comment: 'the second extra shot is unusable', reviewer: 'reviewer-1',
+    })
+    expect(raised.ok).toBe(true)
+    await seedExtraPhotos(db, submissionId, ['https://blob.test/a1.jpg'])
+
+    const response = await DELETE(deleteRequest(token, EXTRA, 'https://blob.test/a1.jpg'))
+    expect(response.status).toBe(400)
+
+    const rows = await db
+      .select({ url: photos.url })
+      .from(photos)
+      .where(eq(photos.submissionId, submissionId))
+    expect(rows.map((r) => r.url)).toEqual(['https://blob.test/a1.jpg'])
+
+    const open = await openFlags(db, submissionId)
+    expect(open.map((f) => f.fieldKey).sort()).toEqual([EXTRA, 'entrance', 'reception'].sort())
+  })
+
+  it('неизвестный слот и пустой URL отклоняются до всякой записи', async () => {
+    const db = holder.db!
+    const { token, submissionId } = await seedFlaggedPhotos(db)
+    await seedExtraPhotos(db, submissionId, ['https://blob.test/a1.jpg'])
+
+    expect((await DELETE(deleteRequest(token, 'no.such.slot', 'https://blob.test/a1.jpg'))).status)
+      .toBe(400)
+    expect((await DELETE(deleteRequest(token, EXTRA, ''))).status).toBe(400)
+    expect((await DELETE(deleteRequest('not-a-token', EXTRA, 'https://blob.test/a1.jpg'))).status)
+      .toBe(403)
+
+    const rows = await db
+      .select({ url: photos.url })
+      .from(photos)
+      .where(eq(photos.submissionId, submissionId))
+    expect(rows.map((r) => r.url)).toEqual(['https://blob.test/a1.jpg'])
   })
 })
 

@@ -74,6 +74,47 @@ export async function listPhotos(db: Db, submissionId: string): Promise<PhotoRow
   return rows
 }
 
+/**
+ * Убирает ОДИН снимок КОНКРЕТНОЙ анкеты, найденный по слоту и URL.
+ *
+ * Ищет по `(submissionId, slot, url)`, а не принимает `photoId` от клиента, и
+ * это не про удобство: fill-токен удостоверяет анкету, а не снимок.
+ * `removePhoto` ниже сам достаёт `submissionId` из найденной строки и ни с чем
+ * его не сверяет — правильно для внутреннего вызова, но если бы маршрут
+ * передавал туда id прямо от клиента, любой обладатель валидного токена мог бы
+ * удалить снимок ЛЮБОЙ анкеты, узнав его id. Здесь выборка ограничена
+ * анкетой токена, так что id, который ей не принадлежит, просто не может
+ * получиться. Плюс у клиента на руках и так URL-ы (`Record<slot, string[]>` —
+ * и с сервера, и после только что прошедшей загрузки), а id — нет.
+ *
+ * Две транзакции, а не одна: удаляет по-прежнему `removePhoto` — со своей
+ * блокировкой, своей проверкой `editable` и своим тестом, — а здесь только
+ * чтение перед ним. Промежуток безвреден: если строка за это время исчезла или
+ * анкета перестала быть редактируемой, `removePhoto` откажет, а не удалит
+ * что-то не то.
+ */
+export async function removePhotoAt(
+  db: Db,
+  input: { submissionId: string; slot: string; url: string },
+): Promise<SaveResult> {
+  const rows = await db
+    .select({ id: photos.id })
+    .from(photos)
+    .where(
+      and(
+        eq(photos.submissionId, input.submissionId),
+        eq(photos.slot, input.slot),
+        eq(photos.url, input.url),
+      ),
+    )
+    .limit(1)
+
+  const photoId = rows[0]?.id
+  if (!photoId) return fail('Photo not found', 'Фото не найдено')
+
+  return removePhoto(db, photoId)
+}
+
 export async function removePhoto(db: Db, photoId: string): Promise<SaveResult> {
   // Удаление — такая же правка анкеты, как attachPhoto, и должна подчиняться
   // тому же правилу editable. photoId не несёт submissionId, поэтому сперва

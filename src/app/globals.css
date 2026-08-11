@@ -127,6 +127,13 @@ body {
 .fix-unmatched code { font-weight: 600; }
 
 .photo-slot img { max-width: 100%; border-radius: 8px; }
+/* Снимок и кнопка «Убрать» под ним — одним блоком, чтобы у накопительного
+   слота с тремя снимками было видно, какая кнопка к какому относится (то же
+   различение, что и нумерация в `alt`/`aria-label`, см. `PhotoSlots`). Кнопка
+   есть только у `extra`-слота на экране правок; у остальных этот блок — просто
+   обёртка вокруг картинки. */
+.photo-shot { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 8px; }
+.photo-remove { font-size: 13px; }
 
 /* Was a bare line of text with no sizing rule at all — the tap target was
    whatever the font's line-height happened to be. Styled to both look and

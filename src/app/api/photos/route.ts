@@ -4,7 +4,7 @@ import type { Localized } from '@/form-schema'
 import { photoSlotByKey } from '@/form-schema'
 import { db } from '@/db/client'
 import { resolveFillToken } from '@/access/tokens'
-import { attachPhoto } from '@/photos/store'
+import { attachPhoto, removePhotoAt } from '@/photos/store'
 import { clearFlagAfterSave } from '@/app/clear-flag-after-save'
 
 /**
@@ -25,6 +25,7 @@ const UNSUPPORTED_FILE_TYPE: Localized = {
   ru: 'Недопустимый тип файла',
 }
 const UNKNOWN_SLOT: Localized = { en: 'Unknown photo slot', ru: 'Неизвестный слот фото' }
+const NO_PHOTO_URL: Localized = { en: 'No photo was named', ru: 'Снимок не указан' }
 
 // Клиент (resize.ts) уменьшает снимок и всегда шлёт JPEG, но этот маршрут
 // принимает то, что ему пришлют напрямую — обращение к нему не ограничено
@@ -123,4 +124,65 @@ export async function POST(request: Request): Promise<NextResponse> {
     await del(blob.url).catch(() => {})
     throw error
   }
+}
+
+/**
+ * Убрать один снимок из накопительного слота.
+ *
+ * Существует ровно потому, что у слота `additional` (`extra: true`) загрузка
+ * НЕ заменяет: `attachPhoto` не удаляет прежние строки, а добавляет ещё одну.
+ * Пока удаления не было нигде, замечание по этому слоту («один из
+ * дополнительных снимков непригоден») не имело правдивого ответа вообще —
+ * четвёртый снимок не убирает тот, на который жаловался ревьюер, — то есть
+ * цикл проверки по этому ключу не сходился ровно так же, как он не сходился
+ * для 62 ключей до появления контролов на экране правок. UI предлагает это
+ * только у `extra`-слота и только на экране правок (см. `PhotoSlots`);
+ * маршрут шире не потому, что забыли, а потому, что запрет здесь ничего не
+ * защищал бы: удалить снимок из СВОЕЙ анкеты и так может только владелец
+ * валидного fill-токена, а удаление из обязательного слота честно
+ * возвращается `missingItems` при отправке.
+ *
+ * Тот же порядок проверок, что у POST: токен — раньше всего, `submissionId`
+ * берётся только из `resolveFillToken`, никогда от клиента.
+ */
+export async function DELETE(request: Request): Promise<NextResponse> {
+  const body: unknown = await request.json().catch(() => null)
+  const token = String((body as { token?: unknown })?.token ?? '')
+  const slot = String((body as { slot?: unknown })?.slot ?? '')
+  const url = String((body as { url?: unknown })?.url ?? '')
+
+  const resolved = await resolveFillToken(db(), token)
+  if (!resolved) {
+    return NextResponse.json({ error: INVALID_TOKEN }, { status: 403 })
+  }
+  if (!photoSlotByKey(slot)) {
+    return NextResponse.json({ error: UNKNOWN_SLOT }, { status: 400 })
+  }
+  if (url === '') {
+    return NextResponse.json({ error: NO_PHOTO_URL }, { status: 400 })
+  }
+
+  const result = await removePhotoAt(db(), {
+    submissionId: resolved.submissionId,
+    slot,
+    url,
+  })
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: 400 })
+  }
+
+  // Убранный лишний снимок — это и есть исправление замечания по слоту, ровно
+  // как перезалитый снимок выше, поэтому замечание снимается тем же способом и
+  // с теми же гарантиями (сбой этого шага не превращает состоявшееся удаление
+  // в отказ — см. `clearFlagAfterSave`).
+  await clearFlagAfterSave(resolved.submissionId, slot)
+
+  // Блоб удаляется ПОСЛЕ строки и только best-effort — тот же выбор и та же
+  // цена, что у orphan-блоба в POST: если `del` не пройдёт (или, как у
+  // засеянных снимков, URL вообще не блобовский), в хранилище останутся лишние
+  // байты, но у заполняющего снимок убран, и говорить ему обратное было бы
+  // ложью.
+  await del(url).catch(() => {})
+
+  return NextResponse.json({ ok: true })
 }

@@ -41,11 +41,27 @@ function isLocalized(value: unknown): value is Localized {
  * keeps the schema the single source of a slot's `label`/`required`/`extra`:
  * a caller cannot hand in a fabricated slot whose `extra` disagrees with what
  * `attachPhoto` will actually do on the server.
+ *
+ * `onRemoved` is what makes the per-photo Remove button appear, and only for
+ * an `extra` slot — the two halves of "who may remove a photo" deliberately
+ * live in different places. WHICH slot can offer it is derived from the schema
+ * here (`slot.extra`), because for a named slot a new upload replaces the old
+ * one and therefore already answers the complaint in full, while for
+ * `additional` it does not: `attachPhoto` adds a row and leaves the objected-to
+ * photo where it was. WHICH SCREEN offers it is the caller's choice — only
+ * `FixesOnly` passes `onRemoved`, so the photos step of the main form is
+ * unchanged. Scoped there because that screen is the only one where a specific
+ * existing photo has been objected to by name; on the photos step nobody has
+ * complained about anything yet, and widening it is a separate decision about
+ * the main form, not a consequence of this one.
  */
 export function PhotoSlots(props: {
   token: string
   uploaded: Record<string, string[]>
   onUploaded: (slot: string, url: string) => void
+  /** Убрать снимок (см. выше): передаётся только экраном правок, работает
+   *  только у накопительного слота. */
+  onRemoved?: (slot: string, url: string) => void
   slotKeys?: readonly string[]
 }): React.JSX.Element {
   const { pick, t } = useLocale()
@@ -108,20 +124,84 @@ export function PhotoSlots(props: {
     }
   }
 
+  async function remove(slot: string, url: string): Promise<void> {
+    try {
+      const response = await fetch('/api/photos', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: props.token, slot, url }),
+      })
+
+      if (!response.ok) {
+        let error: Localized = UI['photos.removeFailed']
+        try {
+          const data: unknown = await response.json()
+          const candidate = (data as { error?: unknown }).error
+          if (isLocalized(candidate)) error = candidate
+        } catch {
+          // Тело не JSON — общее сообщение выше, как и у загрузки.
+        }
+        setErrors((prev) => ({ ...prev, [slot]: error }))
+        return
+      }
+
+      setErrors((prev) => {
+        if (!(slot in prev)) return prev
+        const next = { ...prev }
+        delete next[slot]
+        return next
+      })
+
+      props.onRemoved?.(slot, url)
+    } catch {
+      // Ровно те же причины и та же цена, что у `upload`: без видимого отказа
+      // заполняющий жмёт «Убрать» и не понимает, произошло ли что-нибудь.
+      setErrors((prev) => ({ ...prev, [slot]: UI['photos.removeFailed'] }))
+    }
+  }
+
   return (
     <section className="photos">
       {slots.map((slot) => (
         <div key={slot.key} className="photo-slot">
           <h3>{pick(slot.label)}</h3>
-          {(props.uploaded[slot.key] ?? []).map((url) => (
-            <img key={url} src={url} alt={pick(slot.label)} />
+          {(props.uploaded[slot.key] ?? []).map((url, index) => (
+            // Номер снимка в подписях: у `additional` в слоте их несколько, и
+            // без него пользователь скринридера слышит несколько одинаковых
+            // «Additional Photos» и несколько одинаковых «Убрать» без способа
+            // понять, какая кнопка убирает какой снимок — тот же довод, по
+            // которому нумерация уже есть на экране проверки (`FieldRow`).
+            <div key={url} className="photo-shot">
+              <img src={url} alt={`${pick(slot.label)} ${index + 1}`} />
+              {slot.extra && props.onRemoved && (
+                <button
+                  type="button"
+                  className="photo-remove"
+                  aria-label={`${t('photos.remove')}: ${pick(slot.label)} ${index + 1}`}
+                  onClick={() => void remove(slot.key, url)}
+                >
+                  {t('photos.remove')}
+                </button>
+              )}
+            </div>
           ))}
           {slot.required && !props.uploaded[slot.key]?.length && (
             <p className="field-hint">{t('photos.missing')}</p>
           )}
           {errors[slot.key] && <p className="fix-comment">{pick(errors[slot.key]!)}</p>}
           <label className="photo-upload">
-            {props.uploaded[slot.key]?.length ? t('photos.replace') : t('photos.upload')}
+            {/* Подпись читается по тому же правилу, по которому сервер
+                действительно поступает со слотом, а не по «есть ли уже
+                снимки»: накопительный слот (`extra`) всегда ДОБАВЛЯЕТ (см.
+                `attachPhoto` и `FillForm`'s `photoUploaded`), поэтому у
+                непустого `additional` подпись была «Заменить», а нажатие
+                добавляло четвёртый снимок и оставляло непригодный на месте.
+                Убрать его — отдельная кнопка выше. */}
+            {slot.extra
+              ? t('photos.add')
+              : props.uploaded[slot.key]?.length
+                ? t('photos.replace')
+                : t('photos.upload')}
             <input
               type="file"
               accept="image/*"

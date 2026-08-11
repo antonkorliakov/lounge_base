@@ -159,6 +159,21 @@ export function FillForm(props: {
     markTouched(slotKey)
   }
 
+  /**
+   * Снимок убран (`DELETE /api/photos` уже прошёл — см. `PhotoSlots`'s
+   * `remove`): убираем его и из локального состояния, чтобы плитка исчезла без
+   * перезагрузки, и помечаем слот тронутым — на экране правок это то же
+   * «Изменено», что и у перезалитого снимка, потому что для накопительного
+   * слота именно удаление и есть исправление замечания.
+   */
+  function photoRemoved(slotKey: string, url: string): void {
+    setPhotos((prev) => ({
+      ...prev,
+      [slotKey]: (prev[slotKey] ?? []).filter((existing) => existing !== url),
+    }))
+    markTouched(slotKey)
+  }
+
   async function submit(): Promise<void> {
     const result = await submitAction(props.token)
     if (result.ok) {
@@ -269,6 +284,7 @@ export function FillForm(props: {
             token={props.token}
             photos={photos}
             onPhotoUploaded={photoUploaded}
+            onPhotoRemoved={photoRemoved}
             touched={touched}
           />
           {submitErrorNode()}

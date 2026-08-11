@@ -85,6 +85,9 @@ export function FixesOnly(props: {
   token: string
   photos: Record<string, string[]>
   onPhotoUploaded: (slot: string, url: string) => void
+  /** Убрать снимок из накопительного слота — см. `PhotoSlots`'s `onRemoved`
+   *  и `control`'s `photo` ветку ниже. */
+  onPhotoRemoved: (slot: string, url: string) => void
   /**
    * Flagged keys the filler has actually edited in this session. Resubmitting
    * with flags still open is ALLOWED (the user's own decision: the filler must
@@ -155,17 +158,26 @@ export function FixesOnly(props: {
         )
 
       case 'photo':
-        // Add vs replace is not re-decided here: `PhotoSlots` shows what the
-        // slot currently holds and labels its control "Replace" once
-        // something is there, and `FillForm`'s `onUploaded` applies the
-        // schema's own rule (a named slot holds one photo, `additional`
-        // accumulates) — the same rule `attachPhoto` enforces server-side.
-        // The fixes screen therefore behaves exactly as the photos step does.
+        // Add vs replace is not re-decided here: `PhotoSlots` labels its
+        // control from the schema's own rule (a named slot holds one photo and
+        // is replaced, `additional` accumulates) — the same rule
+        // `FillForm`'s `onUploaded` applies locally and `attachPhoto` enforces
+        // server-side.
+        //
+        // `onPhotoRemoved` is passed HERE and nowhere else, and that is what
+        // puts a Remove button on the accumulating slot's photos. Without it a
+        // flag on `additional` had no truthful answer at all: adding a fourth
+        // photo does not remove the one the reviewer called unusable, so the
+        // filler could only either leave the flag standing or make the slot
+        // worse. The named slots need nothing of the kind — replacing the photo
+        // IS the answer there — so `PhotoSlots` derives that half from
+        // `slot.extra` rather than from which screen it is on.
         return (
           <PhotoSlots
             token={props.token}
             uploaded={props.photos}
             onUploaded={props.onPhotoUploaded}
+            onRemoved={props.onPhotoRemoved}
             slotKeys={[target.slot.key]}
           />
         )
