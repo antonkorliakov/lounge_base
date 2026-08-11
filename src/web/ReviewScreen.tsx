@@ -156,6 +156,17 @@ export function ReviewScreen(props: {
         <header className="review-head">
           <h1>
             {props.lounge.name} <span className="review-iata">{props.lounge.iata}</span>
+            {/* Выгрузка ЭТОЙ анкеты — xlsx в структуре исходного файла
+                (`/admin/export/s/[submissionId]`). Обычный `<a>`, не действие:
+                файл отдаёт route handler, клиентскому бандлу из серверного
+                экспорта ничего не нужно (класс runtime-500 из
+                `renderValues.ts` здесь невозможен по построению). Ссылка есть
+                В ЛЮБОМ состоянии анкеты, включая черновик: xlsx полупустой
+                анкеты — это честный снимок «что уже заполнено», и решать,
+                нужен ли он, — человеку, а не экрану. */}
+            <a className="review-export" href={`/admin/export/s/${props.submissionId}`}>
+              {locale === 'ru' ? 'Скачать xlsx' : 'Download xlsx'}
+            </a>
           </h1>
           <p className={`review-state review-state-${props.state.status}`}>
             <b>{pick(props.state.label)}</b> {pick(props.state.note)}

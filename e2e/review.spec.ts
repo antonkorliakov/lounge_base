@@ -234,6 +234,18 @@ test('замечание, возврат на правку, исправлени
   await page.goto(loginLinkFor(SEED_REVIEWER_EMAIL))
   const reviewUrl = await openSeededSubmission(page, watched, lounge)
 
+  // ── Выгрузка ЭТОЙ анкеты — из шапки экрана, файл назван лаунжем ──────────
+  // Второй формат выгрузки спецификации (`singleSubmissionWorkbook`) был
+  // собран и заперт без единой ссылки (дефект I1 ревью). Ссылка доступна в
+  // любом состоянии анкеты — здесь она скачивает анкету прямо на проверке, и
+  // имя файла — название лаунжа с IATA, не uuid (человеку, сохранившему пять
+  // подряд, uuid не говорит ничего).
+  const [single] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('link', { name: 'Download xlsx' }).click(),
+  ])
+  expect(single.suggestedFilename()).toBe(`${lounge} (IST).xlsx`)
+
   // ── Отметить одно поле ────────────────────────────────────────────────────
   const fullName = row(page, FULL_NAME)
   await flag(fullName, 'needs detail', 'Укажите полное юридическое название')
