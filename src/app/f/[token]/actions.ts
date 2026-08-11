@@ -4,6 +4,7 @@ import { db } from '@/db/client'
 import { resolveFillToken } from '@/access/tokens'
 import { saveFieldValue, saveServiceValue } from '@/submissions/values'
 import { submitSubmission } from '@/submissions/transitions'
+import { clearFlagsFor } from '@/review/flags'
 import type { Localized, ServiceValueInput } from '@/form-schema'
 import type { MissingItems } from '@/submissions/completeness'
 
@@ -40,6 +41,64 @@ const DENIED: ActionResult = {
 }
 
 /**
+ * Снимает замечание по только что исправленному ответу (и подтверждение его
+ * блока — см. `clearFlagsFor`). Живёт здесь, а не в
+ * `saveFieldValue`/`saveServiceValue`: иначе `submissions` начал бы зависеть
+ * от `review`, что запрещено границей модулей. Слой серверных действий и так
+ * знает про оба модуля — он и связывает их.
+ *
+ * **Почему провал этого шага НЕ превращается в отказ действия.** Значение уже
+ * записано и закоммичено своей собственной транзакцией; снятие замечания —
+ * вторая, отдельная транзакция (`saveFieldValue` и `clearFlagsFor` каждый
+ * открывают свою). Транзакции, накрывающей оба вызова, здесь нет и быть не
+ * может: обе функции открывают транзакцию внутри себя и не принимают чужой
+ * `Tx`, а прокинуть один `Tx` через обе означало бы дать `submissions`
+ * доступ к `review` (или наоборот) — ровно ту зависимость, из-за которой эта
+ * связка вообще вынесена в слой действий. Так что выбор не между «атомарно»
+ * и «нет», а только между двумя способами сообщить о сбое второго шага, и
+ * выбран он осознанно:
+ *
+ *  - Вернуть `{ ok: false }` (или дать исключению уйти наверх) — значит
+ *    показать заполняющему ошибку под ответом, который в базе уже лежит
+ *    правильным. `queueDrain` (`src/web/useAutosave.ts`) трактует
+ *    `{ ok: false }` как окончательный отказ: ключ удаляется из очереди
+ *    (повтора не будет), попадает в `rejected`, статус формы становится
+ *    `'rejected'` вместо `'saved'`, и `FixesOnly` рисует это сообщение
+ *    прямо под полем через свой `errors`. Заполняющий читает «не
+ *    сохранилось» про сохранённое и переписывает ответ заново. Исключение
+ *    ведёт себя не лучше: `queueDrain` считает его сетевым, оставляет
+ *    значение в очереди и показывает `'offline'` — сообщение, которое врёт
+ *    о причине.
+ *  - Вернуть `{ ok: true }` — значит принять единственное реальное
+ *    последствие: на исправленном поле останется висеть замечание ревьюера
+ *    (и его блок останется в том же состоянии, что и до правки). Экран
+ *    правок продолжит показывать эту карточку — с уже исправленным
+ *    значением внутри, — и повторная отправка этим не блокируется
+ *    (`submitSubmission` проверяет полноту, а не замечания). Ревьюер увидит
+ *    замечание открытым и блок неподтверждённым, то есть посмотрит ответ
+ *    заново — консервативная сторона: ничего не теряется и ничто не
+ *    выглядит проверенным, не будучи проверенным.
+ *
+ * Второй вариант и выбран: действие отвечает за ту запись, которую его
+ * просили сделать, и она удалась. Сбой глушится здесь, а не уходит наверх,
+ * иначе поведением по умолчанию стал бы третий, самый плохой вариант
+ * (`'offline'`). `console.error` оставляет его видимым в логах сервера —
+ * молчаливой потери нет, просто она не адресована заполняющему, который
+ * ничего с ней сделать не может.
+ */
+async function clearFlagAfterSave(submissionId: string, key: string): Promise<void> {
+  try {
+    await clearFlagsFor(db(), submissionId, key)
+  } catch (error) {
+    console.error(
+      `[fill] value for ${key} saved, but clearing its flag failed ` +
+        `(submission ${submissionId}); the flag stays open for the reviewer`,
+      error,
+    )
+  }
+}
+
+/**
  * Every action resolves the fill token itself and derives the submission id
  * from it — none of them accept a submission id from the caller. A client
  * only ever holds a token; trusting a client-supplied submission id would
@@ -62,7 +121,13 @@ export async function saveFieldAction(
     fieldKey,
     value,
   })
-  return result.ok ? { ok: true } : { ok: false, error: result.error }
+  if (!result.ok) return { ok: false, error: result.error }
+
+  // Исправленный ответ снимает своё замечание и подтверждение своего блока:
+  // ревьюер посмотрит его заново, остальное останется подтверждённым. Сбой
+  // этого шага не отменяет успех записи — см. `clearFlagAfterSave`.
+  await clearFlagAfterSave(resolved.submissionId, fieldKey)
+  return { ok: true }
 }
 
 export async function saveServiceAction(
@@ -78,7 +143,13 @@ export async function saveServiceAction(
     itemKey,
     value,
   })
-  return result.ok ? { ok: true } : { ok: false, error: result.error }
+  if (!result.ok) return { ok: false, error: result.error }
+
+  // Замечание к позиции услуг адресуется её ключом целиком (`FLAGGABLE` в
+  // `src/review/flags.ts` не принимает ключи отдельных атрибутов), так что
+  // здесь снимается то же самое, что и для поля, — по `itemKey`.
+  await clearFlagAfterSave(resolved.submissionId, itemKey)
+  return { ok: true }
 }
 
 export async function submitAction(token: string): Promise<ActionResult> {
