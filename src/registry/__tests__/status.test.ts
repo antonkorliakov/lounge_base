@@ -220,19 +220,44 @@ describe('смена статуса лаунжа', () => {
   })
 
   /**
-   * Отказ «лаунж не найден» не должен оставлять за собой событие: до этой
-   * проверки в транзакции уже взята блокировка, но ни одной записи ещё не
-   * сделано, и выход по `return` внутри `db.transaction` откатывает
-   * транзакцию целиком. Проверяется наблюдаемое следствие — в `events` пусто.
+   * Отказ ДО транзакции: дата у статуса, который даты не несёт, отклоняется
+   * проверкой `!meta.allowsDate` раньше всякого обращения к базе (см.
+   * комментарий «Валидация до всякого обращения к базе» в `setOperationalStatus`).
+   * Здесь нечему откатываться — транзакция не открывалась; проверяется, что
+   * и события такой отказ за собой не оставляет.
    */
-  it('отказ не пишет события вовсе', async () => {
+  it('отказ до транзакции (дата у статуса без даты) не пишет события', async () => {
     const db = await createTestDb()
     const loungeId = await seedLounge(db)
 
-    await setOperationalStatus(db, {
+    const result = await setOperationalStatus(db, {
       loungeId, status: 'active', until: '2026-09-15', comment: null, actor: 'r1',
     })
 
+    expect(result.ok).toBe(false)
+    expect(await db.select({ id: events.id }).from(events)).toEqual([])
+  })
+
+  /**
+   * Отказ ВНУТРИ транзакции: «лаунж не найден» обнаруживается уже после
+   * `BEGIN`, и выход из колбэка `db.transaction` через обычный `return` НЕ
+   * откатывает транзакцию — drizzle коммитит всё, что колбэк успел записать,
+   * а откат случается только на исключении (или явном `tx.rollback()`).
+   * События здесь нет не благодаря откату, а потому, что до `return fail(...)`
+   * функция ничего не пишет — ни `UPDATE`, ни `INSERT`. Тест закрепляет
+   * именно это следствие: появись перед отказом хоть одна запись, коммит
+   * вынес бы её наружу, и `events` перестал бы быть пустым.
+   */
+  it('отказ внутри транзакции (лаунж не найден) не пишет события', async () => {
+    const db = await createTestDb()
+    await seedLounge(db)
+
+    const result = await setOperationalStatus(db, {
+      loungeId: '00000000-0000-0000-0000-000000000000',
+      status: 'closed', until: null, comment: null, actor: 'r1',
+    })
+
+    expect(result.ok).toBe(false)
     expect(await db.select({ id: events.id }).from(events)).toEqual([])
   })
 })
