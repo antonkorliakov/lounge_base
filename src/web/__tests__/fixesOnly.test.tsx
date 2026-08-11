@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import {
   BLOCKS,
   FIELDS,
+  OPTION_LISTS,
   PHOTO_SLOTS,
   SERVICE_ITEMS,
   keysOfBlock,
@@ -12,6 +13,7 @@ import { isFlaggableKey } from '@/review/flags'
 import { LocaleProvider } from '@/i18n/context'
 import { UI } from '@/i18n/dictionaries'
 import { FixesOnly, fixTargetFor, type Flag } from '../FixesOnly'
+import { isBinaryAvailability } from '../ServiceItemCard'
 import type { ServiceValueInput } from '@/form-schema'
 
 /**
@@ -208,6 +210,21 @@ describe('контрол отмеченной позиции услуг', () => 
     expect(html).not.toContain(UI['services.charge'].en)
     // Наличие остаётся: именно его и правят, если ревьюер спорит с «нет».
     expect(html).toContain(UI['services.available'].en)
+  })
+
+  // Единственная позиция со своим списком наличия (8.3, Vaping policy) —
+  // остальные 57 бинарные, так что ветку с дропдауном легко не заметить
+  // глазами ни на одном экране.
+  it('позиция со своим списком наличия получает дропдаун этого списка', () => {
+    const own = SERVICE_ITEMS.find((item) => !isBinaryAvailability(item))
+    expect(own, 'в схеме нет позиции с собственным списком наличия').toBeDefined()
+
+    const html = renderFixes([flagFor(own!.key)])
+    expect(html).toContain(UI['services.available'].en)
+    expect(html).not.toContain('type="checkbox"')
+    for (const option of OPTION_LISTS[own!.availabilityList]) {
+      expect(html, option.id).toContain(`value="${option.id}"`)
+    }
   })
 
   it('показывает подсказку позиции из схемы, а не свою копию', () => {

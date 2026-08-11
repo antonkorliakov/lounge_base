@@ -64,6 +64,17 @@ export function serviceValueOrEmpty(
 }
 
 /**
+ * Whether the item's availability question renders as a checkbox (plain
+ * yes/no) rather than as its own dropdown. One definition, because two call
+ * sites need it — the control itself and the label that goes with it — and
+ * two copies of `availabilityList === 'yesNo'` is precisely the shape of
+ * duplication this file exists to remove.
+ */
+export function isBinaryAvailability(item: ServiceItem): boolean {
+  return item.availabilityList === 'yesNo'
+}
+
+/**
  * Pass 1's question — "does the lounge have this?" — as a standalone control:
  * a checkbox for the ordinary yes/no item, the item's own option list as a
  * `<select>` for the few that have one (e.g. `8.3` Vaping policy).
@@ -81,12 +92,11 @@ export function ServiceAvailabilityInput(props: {
   const { pick } = useLocale()
   const { item, value } = props
   const options = OPTION_LISTS[item.availabilityList]
-  const isBinary = item.availabilityList === 'yesNo'
 
   const emit = (available: string): void =>
     props.onChange({ ...serviceValueOrEmpty(value), available })
 
-  return isBinary ? (
+  return isBinaryAvailability(item) ? (
     <input
       type="checkbox"
       checked={value?.available === 'yes'}
@@ -150,16 +160,27 @@ export function ServiceItemCard(props: {
       <h3>{pick(item.label)}</h3>
       {item.hint && <p className="field-hint">{pick(item.hint)}</p>}
 
-      {props.withAvailability && (
-        <label className="field-check">
-          <ServiceAvailabilityInput
-            item={item}
-            value={props.value}
-            onChange={props.onChange}
-          />
-          {t('services.available')}
-        </label>
-      )}
+      {/* Галочка и дропдаун подписываются по-разному, как и везде в этой
+          карточке: у чекбокса подпись стоит рядом внутри `.field-check`
+          (как у «Нужна бронь» ниже), у списка — над ним отдельной строкой
+          (как у «Платно/бесплатно»). Один вариант на оба выглядел бы
+          сломанным для одного из них: `.pass2-card select` тянется на всю
+          ширину карточки, так что внутри flex-строки `.field-check` подпись
+          оказалась бы выдавлена за край. Из 58 позиций дропдаун только у
+          одной (8.3, Vaping policy) — но именно поэтому её легко не
+          заметить. */}
+      {props.withAvailability &&
+        (isBinaryAvailability(item) ? (
+          <label className="field-check">
+            <ServiceAvailabilityInput item={item} value={props.value} onChange={props.onChange} />
+            {t('services.available')}
+          </label>
+        ) : (
+          <>
+            <label>{t('services.available')}</label>
+            <ServiceAvailabilityInput item={item} value={props.value} onChange={props.onChange} />
+          </>
+        ))}
 
       {offered && (
         <>
