@@ -10,7 +10,7 @@ import { confirmBlock, unconfirmBlock } from '@/review/blocks'
 import { requestChanges, approveSubmission } from '@/review/decide'
 import { submissions, lounges, fieldValues } from '@/db/schema'
 import type { SubmissionStatus } from '@/db/schema'
-import { createMailer } from '@/notify/mailer'
+import { createMailer, mailDelivers } from '@/notify/mailer'
 import { changesRequestedMail, fillLinkMail, approvedMail } from '@/notify/messages'
 import { issueFillToken, FILL_TOKEN_TTL_DAYS } from '@/access/tokens'
 import { resendGateFor, reviewStateFor } from './gates'
@@ -41,6 +41,27 @@ export type ActionResult =
   | { ok: true; notice?: Localized }
   | { ok: false; error: Localized }
 
+/**
+ * Результат двух действий, из которых наружу уходит ссылка заполнения
+ * (`resendFillLinkAction`, `requestChangesAction`): тот же `ActionResult`,
+ * но успех МОЖЕТ нести готовый URL. Половина с `fillUrl` — сознательное
+ * зеркало `CreateLoungeActionResult` (`src/app/admin/actions.ts`), а не
+ * третья форма «успеха с данными»: то же решение «сервер отдаёт готовый URL
+ * (`APP_URL` — знание сервера), а не сырой токен», см. комментарий там.
+ * Не сам `CreateLoungeActionResult`, по двум различиям по существу: здесь
+ * успех БЕЗ URL — норма, а не вырожденный случай (почта настроена, письмо
+ * ушло — ссылка на экране ревьюера была бы лишней экспозицией живого
+ * доступа, который оператор уже получил в почту), и здесь есть `notice`.
+ *
+ * `fillUrl` появляется в ОДНОМ случае: почта не может доставить письмо
+ * (`mailDelivers()` в `notify/mailer.ts` — false), и вручить ссылку больше
+ * некому, кроме экрана. Рядом с ним всегда стоит `notice`, говорящий, что
+ * письма НЕ БЫЛО, — сам URL этого не говорит.
+ */
+export type FillLinkActionResult =
+  | { ok: true; notice?: Localized; fillUrl?: string }
+  | { ok: false; error: Localized }
+
 const NO_CONTACT_EMAIL_NOTICE: Localized = {
   en: 'Saved. No contact email on file (II.1.3) — the operator was not notified.',
   ru: 'Сохранено. Нет контактной почты (II.1.3) — оператор не уведомлён.',
@@ -49,6 +70,29 @@ const NO_CONTACT_EMAIL_NOTICE: Localized = {
 const MAIL_FAILED_NOTICE: Localized = {
   en: 'Saved, but the notification email failed to send. Use "Resend link" to try again.',
   ru: 'Сохранено, но письмо с уведомлением не отправилось. Нажмите «Переслать ссылку», чтобы попробовать снова.',
+}
+
+/**
+ * Три текста об одном и том же состоянии среды (SMTP не настроен), потому что
+ * у трёх действий разные последствия и разный следующий шаг ревьюера:
+ * возврат на правку состоялся и ссылку надо вручить самому; пересылка без
+ * письма — это только показ ссылки; у принятия ссылки нет вовсе, есть лишь
+ * неушедшее уведомление. «Сохранено.» стоит там же, где у соседних notice, —
+ * у действий, чья транзакция уже закоммичена.
+ */
+const RETURNED_LINK_NOT_MAILED_NOTICE: Localized = {
+  en: 'Saved. Email is not configured on this server, so the operator was NOT emailed — hand them this link yourself:',
+  ru: 'Сохранено. Почта на этом сервере не настроена, письмо оператору НЕ ушло — передайте ему эту ссылку сами:',
+}
+
+const LINK_NOT_MAILED_NOTICE: Localized = {
+  en: 'Email is not configured on this server, so nothing was sent — hand the operator this link yourself:',
+  ru: 'Почта на этом сервере не настроена, письмо не отправлялось — передайте оператору эту ссылку сами:',
+}
+
+const MAIL_NOT_CONFIGURED_NOTICE: Localized = {
+  en: 'Saved. Email is not configured on this server (SMTP_URL) — the operator was not notified.',
+  ru: 'Сохранено. Почта на этом сервере не настроена (SMTP_URL) — оператор не уведомлён.',
 }
 
 export async function flagAction(
@@ -207,9 +251,12 @@ async function loungeName(submissionId: string): Promise<string> {
 }
 
 /**
- * Возвращает `requestChanges`/`approveSubmission`. Обе транзакции уже
- * закоммичены к этому моменту (вызывающие уже вернулись из `db.transaction`)
- * — письмо отправляется здесь, СНАРУЖИ той транзакции, а не внутри неё:
+ * Уведомление ПОСЛЕ уже состоявшегося решения — сегодня только для
+ * `approveAction` (у `requestChangesAction` уведомление несёт ссылку
+ * заполнения и потому ходит через `sendFillLink` — общий с пересылкой хвост,
+ * см. там). Транзакция решения уже закоммичена к этому моменту (вызывающий
+ * уже вернулся из `db.transaction`) — письмо отправляется здесь, СНАРУЖИ той
+ * транзакции, а не внутри неё:
  * `createMailer()` может бросить синхронно (нет `MAIL_FROM` при заданном
  * `SMTP_URL`), а `send` не глушит собственный отказ (оба задокументированы
  * в `notify/mailer.ts`). Если бы это было внутри транзакции решения — или
@@ -229,6 +276,14 @@ async function notifyOrNotice(
   const to = await contactEmail(submissionId)
   if (!to) return NO_CONTACT_EMAIL_NOTICE
 
+  // Ненастроенная почта — не «отправка удалась» (консольный почтальон пишет
+  // в stdout, который никто не читает — см. `mailDelivers`), и не сбой
+  // доставки: письмо не отправлялось вовсе. Раньше эта ветка молча проходила
+  // через консольный почтальон и ревьюер видел чистый успех, будто оператор
+  // уведомлён. Проверка стоит ПОСЛЕ контактной почты: отсутствующий `II.1.3`
+  // — дефект данных, который переживёт настройку SMTP, и назвать его важнее.
+  if (!mailDelivers()) return MAIL_NOT_CONFIGURED_NOTICE
+
   try {
     await send(to)
     return undefined
@@ -239,14 +294,52 @@ async function notifyOrNotice(
 }
 
 /**
+ * Куда делась только что выписанная ссылка. Один из трёх исходов, и у двух
+ * успешных РАЗНЫЕ носители данных не случайно: `mailed` несёт адрес (для
+ * «Link sent to …»), но НЕ ссылку — оператор уже получил её письмом, и копия
+ * на экране ревьюера была бы лишней экспозицией живого доступа; `shown`
+ * несёт ссылку — письма не было, экран остался единственным местом, где она
+ * вообще существует (хранится только хэш, см. `issueFillToken`).
+ */
+type FillLinkOutcome =
+  | { outcome: 'mailed'; to: string }
+  | { outcome: 'shown'; fillUrl: string }
+  | { outcome: 'no_recipient' }
+
+/**
  * Единственное место, откуда наружу уходит ссылка заполнения, — и там же
- * выбирается текст письма. Оба вызывающих (`requestChangesAction` и
- * `resendFillLinkAction`) ходят через него, потому что правило у них одно:
- * ПИСЬМО ОПИСЫВАЕТ ТОТ ЭКРАН, КОТОРЫЙ ОТКРОЕТ ССЫЛКА (см.
- * `resendFillLinkAction`'s комментарий — там разбор всех трёх состояний).
- * Пока выбор письма стоял в двух местах, одно из них было безусловным, и
- * ровно это было дефектом; теперь «какое письмо» решается один раз, из
- * данных, прочитанных здесь же.
+ * выбирается, КАК она уходит и каким текстом. Оба вызывающих
+ * (`requestChangesAction` и `resendFillLinkAction`) ходят через него, потому
+ * что правила у них общие, и пока любое из этих правил стояло в двух местах,
+ * одно из двух было дефектом (см. историю ниже).
+ *
+ * ОДИН поток с двумя хвостами, а не два пути. Голова общая — выписать токен и
+ * собрать URL; хвост зависит от того, может ли эта среда вообще доставить
+ * письмо (`mailDelivers()` — ЕДИНСТВЕННОЕ определение «SMTP настроен», см.
+ * `notify/mailer.ts`; читать `process.env.SMTP_URL` здесь значило бы завести
+ * второй экземпляр этого правила):
+ *
+ *  - почта доставляет — письмо оператору, и ТОЛЬКО здесь действует правило
+ *    выбора текста: ПИСЬМО ОПИСЫВАЕТ ТОТ ЭКРАН, КОТОРЫЙ ОТКРОЕТ ССЫЛКА (см.
+ *    `resendFillLinkAction`'s комментарий — разбор всех трёх состояний).
+ *    Выбор `changesRequestedMail`/`fillLinkMail` имеет смысл только для
+ *    письма, которое действительно уходит, поэтому и `flagCount` читается
+ *    только в этом хвосте.
+ *  - почта не доставляет (`SMTP_URL` пуст — сегодняшний бой) — ссылка
+ *    возвращается вызывающему и попадает на экран ревьюера (`shown`).
+ *    Раньше этот случай молча шёл «почтовым» хвостом: консольный почтальон
+ *    печатал письмо в stdout функции, ревьюер читал «Link sent to …», а
+ *    ссылка, которой больше нигде нет, уходила в лог, который никто не
+ *    смотрит. Найдено пользователем в бою.
+ *
+ * Контактная почта (`II.1.3`) читается ЗДЕСЬ и только для почтового хвоста:
+ * это адресат письма, и больше ничего. Хвосту `shown` адресат не нужен —
+ * ссылка вручается ревьюеру на экран, — поэтому анкета без `II.1.3` (обычное
+ * дело у черновика, который оператор ещё не начал заполнять) в среде без
+ * SMTP получает ссылку, а не отказ. Проверка стоит ДО выписки токена — за
+ * несостоявшуюся отправку токен не выписывается (лишний живой доступ,
+ * выданный молча, — не безобидный побочный эффект); по той же причине
+ * выписка стоит в каждом хвосте своя, а не общим прологом.
  *
  * `flagCount` читается ЗДЕСЬ, а не передаётся вызывающим, и для
  * `requestChangesAction` это исправление той же ошибки с другой стороны: он
@@ -258,26 +351,37 @@ async function notifyOrNotice(
  * переход проходит) оператор получал «0 answer(s) need a correction» — та же
  * ложь, что и у пересылки, только через гонку. Чтение после коммита не
  * «правильнее по блокировке» (никакая блокировка тут не помогает, письмо
- * уходит наружу и вне транзакции — см. `notifyOrNotice`), а правдивее: цифра
- * и формулировка берутся из ОДНОГО чтения, поэтому текст письма не может
- * противоречить числу в нём. Остаточное: между этим чтением и доставкой
- * замечание могут снять — тогда письмо называет число, которое было верным в
- * момент отправки. Закрыть это нечем в принципе, и это не то же самое, что
- * назвать число, которое не было верным никогда.
+ * уходит наружу и вне транзакции решения), а правдивее: цифра и формулировка
+ * берутся из ОДНОГО чтения, поэтому текст письма не может противоречить
+ * числу в нём. Остаточное: между этим чтением и доставкой замечание могут
+ * снять — тогда письмо называет число, которое было верным в момент
+ * отправки. Закрыть это нечем в принципе, и это не то же самое, что назвать
+ * число, которое не было верным никогда.
  */
 async function sendFillLink(input: {
   submissionId: string
-  to: string
   status: SubmissionStatus
-}): Promise<void> {
+}): Promise<FillLinkOutcome> {
+  const base = process.env.APP_URL ?? 'http://localhost:3000'
+
+  if (!mailDelivers()) {
+    const { token } = await issueFillToken(db(), {
+      submissionId: input.submissionId,
+      ttlDays: FILL_TOKEN_TTL_DAYS,
+    })
+    return { outcome: 'shown', fillUrl: `${base}/f/${token}` }
+  }
+
+  const to = await contactEmail(input.submissionId)
+  if (to === null) return { outcome: 'no_recipient' }
+
   const flagCount = (await openFlags(db(), input.submissionId)).length
   const { token } = await issueFillToken(db(), {
     submissionId: input.submissionId,
     ttlDays: FILL_TOKEN_TTL_DAYS,
   })
-  const base = process.env.APP_URL ?? 'http://localhost:3000'
   const common = {
-    to: input.to,
+    to,
     loungeName: await loungeName(input.submissionId),
     fillUrl: `${base}/f/${token}`,
   }
@@ -287,24 +391,46 @@ async function sendFillLink(input: {
       ? changesRequestedMail({ ...common, flagCount })
       : fillLinkMail(common),
   )
+  return { outcome: 'mailed', to }
 }
 
 export async function requestChangesAction(
   submissionId: string,
-): Promise<ActionResult> {
+): Promise<FillLinkActionResult> {
   const session = await requireSession()
   const result = await requestChanges(db(), { submissionId, reviewer: session.email })
   if (!result.ok) return { ok: false, error: result.error }
 
   revalidatePath(`/admin/s/${submissionId}`)
 
-  // Статус берётся из результата самого перехода, а не перечитывается: это то
+  // Дальше — только уведомление об УЖЕ состоявшемся решении, и любой его
+  // исход это `ok: true` с `notice` (см. `ActionResult`'s комментарий:
+  // транзакция закоммичена, откатывать её из-за письма нечем). Статус
+  // берётся из результата самого перехода, а не перечитывается: это то
   // состояние, в которое анкету перевела уже закоммиченная транзакция.
-  const notice = await notifyOrNotice(submissionId, (to) =>
-    sendFillLink({ submissionId, to, status: result.status }),
-  )
+  //
+  // Хвост `shown` (почта не настроена) возвращает ссылку НА ЭКРАН вместе с
+  // notice о том, что письма не было: переход состоялся, оператор должен
+  // как-то узнать о нём и получить доступ к правкам, и кроме ревьюера
+  // вручить ему ссылку некому. Раньше эта ветка тихо печатала письмо в
+  // stdout и показывала чистый успех — ревьюер считал оператора
+  // уведомлённым, а ссылки не существовало больше нигде.
+  let sent: FillLinkOutcome
+  try {
+    sent = await sendFillLink({ submissionId, status: result.status })
+  } catch (err) {
+    console.error(`[admin/s/${submissionId}] failed to send notification mail`, err)
+    return { ok: true, notice: MAIL_FAILED_NOTICE }
+  }
 
-  return notice ? { ok: true, notice } : { ok: true }
+  switch (sent.outcome) {
+    case 'no_recipient':
+      return { ok: true, notice: NO_CONTACT_EMAIL_NOTICE }
+    case 'shown':
+      return { ok: true, notice: RETURNED_LINK_NOT_MAILED_NOTICE, fillUrl: sent.fillUrl }
+    case 'mailed':
+      return { ok: true }
+  }
 }
 
 /**
@@ -367,20 +493,25 @@ export async function requestChangesAction(
  * разделе (строка 21, цитата выше — проверена по файлу) сам называет черновик
  * законным случаем пересылки.
  *
- * Порядок проверок: статус — первым, до контактной почты. Обе дают `ok: false`,
- * но «анкета на проверке» говорит проверяющему, что делать дальше (вернуть на
- * правку), а «нет почты (II.1.3)» на анкете, которую всё равно нельзя открыть,
- * послало бы его исправлять не то.
+ * Порядок проверок: статус — первым, до всего остального. И статусный отказ,
+ * и «нет почты (II.1.3)» дают `ok: false`, но «анкета на проверке» говорит
+ * проверяющему, что делать дальше (вернуть на правку), а разговор об адресе
+ * на анкете, которую всё равно нельзя открыть, послал бы его исправлять не то.
  *
  * В отличие от `requestChangesAction`/`approveAction`, отсутствие контактной
  * почты здесь — настоящий отказ (`ok: false`), а не мягкое уведомление: у
- * этого действия нет другого эффекта, кроме отправки письма, так что
- * "решение состоялось, уведомление не ушло" неприменимо — если письмо
- * некому отправлять, действие целиком ничего не сделало.
+ * этого действия нет решения, которое «состоялось бы» отдельно от письма, —
+ * если письмо некому отправлять, действие целиком ничего не сделало. Но отказ
+ * этот существует ТОЛЬКО в среде, где письмо вообще отправляется: без SMTP
+ * эффект действия — показать ссылку ревьюеру (`shown`), адресат в нём не
+ * участвует, и анкета без `II.1.3` — не помеха, а обычный черновик, который
+ * оператор ещё не начал заполнять (ровно тот случай, ради которого кнопка и
+ * нужна: истёкшая ссылка на пустой анкете). Разница веток — внутри
+ * `sendFillLink`, здесь только перевод её исходов в `FillLinkActionResult`.
  */
 export async function resendFillLinkAction(
   submissionId: string,
-): Promise<ActionResult> {
+): Promise<FillLinkActionResult> {
   await requireSession()
 
   const status = await submissionStatusOf(submissionId)
@@ -397,19 +528,9 @@ export async function resendFillLinkAction(
   const gate = resendGateFor(status)
   if (!gate.allowed) return { ok: false, error: gate.reason }
 
-  const to = await contactEmail(submissionId)
-  if (!to) {
-    return {
-      ok: false,
-      error: {
-        en: 'This submission has no contact email (II.1.3)',
-        ru: 'У анкеты нет контактной почты (II.1.3)',
-      },
-    }
-  }
-
+  let sent: FillLinkOutcome
   try {
-    await sendFillLink({ submissionId, to, status })
+    sent = await sendFillLink({ submissionId, status })
   } catch (err) {
     console.error(`[admin/s/${submissionId}] failed to resend fill link mail`, err)
     // Было `ok: true` с уведомлением «A new link was created, but the email
@@ -438,18 +559,38 @@ export async function resendFillLinkAction(
     }
   }
 
-  // Раньше здесь было тихое `{ ok: true }` — ревьюер нажимал «Переслать
-  // ссылку», действие срабатывало, и экран не менялся вообще: с точки зрения
-  // ревьюера "ничего не произошло" и "письмо ушло" выглядели одинаково.
-  // В отличие от `requestChangesAction`/`approveAction`, у этого действия нет
-  // отдельного видимого эффекта (не появляется новый флаг, блок не меняет
-  // цвет) — единственное свидетельство успеха для ревьюера это `notice`.
-  return {
-    ok: true,
-    notice: {
-      en: `Link sent to ${to}.`,
-      ru: `Ссылка отправлена на ${to}.`,
-    },
+  switch (sent.outcome) {
+    case 'no_recipient':
+      return {
+        ok: false,
+        error: {
+          en: 'This submission has no contact email (II.1.3)',
+          ru: 'У анкеты нет контактной почты (II.1.3)',
+        },
+      }
+    // Почта не настроена: ссылка — на экран, с notice о том, что письма не
+    // было. Показ здесь безопасен по той же причине, по какой он обязателен:
+    // действие стоит за `requireSession()`, ссылку видит аутентифицированный
+    // ревьюер — а письмом она не уходила, так что экран не вторая копия
+    // доступа, а единственная (ср. `mailed` ниже, где всё наоборот).
+    case 'shown':
+      return { ok: true, notice: LINK_NOT_MAILED_NOTICE, fillUrl: sent.fillUrl }
+    // Раньше здесь было тихое `{ ok: true }` — ревьюер нажимал «Переслать
+    // ссылку», действие срабатывало, и экран не менялся вообще: с точки
+    // зрения ревьюера "ничего не произошло" и "письмо ушло" выглядели
+    // одинаково. У этого действия нет отдельного видимого эффекта (не
+    // появляется новый флаг, блок не меняет цвет) — единственное
+    // свидетельство успеха для ревьюера это `notice`. Ссылки в результате
+    // НЕТ, и это по существу: оператор получил её письмом, копия на экране
+    // ревьюера была бы лишней экспозицией живого доступа.
+    case 'mailed':
+      return {
+        ok: true,
+        notice: {
+          en: `Link sent to ${sent.to}.`,
+          ru: `Ссылка отправлена на ${sent.to}.`,
+        },
+      }
   }
 }
 
