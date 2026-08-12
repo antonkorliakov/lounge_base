@@ -203,6 +203,8 @@ button:disabled { opacity: .4; }
    то же объяснение, что и `title` выключенных кнопок (`state.note`), потому
    что `title` не существует ни на touch-устройстве, ни для скринридера. */
 .review-head { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #e4e6ea; }
+.review-back { display: inline-block; margin-bottom: 8px; font-size: 13px; color: #2563eb; text-decoration: none; }
+.review-back:hover { text-decoration: underline; }
 .review-head h1 { margin: 0 0 7px; font-size: 19px; }
 .review-iata { font-weight: 400; font-size: 15px; opacity: .55; }
 .review-export { float: right; font-weight: 400; font-size: 13px; }
@@ -364,6 +366,9 @@ button:disabled { opacity: .4; }
      нужны оба — синий #1d4ed8 и зелёный #15803d на тёмном фоне читаются как
      тёмное на тёмном. Тот же довод, что у пастельных фонов выше. */
   .review-state b { border-color: #3a3f47; }
+  /* Тот же приём, что у .review-state: насыщенный синий #2563eb на тёмном
+     фоне тонет; светлый оттенок того же синего остаётся ссылочным цветом. */
+  .review-back { color: #7ab3ff; }
   .review-state-submitted b { border-color: #60a5fa; color: #93c5fd; }
   .review-state-changes_requested b { border-color: #d97706; color: #fcd34d; }
   .review-state-approved b { border-color: #22c55e; color: #86efac; }
