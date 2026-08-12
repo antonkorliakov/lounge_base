@@ -114,6 +114,35 @@ function smtpMailer(url: string): Mailer {
 }
 
 /**
+ * Whether this environment can actually put mail in front of a human — the
+ * ONE definition of "SMTP is configured", shared with `createMailer` below.
+ * When this is false, `createMailer()` is `consoleMailer`: a send "succeeds"
+ * but the message lands in this process's stdout, which nobody is reading.
+ *
+ * Exists for callers whose honest behaviour differs when delivery is
+ * impossible — today the fill-link actions
+ * (`src/app/admin/s/[submissionId]/actions.ts`, `sendFillLink`'s hand-back
+ * tail), which show the minted link on the reviewer's screen instead of
+ * claiming it was sent. Those callers must ask HERE, not read
+ * `process.env.SMTP_URL` themselves: a second reading of "configured" would
+ * be a second copy of this rule, free to drift when this one changes.
+ *
+ * Deliberately NOT consulted by the login mail (`requestLoginAction`,
+ * `src/app/admin/login/actions.ts`), and that action must never grow the
+ * same show-the-link tail: the fill-link actions run behind
+ * `requireSession()`, so the link is revealed to an authenticated reviewer —
+ * but the login form is, by definition, in front of someone NOT signed in.
+ * Echoing the login link to that screen would let anyone who can type a team
+ * member's email mint themselves a session. With no SMTP, login links come
+ * from an operator with server access (`scripts/ops.ts`), not from the form.
+ *
+ * Reads the environment at call time, same as `createMailer` — see below.
+ */
+export function mailDelivers(): boolean {
+  return Boolean(process.env.SMTP_URL)
+}
+
+/**
  * Reads the environment at call time (not at module load), so tests and
  * callers that flip `SMTP_URL`/`MAIL_FROM` between calls see the effect
  * immediately, same as the brief specifies.
@@ -153,6 +182,8 @@ function smtpMailer(url: string): Mailer {
  *    `send` can fail.
  */
 export function createMailer(): Mailer {
-  const url = process.env.SMTP_URL
-  return url ? smtpMailer(url) : consoleMailer()
+  // The branch IS `mailDelivers()` — not a second reading of `SMTP_URL` that
+  // could drift from it. The non-null assertion is covered by the predicate:
+  // `mailDelivers()` is true only when `SMTP_URL` is a non-empty string.
+  return mailDelivers() ? smtpMailer(process.env.SMTP_URL!) : consoleMailer()
 }
