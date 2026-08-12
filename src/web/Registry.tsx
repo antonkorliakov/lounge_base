@@ -9,6 +9,8 @@ import type { OperationalStatus, SubmissionStatus } from '@/db/schema'
 import { useLocale } from '@/i18n/context'
 import { RegistryFiltersBar, type FilterOptions, type SubmissionStateOption } from './RegistryFilters'
 import { StatusEditor, type OperationalStatusMeta } from './StatusEditor'
+import { AddLounge } from './AddLounge'
+import { DeleteLounge } from './DeleteLounge'
 
 /**
  * Строка таблицы реестра — уже посчитанная сервером, а не сырой
@@ -60,6 +62,10 @@ const HEADERS: { key: string; label: Localized }[] = [
   // имени у ревьюера в системе нет.
   { key: 'reviewer', label: { en: 'Reviewer', ru: 'Ревьюер' } },
 ]
+// Колонка удаления — без текстового заголовка (в ней один неброский контрол,
+// см. `DeleteLounge`), но НЕ без имени: у скринридера пустой заголовок — это
+// колонка-загадка. Подпись — visually-hidden текстом, не aria-label на th.
+const DELETE_HEADER: Localized = { en: 'Delete', ru: 'Удаление' }
 const UNAPPROVED_XLSX: Localized = {
   en: 'Excel, incl. unapproved',
   ru: 'Excel, включая непринятые',
@@ -131,6 +137,10 @@ export function Registry(props: {
         </div>
       </header>
 
+      {/* Завести лаунж и получить его первую ссылку заполнения — бывшая
+          консольная операция `ops.ts lounge`, теперь с экрана. */}
+      <AddLounge />
+
       <RegistryFiltersBar
         query={props.query}
         filters={props.filters}
@@ -145,6 +155,9 @@ export function Registry(props: {
             {HEADERS.map((header) => (
               <th key={header.key}>{pick(header.label)}</th>
             ))}
+            <th>
+              <span className="vh">{pick(DELETE_HEADER)}</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -204,6 +217,11 @@ export function Registry(props: {
               {/* «—», как у остальных пустых ячеек этой таблицы: анкету ещё
                   никто не проверял — обычное состояние, а не ошибка. */}
               <td>{row.reviewerId ?? '—'}</td>
+              {/* Удаление — в конце строки, неброско: операция редкая, и её
+                  контрол не должен спорить за внимание с данными строки. */}
+              <td className="dl-cell">
+                <DeleteLounge loungeId={row.loungeId} name={row.name} />
+              </td>
             </tr>
           ))}
         </tbody>

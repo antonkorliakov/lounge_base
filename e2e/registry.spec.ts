@@ -149,9 +149,18 @@ test('реестр показывает оба статуса, приглуша�
   await expect(iga).toContainText(statusLabel('under_renovation'))
   await expect(iga).toContainText('→ 2026-09-15')
   await expect(marhaba).toContainText(statusLabel('closed'))
-  // Ячейка ревьюера (последняя колонка) у непроверявшегося лаунжа — «—»;
-  // почта настоящего решения закреплена в review.spec.ts после принятия.
-  await expect(iga.locator('td').last()).toHaveText('—')
+  // Ячейка ревьюера у непроверявшегося лаунжа — «—»; почта настоящего решения
+  // закреплена в review.spec.ts после принятия. Была `.last()`, пока ревьюер
+  // был последней колонкой; теперь за ним ячейка удаления, поэтому колонка
+  // находится по индексу своего заголовка, а не по позиции «последняя».
+  const headers = page.getByRole('columnheader')
+  const reviewerIndex = await headers.count().then(async (n) => {
+    for (let i = 0; i < n; i++) {
+      if ((await headers.nth(i).innerText()) === 'Reviewer') return i
+    }
+    throw new Error('колонка Reviewer не найдена')
+  })
+  await expect(iga.locator('td').nth(reviewerIndex)).toHaveText('—')
 
   // Закрытый приглушён; НЕзакрытый — нет: без второй половины тест не отличил
   // бы «класс вешается по статусу» от «класс вешается на все строки».
@@ -251,6 +260,76 @@ test('статус лаунжа меняется из реестра, виден
   // несуществующая в календаре, отклоняется» — 2026-02-30, 2026-13-01,
   // 2026-00-10), а «отказ действия виден в .se-error» остаётся на совести
   // ручной проверки Task 7. Решение записано, а не забыто.
+})
+
+test('лаунж заводится из реестра, ссылка заполнения открывает форму, удаление — только после набора названия', async ({
+  page,
+  watched,
+}) => {
+  // Имя уникально на прогон — то же правило, что у seedFleet/seedLounge:
+  // дев-база копит лаунжи, и фиксированное имя нашло бы несколько строк.
+  const name = `Created-${Math.random().toString(36).slice(2, 10)}`
+  await openRegistry(page, watched)
+
+  // ── Создание: форма из шести полей, provider оставлен пустым ─────────────
+  await page.getByRole('button', { name: 'Add lounge' }).click()
+  await page.getByLabel('Name*', { exact: true }).fill(name)
+  await page.getByLabel('IATA code*', { exact: true }).fill('ist') // нормализуется в IST
+  await page.getByLabel('Country*', { exact: true }).fill('Turkey')
+  await page.getByLabel('City*', { exact: true }).fill('Istanbul')
+  await page.getByLabel('Airport*', { exact: true }).fill('Istanbul Airport')
+  await page.getByRole('button', { name: 'Create', exact: true }).click()
+
+  // Ссылка заполнения показана для ручного копирования (почта не отправляется
+  // — SMTP нет), рядом кнопка копирования и предупреждение об одноразовости:
+  // хранится только хэш токена, второй раз ссылку взять неоткуда.
+  const url = page.locator('.al-url')
+  await expect(url).toBeVisible()
+  const fillUrl = await url.inputValue()
+  expect(fillUrl).toMatch(/\/f\/.+/)
+  await expect(page.getByRole('button', { name: 'Copy link', exact: true })).toBeVisible()
+  await expect(page.getByText('the link is not shown again', { exact: false })).toBeVisible()
+
+  // Новый лаунж уже в реестре за спиной панели (revalidatePath из действия) —
+  // и НАСТОЯЩИЙ признак успеха: ссылка открывает форму заполнения. Это тот
+  // самый «человек может дойти» класс, который не ловит ни один юнит-тест.
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+  await searchFor(page, name)
+  const row = rowFor(page, name)
+  await expect(row).toHaveCount(1)
+  await expect(row).toContainText('IST')
+
+  await page.goto(fillUrl)
+  await expect(
+    page.getByRole('heading', { name: 'Lounge Profile & Commercial Details' }),
+  ).toBeVisible()
+
+  // ── Удаление: кнопка неброская, ворота — набранное название ──────────────
+  await page.goto('/admin')
+  await searchFor(page, name)
+  await rowFor(page, name).getByRole('button', { name: `Delete lounge: ${name}` }).click()
+
+  // Диалог называет, что уничтожается, и предупреждает про ссылку оператора.
+  await expect(page.locator('.dl-warning')).toContainText('permanently deletes')
+  await expect(page.locator('.dl-warning')).toContainText('fill link, it will stop working')
+
+  const confirm = page.getByLabel('Type the lounge name to confirm')
+  const remove = page.getByRole('button', { name: 'Delete', exact: true })
+  // Пустое и НЕВЕРНОЕ название не дают удалить (подсказка клиента; настоящая
+  // сверка на сервере закреплена юнит-тестом manage-actions.test.ts).
+  await expect(remove).toBeDisabled()
+  await confirm.fill(`${name} wrong`)
+  await expect(remove).toBeDisabled()
+
+  await confirm.fill(name)
+  await remove.click()
+
+  // Строка исчезла без перезагрузки — и это сервер, а не состояние клиента:
+  // перечитанная страница говорит то же.
+  await expect(rowFor(page, name)).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Lounges' })).toBeVisible()
+  await expect(rowFor(page, name)).toHaveCount(0)
 })
 
 test('выгрузка уходит с текущим фильтром: состав строк меняется вместе с ним, непринятые — только по явной ссылке', async ({
