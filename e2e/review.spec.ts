@@ -2,7 +2,7 @@ import { test as base, expect, type Locator, type Page } from '@playwright/test'
 import { execSync } from 'node:child_process'
 import { BLOCKS } from '../src/form-schema/blocks'
 import { fieldByKey } from '../src/form-schema/fields'
-import { SEED_REVIEWER_EMAIL, seedEmailFor } from '../scripts/dev-support'
+import { SEED_REVIEWER_EMAIL } from '../scripts/dev-support'
 
 /**
  * Сторона проверяющего и круг «отметили → вернули → поправили → отправили
@@ -289,26 +289,50 @@ test('замечание, возврат на правку, исправлени
   // появится у оператора на экране правок (см. `flagging` в `gates.ts`).
   await expect(page.locator('.frow-act').first()).toBeAttached()
 
-  // ── А теперь «Переслать ссылку» показывает подтверждение с адресом ────────
+  // ── Возврат состоялся, а письма не было — ссылка вручается ревьюеру ───────
+  // `next dev` под e2e работает без SMTP_URL — та же среда, что сегодняшний
+  // бой: `mailDelivers()` false, письмо отправить некуда. Раньше эта ветка
+  // печатала письмо в stdout сервера и показывала чистый успех — ревьюер
+  // считал оператора уведомлённым, а единственный экземпляр ссылки (хранится
+  // только хэш) уходил в лог, который никто не читает. Теперь notice говорит
+  // правду, и ссылка стоит под ним. Ветку С настоящим SMTP (письмо уходит,
+  // ссылки на экране НЕТ — лишняя экспозиция) браузером отсюда не проверить;
+  // она закреплена юнит-тестами (`resend-fill-link.test.ts`).
+  await expect(page.locator('.review-notice')).toContainText('the operator was NOT emailed')
+  await expect(page.locator('.al-url')).toBeVisible()
+
+  // ── «Переслать ссылку» отдаёт ссылку тем же видом ─────────────────────────
   // Кнопка включается без перезагрузки: `requestChangesAction` вызывает
   // `revalidatePath` на этот же адрес, так что ответ действия несёт заново
   // отрисованную страницу — вместе с новым `resend` из `resendGateFor`.
   await expect(resend).toBeEnabled()
-  // Единственное свидетельство успеха у этого действия: нового замечания не
-  // появляется, цвет блока не меняется, и до появления `notice` «письмо ушло»
-  // и «ничего не произошло» выглядели для проверяющего одинаково. Адрес —
-  // тот, что лежит в анкете (`II.1.3`, его читает `contactEmail`), а не
-  // придуманный тестом.
+  // Дефект, найденный пользователем в бою: это действие выписывало настоящий
+  // токен и рапортовало «Link sent to <адрес>», а письмо печатал консольный
+  // почтальон. Теперь у успеха без почты то же представление, что у панели
+  // «Добавить лаунж» (`FillLinkReveal`, см. registry.spec.ts): видимый URL,
+  // копирование и предупреждение об одноразовости.
   await resend.click()
-  await expect(page.locator('.review-notice')).toHaveText(
-    `Link sent to ${seedEmailFor('II.1.3')}.`,
+  await expect(page.locator('.review-notice')).toContainText(
+    'Email is not configured on this server, so nothing was sent',
   )
   await expect(page.locator('.review-error')).toHaveCount(0)
+  const revealed = page.locator('.al-url')
+  await expect(revealed).toBeVisible()
+  const revealedUrl = await revealed.inputValue()
+  expect(revealedUrl).toMatch(/\/f\/[A-Za-z0-9_-]+/)
+  // Новая ссылка, не прежняя: сырой токен прежней не хранится, показать её
+  // повторно неоткуда — пересылка всегда выписывает следующую.
+  expect(revealedUrl).not.toBe(fillUrl)
+  await expect(page.getByRole('button', { name: 'Copy link', exact: true })).toBeVisible()
+  await expect(page.getByText('the link is not shown again', { exact: false })).toBeVisible()
 
-  // ── Заполняющий видит только отмеченное ──────────────────────────────────
+  // ── Заполняющий видит только отмеченное — по ссылке С ЭКРАНА ──────────────
+  // Заполняющий идёт по ссылке, которую ревьюер только что получил на экран и
+  // «вручил» ему, — весь новый путь доказан от кнопки до экрана правок, а не
+  // до строки в базе.
   const filler = await context.newPage()
   watched.watch(filler, 'filler')
-  await filler.goto(fillUrl)
+  await filler.goto(revealedUrl)
 
   await expect(filler.getByRole('heading', { name: 'Changes requested' })).toBeVisible()
   await expect(filler.locator('.fix-card')).toHaveCount(1)
@@ -433,6 +457,12 @@ test('принять анкету можно только когда снято 
 
   await clickAndAwaitAction(page, approve)
   await expect(page.locator('.review-error')).toHaveCount(0)
+  // Принятие состоялось, но у `approvedMail` в среде без SMTP адресата нет —
+  // notice говорит это, вместо прежнего чистого успеха (письмо в stdout).
+  // Ссылки при принятии не показывается никакой: форма закрыта оператору,
+  // вручать нечего.
+  await expect(page.locator('.review-notice')).toContainText('the operator was not notified')
+  await expect(page.locator('.al-url')).toHaveCount(0)
 
   // ── Принятая анкета говорит об этом сама ──────────────────────────────────
   // Ровно то состояние, в котором экран был опаснее всего: он выглядел так же,
@@ -457,8 +487,9 @@ test('принять анкету можно только когда снято 
   await expect(page.locator('.frow-act')).toHaveCount(0)
 
   // Строка реестра называет анкету принятой — видимый след успеха за
-  // пределами самого экрана проверки: `approveAction` при удачном письме не
-  // возвращает уведомления. Прежде здесь проверялось исчезновение из списка
+  // пределами самого экрана проверки (с настроенным SMTP `approveAction` при
+  // удачном письме не возвращает и уведомления — экран не меняется ничем,
+  // кроме состояния). Прежде здесь проверялось исчезновение из списка
   // «Awaiting review»; из реестра лаунж не исчезает никогда (Global
   // Constraints плана 3) — принятая анкета видна сменившейся подписью.
   await page.goto('/admin')
