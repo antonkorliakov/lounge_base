@@ -1,9 +1,12 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { del } from '@vercel/blob'
 import { db } from '@/db/client'
 import { requireSession } from '@/access/session'
 import { setOperationalStatus, statusHistory } from '@/registry/status'
+import { createLounge, deleteLounge, type CreateLoungeInput } from '@/registry/manage'
+import type { Localized } from '@/form-schema'
 import type { OperationalStatus } from '@/db/schema'
 import type { ActionResult } from './s/[submissionId]/actions'
 
@@ -90,4 +93,75 @@ export async function statusHistoryAction(
     actor: change.actor,
     at: change.at.toISOString(),
   }))
+}
+
+/**
+ * Не общий `ActionResult`, потому что успех здесь НЕСЁТ ДАННЫЕ — готовую
+ * ссылку заполнения. Ошибочная половина — тот же контракт (весь `Localized`,
+ * клиент выбирает через `pick()`).
+ */
+export type CreateLoungeActionResult =
+  | { ok: true; fillUrl: string }
+  | { ok: false; error: Localized }
+
+/**
+ * Завести лаунж из реестра и получить его ПЕРВУЮ ссылку заполнения.
+ *
+ * Возвращает готовый URL, а не сырой токен: базовый адрес — знание сервера
+ * (`APP_URL`, тот же откат на localhost, что у `sendFillLink` и действий
+ * входа), и клиенту, которому нужно ровно «что вставить оператору в письмо»,
+ * отдаётся ровно это. Показывается ссылка ОДИН раз: хранится только хэш
+ * токена (`issueFillToken`), повторно показать её неоткуда — интерфейс
+ * обязан сказать это словами (см. `AddLounge`).
+ *
+ * `requireSession()` — первым оператором, как у всех действий кабинета.
+ * Валидация полей — внутри `createLounge`: правило одно и живёт там.
+ * `revalidatePath` — после успеха: новый лаунж обязан появиться в реестре
+ * тем же механизмом, каким `setStatusAction` показывает смену статуса.
+ */
+export async function createLoungeAction(
+  input: CreateLoungeInput,
+): Promise<CreateLoungeActionResult> {
+  await requireSession()
+
+  const result = await createLounge(db(), input)
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath('/admin')
+  const base = process.env.APP_URL ?? 'http://localhost:3000'
+  return { ok: true, fillUrl: `${base}/f/${result.token}` }
+}
+
+/**
+ * Удалить лаунж из реестра. Ворота — название, набранное руками, и сверяет
+ * его СЕРВЕР (`deleteLounge`): выключенная кнопка диалога — подсказка, а не
+ * защита (правило ветки — серверное действие достижимо по сети напрямую).
+ *
+ * Блобы снимков чистятся ПОСЛЕ коммита и best-effort — тот же выбор и та же
+ * причина, что у `DELETE /api/photos`: строка (здесь — весь граф лаунжа) уже
+ * удалена, и превращать сбой чистки хранилища в «удаление не удалось» было
+ * бы ложью, из-за которой человек пытался бы удалить уже несуществующее.
+ * Упавший `del` оставляет блобы-орфаны — лишние байты в хранилище, не дыра;
+ * `del` принимает массив URL-ов (проверено по типам @vercel/blob), пустой
+ * массив не отправляется — нечего.
+ */
+export async function deleteLoungeAction(
+  loungeId: string,
+  confirmName: string,
+): Promise<ActionResult> {
+  await requireSession()
+
+  const result = await deleteLounge(db(), { loungeId, confirmName })
+  if (!result.ok) return { ok: false, error: result.error }
+
+  if (result.photoUrls.length > 0) {
+    try {
+      await del(result.photoUrls)
+    } catch (err) {
+      console.error(`[admin] lounge ${loungeId} deleted, blob cleanup failed`, err)
+    }
+  }
+
+  revalidatePath('/admin')
+  return { ok: true }
 }
