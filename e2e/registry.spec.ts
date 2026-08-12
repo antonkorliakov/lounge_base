@@ -105,6 +105,20 @@ function statusLabel(id: (typeof OPERATIONAL_STATUSES)[number]['id']): string {
   return OPERATIONAL_STATUSES.find((status) => status.id === id)!.label.en
 }
 
+/**
+ * Селекты панели фильтров ищутся В ПАНЕЛИ, а не по всей странице: подпись
+ * контрола в `getByLabel` сопоставляется подстрокой, а имена лаунжей — вольный
+ * текст, попадающий в aria-label кнопок удаления («Delete lounge: <имя>»), и
+ * лаунж с «airport»/«zone» в имени (флот этого файла!) делает страничный
+ * `getByLabel('Airport')` strict-mode нарушением. `exact: true` не спасает:
+ * доступное имя обёрнутого select'а склеивается из ВСЕГО текста label —
+ * «Airportall Dubai International…». Та же ловушка подстрочного имени, что у
+ * `flag`/`Flag` в review.spec (см. историю там).
+ */
+function filterBar(page: Page): Locator {
+  return page.locator('.registry-filters')
+}
+
 /** Строка реестра по имени лаунжа. Имена уникальны на прогон (см. `seedFleet`),
  *  так что подстрочный `hasText` находит ровно одну строку. */
 function rowFor(page: Page, name: string): Locator {
@@ -153,10 +167,12 @@ test('реестр показывает оба статуса, приглуша�
   // закреплена в review.spec.ts после принятия. Была `.last()`, пока ревьюер
   // был последней колонкой; теперь за ним ячейка удаления, поэтому колонка
   // находится по индексу своего заголовка, а не по позиции «последняя».
+  // `textContent`, не `innerText`: заголовки таблицы капитализирует CSS
+  // (`text-transform: uppercase`), и innerText вернул бы 'REVIEWER'.
   const headers = page.getByRole('columnheader')
   const reviewerIndex = await headers.count().then(async (n) => {
     for (let i = 0; i < n; i++) {
-      if ((await headers.nth(i).innerText()) === 'Reviewer') return i
+      if ((await headers.nth(i).textContent()) === 'Reviewer') return i
     }
     throw new Error('колонка Reviewer не найдена')
   })
@@ -168,7 +184,7 @@ test('реестр показывает оба статуса, приглуша�
   await expect(iga).not.toHaveClass(/row-dim/)
 
   // Фильтр по зоне СКЛАДЫВАЕТСЯ с поиском: строка запроса сохраняет оба.
-  await page.getByLabel('Zone').selectOption('arrival')
+  await filterBar(page).getByLabel('Zone').selectOption('arrival')
   await expect(page).toHaveURL(/zone=arrival/)
   await expect(page).toHaveURL(new RegExp(`search=${fleet.base}`))
 
@@ -188,7 +204,7 @@ test('фильтр по аэропорту живёт в адресной стр
 
   // `selectOption` — по value (название аэропорта и есть value опции,
   // `filterOptions` отдаёт строки из базы как есть).
-  await page.getByLabel('Airport').selectOption('Dubai International')
+  await filterBar(page).getByLabel('Airport').selectOption('Dubai International')
   await expect(page).toHaveURL(/airport=Dubai\+International/)
 
   await page.reload()
@@ -196,7 +212,7 @@ test('фильтр по аэропорту живёт в адресной стр
   await expect(rowFor(page, fleet.iga)).toHaveCount(0)
   // И контрол после перезагрузки показывает выбор из URL, а не «все»: фильтр
   // хранится в адресе, состояние страницы из него восстановимо целиком.
-  await expect(page.getByLabel('Airport')).toHaveValue('Dubai International')
+  await expect(filterBar(page).getByLabel('Airport')).toHaveValue('Dubai International')
 })
 
 test('статус лаунжа меняется из реестра, виден без перезагрузки, а правка одной даты не стирает комментарий', async ({
@@ -403,7 +419,7 @@ test('выгрузка уходит с текущим фильтром: сост
 
   // Сузить фильтр — и СОСТАВ СТРОК файла меняется вместе со страницей, а не
   // только имя файла: та же ссылка после фильтра по зоне отдаёт один лаунж.
-  await page.getByLabel('Zone').selectOption('arrival')
+  await filterBar(page).getByLabel('Zone').selectOption('arrival')
   await expect(page).toHaveURL(/zone=arrival/)
   await expect(rowFor(page, fleet.base)).toHaveCount(1)
 
