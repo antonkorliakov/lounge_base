@@ -9,10 +9,11 @@ import { useLocale } from '@/i18n/context'
 import { keysOfBlock } from '@/review/blocks'
 import { BlockNav } from './BlockNav'
 import { FieldRow } from './FieldRow'
+import { FillLinkReveal } from './FillLinkReveal'
 import {
   flagAction, unflagAction, confirmBlockAction, unconfirmBlockAction,
   requestChangesAction, approveAction, resendFillLinkAction,
-  type ActionResult,
+  type FillLinkActionResult,
 } from '@/app/admin/s/[submissionId]/actions'
 // `import type` — стирается при компиляции, так что серверный модуль (а с ним
 // `@/submissions/editable`, `@/review/blocks` и `drizzle-orm`) в браузерный
@@ -103,6 +104,7 @@ export function ReviewScreen(props: {
   const [current, setCurrent] = useState(BLOCKS[0]!.key)
   const [error, setError] = useState<Localized | null>(null)
   const [notice, setNotice] = useState<Localized | null>(null)
+  const [fillUrl, setFillUrl] = useState<string | null>(null)
 
   const flagByKey = new Map(props.flags.map((flag) => [flag.fieldKey, flag]))
   const block = BLOCKS.find((b) => b.key === current)!
@@ -133,13 +135,24 @@ export function ReviewScreen(props: {
   // некому было его отправить — см. `actions.ts`'s собственный комментарий).
   // Смешивать это с `error` означало бы показать успешное действие как
   // отказ, хотя решение уже закоммичено и откатывать его нечем.
-  async function run(action: () => Promise<ActionResult>): Promise<void> {
+  //
+  // Тип — `FillLinkActionResult`, потому что два из семи действий («Переслать
+  // ссылку», «Вернуть на правку») могут вернуть успех со ссылкой заполнения
+  // (`fillUrl` — только когда почта не доставляет, см. его комментарий в
+  // `actions.ts`); остальные возвращают `ActionResult`, который к нему
+  // присваиваем. Ссылка, как и `notice`, — свойство ПОСЛЕДНЕГО действия:
+  // любой следующий результат её снимает (одноразовость сказана словами в
+  // `FillLinkReveal`, а не охраняется удержанием на экране; повторное нажатие
+  // просто выписывает новую — токены не отзываются, см. `issueFillToken`).
+  async function run(action: () => Promise<FillLinkActionResult>): Promise<void> {
     const result = await action()
     if (result.ok) {
       setError(null)
       setNotice(result.notice ?? null)
+      setFillUrl(result.fillUrl ?? null)
     } else {
       setNotice(null)
+      setFillUrl(null)
       setError(result.error)
     }
   }
@@ -225,6 +238,13 @@ export function ReviewScreen(props: {
 
         {error && <p className="review-error">{pick(error)}</p>}
         {notice && <p className="review-notice">{pick(notice)}</p>}
+        {/* Ссылка заполнения, которую письмо не унесло (почта не настроена —
+            `fillUrl` приходит только в этом случае). Вступление к ней — сам
+            `notice` выше («письма не было, передайте сами»), поэтому у
+            компонента своего вступления нет. `key` обязателен: повторная
+            пересылка выписывает НОВУЮ ссылку, и «Скопировано» прежней не
+            должно её пережить (см. `FillLinkReveal`). */}
+        {fillUrl && <FillLinkReveal key={fillUrl} url={fillUrl} />}
 
         <div className="review-foot">
           <button

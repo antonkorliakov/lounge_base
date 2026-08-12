@@ -4,29 +4,16 @@ import { useState } from 'react'
 import type { Localized } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 import { createLoungeAction } from '@/app/admin/actions'
+import { FillLinkReveal } from './FillLinkReveal'
 
 const OPEN: Localized = { en: 'Add lounge', ru: 'Добавить лаунж' }
 const TITLE: Localized = { en: 'New lounge', ru: 'Новый лаунж' }
 const CREATE: Localized = { en: 'Create', ru: 'Создать' }
 const CANCEL: Localized = { en: 'Cancel', ru: 'Отмена' }
 const DONE: Localized = { en: 'Done', ru: 'Готово' }
-const COPY: Localized = { en: 'Copy link', ru: 'Скопировать ссылку' }
-const COPIED: Localized = { en: 'Copied', ru: 'Скопировано' }
-const COPY_FAILED: Localized = {
-  en: 'Copying failed — select the link and copy it manually',
-  ru: 'Скопировать не вышло — выделите ссылку и скопируйте вручную',
-}
 const CREATED: Localized = {
   en: 'Lounge created. Fill link for the operator:',
   ru: 'Лаунж заведён. Ссылка заполнения для оператора:',
-}
-// Хранится только хэш токена (`issueFillToken`) — сырой ссылки после этого
-// экрана не существует нигде, и почта пока не отправляется (нет SMTP):
-// проверяющий вставляет ссылку в своё письмо руками, поэтому «один раз»
-// сказано словами, а не оставлено выясняться потерей.
-const ONE_TIME: Localized = {
-  en: 'Copy it now — the link is not shown again.',
-  ru: 'Скопируйте сейчас — повторно ссылка не показывается.',
 }
 
 /** Поля формы = обязательные колонки `lounges` + provider. Страна/город/
@@ -49,12 +36,9 @@ const EMPTY: Record<FieldKey, string> = {
 /**
  * «Добавить лаунж» на экране реестра: форма из шести полей, создающая лаунж +
  * пустую анкету + первый fill-токен одним действием (`createLoungeAction`),
- * и показ ссылки заполнения для ручного копирования.
- *
- * `navigator.clipboard.writeText` требует secure context (боевой https и
- * localhost — да) и может отказать; отказ показывается ВИДИМЫМ текстом с
- * планом Б (выделить и скопировать руками), а не глотается — ссылка в
- * readonly-инпуте именно затем, чтобы план Б работал.
+ * и показ ссылки заполнения для ручного копирования — общим `FillLinkReveal`
+ * (копирование, план Б при отказе буфера и предупреждение об одноразовости —
+ * его правила, одни на оба места показа ссылки; см. его комментарий).
  *
  * `error` — весь `Localized`, выбор через `pick()` в момент показа
  * (соглашение ветки). Появление нового лаунжа в таблице за спиной формы —
@@ -67,14 +51,12 @@ export function AddLounge(): React.JSX.Element {
   const [error, setError] = useState<Localized | null>(null)
   const [busy, setBusy] = useState(false)
   const [fillUrl, setFillUrl] = useState<string | null>(null)
-  const [copied, setCopied] = useState<'ok' | 'failed' | null>(null)
 
   function close(): void {
     setOpen(false)
     setValues(EMPTY)
     setError(null)
     setFillUrl(null)
-    setCopied(null)
   }
 
   async function create(): Promise<void> {
@@ -93,16 +75,6 @@ export function AddLounge(): React.JSX.Element {
       else setError(result.error)
     } finally {
       setBusy(false)
-    }
-  }
-
-  async function copy(): Promise<void> {
-    if (fillUrl === null) return
-    try {
-      await navigator.clipboard.writeText(fillUrl)
-      setCopied('ok')
-    } catch {
-      setCopied('failed')
     }
   }
 
@@ -141,17 +113,14 @@ export function AddLounge(): React.JSX.Element {
       ) : (
         <>
           <p className="al-title">{pick(CREATED)}</p>
-          <input className="al-url" readOnly value={fillUrl} onFocus={(e) => e.target.select()} />
-          <p className="al-once">{pick(ONE_TIME)}</p>
-          {copied === 'failed' && <p className="se-error">{pick(COPY_FAILED)}</p>}
-          <div className="se-actions">
-            <button type="button" onClick={() => void copy()}>
-              {copied === 'ok' ? pick(COPIED) : pick(COPY)}
-            </button>
+          {/* `key` не нужен: панель показывает не больше одной ссылки за
+              открытие (`close()` сбрасывает `fillUrl`, компонент
+              размонтируется вместе со своим «Скопировано»). */}
+          <FillLinkReveal url={fillUrl}>
             <button type="button" onClick={close}>
               {pick(DONE)}
             </button>
-          </div>
+          </FillLinkReveal>
         </>
       )}
     </div>

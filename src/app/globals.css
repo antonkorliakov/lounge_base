@@ -340,6 +340,12 @@ button:disabled { opacity: .4; }
 .al-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
 .al-field input, .al-url { padding: 6px 8px; font: inherit; font-size: 13px; border: 1px solid #c9ced6; border-radius: 6px; }
 .al-once { margin: 0; font-size: 12px; color: #92400e; }
+/* Одноразовая ссылка заполнения (`FillLinkReveal`) — общая для панели
+   «Добавить лаунж» и экрана проверки. Только раскладка, без цветов, поэтому
+   тёмной пары нет: цвета несут .al-url/.al-once/.se-error, у которых тёмные
+   двойники уже есть ниже. max-width — чтобы в широкой панели проверки инпут
+   не растягивался на весь экран ради URL в ~60 знаков. */
+.link-reveal { display: flex; flex-direction: column; gap: 8px; max-width: 560px; font-size: 13px; }
 /* Удаление лаунжа: неброский «×» в конце строки (редкая операция — красная
    кнопка на каждой строке кричала бы попусту) и диалог с набором названия. */
 .dl-cell { text-align: right; }
