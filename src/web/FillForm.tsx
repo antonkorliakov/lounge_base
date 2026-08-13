@@ -288,16 +288,23 @@ export function FillForm(props: {
             touched={touched}
           />
           {submitErrorNode()}
-          <button type="button" onClick={submit}>
+        </main>
+        {/* Та же закреплённая панель, что у 19-шагового прохода (см.
+            `.shell-foot`): у этого экрана нет шагов, поэтому в ней стоит
+            только отправка — но стоит она там же и выглядит так же, где бы
+            заполняющий ни был по списку правок. Один вид нижней панели на обе
+            формы анкеты, а не два поведения. */}
+        <footer className="shell-foot">
+          <button type="button" className="shell-primary" onClick={submit}>
             {t('form.submit')}
           </button>
-        </main>
+        </footer>
       </div>
     )
   }
 
   return (
-    <FormShell status={statusText}>
+    <FormShell status={statusText} onSubmit={submit}>
       {(step) => {
         if (step.kind === 'fields') {
           return FIELDS.filter((f) => f.block === step.blockKey).map((field) => (
@@ -325,12 +332,14 @@ export function FillForm(props: {
           )
         }
 
+        // Сама кнопка отправки живёт в закреплённой панели шелла (см.
+        // `FormShell`'s footer и его проп `onSubmit`) — здесь остаётся тело
+        // шага: что происходит при отправке, и список недостающих ответов,
+        // если сервер отказал.
         return (
           <div className="review">
+            <p>{t('form.reviewHint')}</p>
             {submitErrorNode()}
-            <button type="button" onClick={submit}>
-              {t('form.submit')}
-            </button>
           </div>
         )
       }}

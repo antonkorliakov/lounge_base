@@ -10,17 +10,119 @@ body {
 .shell { display: flex; flex-direction: column; min-height: 100dvh; }
 .shell-top-row,
 .shell-foot { display: flex; gap: 12px; align-items: center; padding: 12px 16px; }
-.shell-foot { margin-top: auto; border-top: 1px solid #e4e6ea; }
+/* The action bar is pinned to the viewport bottom on both form factors —
+   operators fill on phones, and Back/Next must be reachable mid-way through
+   a 58-row step. `sticky`, not `fixed`, deliberately: a sticky element KEEPS
+   its place in normal flow (at the document's end, where margin-top: auto
+   already puts it), so its height is always reserved after the last field —
+   nothing can ever be hidden under it, and no manually-maintained
+   padding-bottom on the scroll area has to track the bar's (locale- and
+   wrap-dependent) height, which `fixed` would require. The background must
+   be opaque (body's own color, dark pair below): while stuck, form content
+   scrolls underneath. env(safe-area-inset-bottom) keeps the buttons above
+   the iPhone home indicator — non-zero only with viewport-fit=cover, which
+   src/app/layout.tsx's `viewport` export now sets. */
+.shell-foot {
+  margin-top: auto;
+  border-top: 1px solid #e4e6ea;
+  position: sticky;
+  bottom: 0;
+  background: #fff;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+/* The step's primary action (Next; Submit on the review step and the fixes
+   screen): the form's one accent — the same #2563eb the progress segments
+   use — on the wizard-idiomatic right edge (margin-left: auto works with
+   both a Back button before it and alone, on the fixes screen's bar).
+   Back stays the quiet bordered default: it must be present, not tempting.
+   White-on-#2563eb holds in dark mode too (4.5:1 on the button itself, and
+   the accent is already used as-is on dark by the segments) — restated
+   explicitly in the dark block below rather than left to specificity. */
+.shell-primary {
+  margin-left: auto;
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
 .shell-top { border-bottom: 1px solid #e4e6ea; padding-bottom: 4px; }
 .shell-top-row { padding-bottom: 0; }
 .shell-status { margin-left: auto; font-size: 13px; opacity: .7; }
-.shell-body { padding: 16px; }
+.shell-body { padding: 16px 16px 28px; }
 
-/* Thin progress bar so a 15-screen run of field blocks reads as "getting
-   somewhere" rather than a bare counter. */
-.shell-bar { height: 4px; margin: 8px 16px 0; background: #e4e6ea; border-radius: 2px; overflow: hidden; }
-.shell-bar-fill { height: 100%; background: #2563eb; transition: width .2s ease; }
-.shell-title { font-size: 18px; margin: 10px 16px 0; }
+/* The thin progress strip, now drawn as 19 discrete segments (one per step,
+   filled up to the current one) so it reads as steps, not a percentage.
+   Still aria-hidden and non-interactive — a 4px-tall sliver can't be an
+   honest 44px tap target; the interactive way to a step is the list under
+   the title (.shell-steps). */
+.shell-bar { display: flex; gap: 3px; height: 4px; margin: 8px 16px 0; }
+.shell-seg { flex: 1; background: #e4e6ea; border-radius: 2px; transition: background-color .2s ease; }
+.shell-seg-done { background: #2563eb; }
+
+/* Step title = step navigator. The title names the current step (as it
+   always did) and is the disclosure button for the all-steps list — one
+   element, so the step is named exactly once. The wrapper is the positioning
+   context for the dropdown panel. */
+.shell-nav { position: relative; margin: 0 16px; }
+.shell-title { font-size: 18px; margin: 10px 0 0; }
+.shell-title-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.shell-title-chevron { font-size: 12px; opacity: .55; }
+/* The panel overlays the form (absolute, not in flow — opening it must not
+   shove the fields down) and scrolls internally: 19 × 44px does not fit a
+   phone viewport. Opaque background in both schemes — form content sits
+   right underneath. */
+.shell-steps {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: #fff;
+  border: 1px solid #d6dae0;
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(20, 24, 32, .16);
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+}
+.shell-steps ol { list-style: none; margin: 0; padding: 6px; }
+.shell-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.shell-step:hover { background: #f2f4f7; }
+/* Same "current" treatment the review screen's BlockNav already uses
+   (.nav-current) — one visual language for "you are here" in a step list. */
+.shell-step-here,
+.shell-step-here:hover { background: #eef4ff; font-weight: 600; }
+.shell-step-num {
+  flex: 0 0 24px;
+  text-align: right;
+  font-size: 12px;
+  opacity: .55;
+  font-variant-numeric: tabular-nums;
+}
 
 .field { margin-bottom: 20px; }
 .field-label { display: block; font-weight: 600; margin-bottom: 6px; }
@@ -218,8 +320,11 @@ button:disabled { opacity: .4; }
      what the step holds. The top row doesn't need it: it is a child of the
      block-level .shell-top, where auto margins center at full width. */
   .shell-body { width: 100%; }
+  /* .shell-nav took over .shell-title's side margins (the title now lives
+     inside it, with the step-list panel anchored to the same box), so it is
+     what centers at the content width here. */
   .shell-bar,
-  .shell-title { max-width: 648px; margin-left: auto; margin-right: auto; }
+  .shell-nav { max-width: 648px; margin-left: auto; margin-right: auto; }
   /* The footer draws its own full-width top border, so it cannot take a
      max-width itself — its content is centered by padding instead:
      50% − 324px puts 648px of content in the middle, aligned with the body,
@@ -477,7 +582,27 @@ button:disabled { opacity: .4; }
   body { background: #111317; color: #f0f1f3; }
   .shell-top,
   .shell-foot { border-color: #2a2d34; }
-  .shell-bar { background: #2a2d34; }
+  /* The stuck bar's background must stay opaque on dark too — body's own
+     dark color, so scrolling content can't ghost through the buttons. */
+  .shell-foot { background: #111317; }
+  /* Restated, not merely inherited-by-specificity: the accent works as-is
+     on dark (same #2563eb the segments keep), and this line is where that
+     decision is visible. White on #2563eb is ~4.5:1 on the button itself. */
+  .shell-primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  .shell-seg { background: #2a2d34; }
+  /* Must be restated AFTER the dark .shell-seg rule: a done segment carries
+     both classes, and at equal specificity the later rule wins — without
+     this line the dark override above repaints filled segments gray (seen
+     in the browser, not hypothetical). */
+  .shell-seg-done { background: #2563eb; }
+  /* The step panel overlays form content — opaque dark surface (same as the
+     controls'), darker shadow so it still reads as floating. Hover/current
+     rows: same swaps the review screen's BlockNav uses (.nav-current →
+     #1b2735). */
+  .shell-steps { background: #1a1c21; border-color: #2a2d34; box-shadow: 0 10px 28px rgba(0, 0, 0, .55); }
+  .shell-step:hover { background: #22252c; }
+  .shell-step-here,
+  .shell-step-here:hover { background: #1b2735; }
   .field input,
   .field select,
   .field textarea,

@@ -12,7 +12,12 @@ export function ServicesPass1(props: {
 
   return (
     <section className="pass1">
-      <h2>{t('services.pass1Title')}</h2>
+      {/* Название шага (`services.pass1Title`) больше не рендерится здесь:
+          шелл теперь называет КАЖДЫЙ шаг в своём заголовке-навигаторе (см.
+          `stepTitle` в FormShell.tsx), и второй <h2> с тем же текстом прямо
+          под ним был бы дублем — и, что хуже, вторым heading с тем же
+          accessible name для e2e-локаторов. Подсказка остаётся: она — часть
+          этого экрана, а не его имя. */}
       <p className="subtitle">{t('services.pass1Hint')}</p>
 
       {SERVICE_GROUPS.map((group) => (

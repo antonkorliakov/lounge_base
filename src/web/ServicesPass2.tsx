@@ -49,7 +49,12 @@ export function ServicesPass2(props: {
 
   return (
     <section className="pass2">
-      <h2>{t('services.pass2Title')}</h2>
+      {/* Название шага (`services.pass2Title`) ушло в заголовок-навигатор
+          шелла — тот же довод, что у `ServicesPass1`: один heading с этим
+          именем, а не два. И раз навигатор позволяет прыгнуть сюда, не
+          пройдя первый проход, у пустого списка есть объяснение, а не
+          пустой экран (см. `services.pass2Empty`). */}
+      {keys.length === 0 && <p className="subtitle">{t('services.pass2Empty')}</p>}
       {keys.map((key) => {
         const item = serviceItemByKey(key)
         if (!item) return null
