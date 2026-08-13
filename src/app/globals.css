@@ -228,6 +228,29 @@ button:disabled { opacity: .4; }
     padding-left: max(16px, calc(50% - 324px));
     padding-right: max(16px, calc(50% - 324px));
   }
+
+  /* Short-typed inputs: width: 100% under a narrow column is right for
+     text, but a date is ten characters and a number rarely more than four —
+     a 648px box for "3" reads as a mistake. Targeted via the type=
+     attributes FieldInput/ServiceItemCard already emit, no component
+     changes. 12rem clears the longest localized date rendering plus the
+     picker icon. Template slots (.field-slot input) already size themselves
+     (width: auto) well under this cap. */
+  .field input[type='date'],
+  .field input[type='number'],
+  .pass2-card input[type='number'] { max-width: 12rem; }
+  /* The pass-2 currency box is the one input ServiceItemCard renders with
+     no type attribute at all — it holds a three-letter code; same argument
+     as the numbers above. */
+  .pass2-card input:not([type]) { max-width: 12rem; }
+  /* The card's plain <label>s are inline, and on mobile each still gets its
+     own line because the input after it is width: 100%. The caps above end
+     that side effect: "Price [25] Currency [USD]" would run together on one
+     line, labels touching inputs. Restore the label-above-control structure
+     the card has on mobile. :not(.field-check) because the "Booking
+     required" checkbox row is a label too and must keep its flex layout —
+     and .pass2-card label alone would out-rank plain .field-check. */
+  .pass2-card label:not(.field-check) { display: block; }
 }
 
 .review-screen { display: grid; grid-template-columns: 200px 1fr; min-height: 100dvh; }
