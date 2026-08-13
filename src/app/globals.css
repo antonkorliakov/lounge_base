@@ -177,6 +177,59 @@ button {
 }
 button:disabled { opacity: .4; }
 
+/* ================= Desktop refinement (fill form) =================
+   The fill form is mobile-first by design — agents walk the lounge with a
+   phone, and that flow stays sacred — so everything below is ADDITIVE,
+   behind one width breakpoint. Below 720px not a single declaration here
+   applies, so the phone rendering stays exactly what it was. Layout only,
+   no colors introduced, hence no dark-mode counterparts.
+
+   One breakpoint, 720px: the column is 680px wide and needs its own side
+   gutters to read as "centered on purpose" rather than "barely fits", so
+   the switch happens at 680 + 2×16 (the shell's side padding), rounded to
+   720. A phone in landscape (~850px) gets the centered column too, which is
+   right: the landscape stretch has the same orphaned-label problem a
+   desktop window has. No second breakpoint — nothing in this form gets
+   better at 1200px than at 720; the column is the fix, not a fluid scale.
+
+   680px, one width for every step: 15 of the form's 19 steps are field
+   blocks of single-line inputs under bold labels, and those read best when
+   the line the eye returns across is short (~650px of content — 680 minus
+   the shell's 16px paddings). Pass-2 cards and the photo step could afford
+   ~900px, but the counter row, progress bar, title, body and footer are
+   siblings, not children of one wrapper, and they must stay one visually
+   aligned column — so one width serves all steps, and the photo step gets
+   its extra room from layout INSIDE the column (the grid below) instead of
+   a wider, misaligned shell. */
+@media (min-width: 720px) {
+  /* The centered column. Body and top row keep their own 16px side
+     paddings, so their max-width includes them (680 = 648 content + 32).
+     The progress bar and the title carry side MARGINS, not paddings, so
+     they center at the content width (648) — their edges land exactly on
+     the fields' edges. The header's bottom border stays full-width (it sits
+     on .shell-top, untouched), which keeps the separator line spanning the
+     window while the content is a column. */
+  .shell-top-row,
+  .shell-body { max-width: 680px; margin-left: auto; margin-right: auto; }
+  /* .shell-body is a flex ITEM of the column .shell, and a flex item with
+     auto cross-axis margins is sized to its content instead of stretching —
+     on a content-narrow step (photos, review) the body collapsed to the
+     width of a thumbnail. width: 100% pins it to the column regardless of
+     what the step holds. The top row doesn't need it: it is a child of the
+     block-level .shell-top, where auto margins center at full width. */
+  .shell-body { width: 100%; }
+  .shell-bar,
+  .shell-title { max-width: 648px; margin-left: auto; margin-right: auto; }
+  /* The footer draws its own full-width top border, so it cannot take a
+     max-width itself — its content is centered by padding instead:
+     50% − 324px puts 648px of content in the middle, aligned with the body,
+     and max() keeps the phone's 16px as the floor. */
+  .shell-foot {
+    padding-left: max(16px, calc(50% - 324px));
+    padding-right: max(16px, calc(50% - 324px));
+  }
+}
+
 .review-screen { display: grid; grid-template-columns: 200px 1fr; min-height: 100dvh; }
 .block-nav { border-right: 1px solid #e4e6ea; padding: 8px 0; overflow-y: auto; }
 .nav-item {
