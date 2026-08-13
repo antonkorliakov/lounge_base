@@ -6,6 +6,7 @@ import {
   OPTION_LISTS,
   PHOTO_SLOTS,
   SERVICE_ITEMS,
+  isBinaryAvailability,
   keysOfBlock,
   serviceItemByKey,
 } from '@/form-schema'
@@ -46,7 +47,13 @@ import type { ServiceValueInput } from '@/form-schema'
 
 const REVIEWABLE_KEYS: string[] = BLOCKS.flatMap((block) => keysOfBlock(block.key))
 
-const CONTROL_RE = /<(?:input|select|textarea)\b/
+// `button` joined the list when binary service items' availability became a
+// Yes|No toggle-button pair (see `ServiceAvailabilityInput`): an unanswered
+// binary item's card renders BUTTONS and nothing else — no input, select or
+// textarea — and that is a working control, not a missing one. This does not
+// weaken the unknown-key assertions below: `FixesOnly` renders no buttons of
+// its own outside the controls, so an unmatched card still matches nothing.
+const CONTROL_RE = /<(?:input|select|textarea|button)\b/
 
 function flagFor(key: string): Flag {
   return { fieldKey: key, reason: null, comment: `please fix ${key}` }
@@ -164,26 +171,30 @@ describe('контрол отмеченной позиции услуг', () => 
     // The reviewer's most common reason code is `empty`, so the flagged item
     // is usually the one with NO row in `service_values` and therefore no
     // entry in the `services` map at all. `ServicesPass2`'s old
-    // `if (!value) return null` would have rendered nothing here.
+    // `if (!value) return null` would have rendered nothing here. Wifi is a
+    // binary (`yesNo`) item, so its control is the toggle-button pair — one
+    // button per option of the item's OWN list, labelled by that list.
     const html = renderFixes([flagFor(WIFI)], { services: {} })
     expect(html).toContain(UI['services.available'].en)
     for (const option of OPTION_LISTS[serviceItemByKey(WIFI)!.availabilityList]) {
-      expect(html, option.id).toContain(`value="${option.id}"`)
+      expect(html, option.id).toContain(`>${option.label.en}</button>`)
     }
   })
 
   /**
-   * The Important this control was rebuilt for: it was a checkbox
-   * (`checked={value?.available === 'yes'}`), so "no" and "nothing said at
-   * all" rendered identically. On the fixes screen that is the whole response
-   * surface for the flag — and "no" is the truthful correction for the most
-   * common reason code (`empty`) — so the filler's only way to state it was to
-   * check the box and uncheck it, with nothing on screen distinguishing the
-   * result from having ignored the flag.
+   * The Important this control was rebuilt for (I2): as a checkbox,
+   * `checked={value?.available === 'yes'}` drew "no" and "nothing said at
+   * all" identically. On the fixes screen that is the whole response surface
+   * for the flag — and "no" is the truthful correction for the most common
+   * reason code (`empty`) — so the filler's only way to state it was to check
+   * the box and uncheck it, with nothing on screen distinguishing the result
+   * from having ignored the flag.
    *
-   * `selected=""` is what React's server renderer puts on the `<option>`
-   * matching a `<select value=…>`, i.e. this asserts what the filler SEES, not
-   * merely what the component was handed.
+   * The toggle pair must not regress to that: a stated "no" is a PRESSED No
+   * button (`aria-pressed="true"` — the exact attribute assistive tech and
+   * the stylesheet both key on), silence is a pair with NEITHER pressed.
+   * Asserted on the rendered markup, i.e. what the filler sees, not what the
+   * component was handed.
    */
   it('«нет» видно как сказанное «нет», а не как молчание', () => {
     const stated = renderFixes([flagFor(WIFI)], {
@@ -194,12 +205,13 @@ describe('контрол отмеченной позиции услуг', () => 
         },
       },
     })
-    expect(stated).toContain('<option value="no" selected="">')
+    expect(stated).toContain(`aria-pressed="true">${OPTION_LISTS.yesNo[1]!.label.en}</button>`)
+    expect(stated).toContain(`aria-pressed="false">${OPTION_LISTS.yesNo[0]!.label.en}</button>`)
 
     const silent = renderFixes([flagFor(WIFI)], { services: {} })
-    expect(silent).toContain('<option value="" selected="">')
-    expect(silent).not.toContain('<option value="no" selected="">')
-    expect(silent).not.toContain('<option value="yes" selected="">')
+    expect(silent).not.toContain('aria-pressed="true"')
+    expect(silent).toContain(`aria-pressed="false">${OPTION_LISTS.yesNo[0]!.label.en}</button>`)
+    expect(silent).toContain(`aria-pressed="false">${OPTION_LISTS.yesNo[1]!.label.en}</button>`)
     // И это два РАЗНЫХ экрана, а не одна и та же разметка: ровно то, чего
     // чекбокс дать не мог.
     expect(stated).not.toBe(silent)
@@ -251,12 +263,19 @@ describe('контрол отмеченной позиции услуг', () => 
    * Каждый список наличия, который вообще встречается в схеме, а не только
    * `yesNo`: 57 позиций из 58 бинарные, и позицию со своим списком (`8.3`,
    * Vaping policy) легко не заметить глазами ни на одном экране. Перечисление
-   * идёт от самих позиций, так что третий список, добавленный в схему, попадёт
-   * сюда сам — раньше эта проверка держалась на предикате
-   * `isBinaryAvailability`, который существовал только чтобы выбирать между
-   * чекбоксом и дропдауном, и вместе с чекбоксом исчез.
+   * идёт от самих позиций, так что третий список, добавленный в схему,
+   * попадёт сюда сам.
+   *
+   * Какого вида контрол ожидается — решает `isBinaryAvailability`, тот же
+   * предикат схемы, по которому `ServiceAvailabilityInput` выбирает
+   * отрисовку (пара кнопок против дропдауна), а не список имён рядом с ним:
+   * этот предикат читает СОДЕРЖИМОЕ списка (ровно два варианта), так что
+   * новый двухвариантный список получит пару кнопок и здесь, и на экране —
+   * согласованно. В обеих ветках проверяется, что на экран пришёл ВЕСЬ
+   * список: у пары — обе подписи как кнопки с aria-pressed, у дропдауна —
+   * каждый вариант как <option> плюс пустой «—».
    */
-  it('каждый список наличия из схемы приходит на экран целиком', () => {
+  it('каждый список наличия из схемы приходит на экран целиком — своим контролом', () => {
     const lists = [...new Set(SERVICE_ITEMS.map((item) => item.availabilityList))]
     expect(lists.length).toBeGreaterThan(1)
 
@@ -264,8 +283,23 @@ describe('контрол отмеченной позиции услуг', () => 
       const item = SERVICE_ITEMS.find((i) => i.availabilityList === list)!
       const html = renderFixes([flagFor(item.key)])
       expect(html, list).toContain(UI['services.available'].en)
-      for (const option of OPTION_LISTS[list]) {
-        expect(html, `${list}/${option.id}`).toContain(`value="${option.id}"`)
+      if (isBinaryAvailability(item)) {
+        for (const option of OPTION_LISTS[list]) {
+          expect(html, `${list}/${option.id}`).toContain(
+            `aria-pressed="false">${option.label.en}</button>`,
+          )
+        }
+        // Никакого дропдауна у неотвеченной бинарной позиции: единственный
+        // <select> в её карточке был бы контролом наличия, а он теперь пара.
+        expect(html, list).not.toContain('<select')
+      } else {
+        expect(html, list).toContain('<select')
+        // `selected=""` — потому что позиция не отвечена и select стоит на
+        // `—`; проверяется просто наличие пустого варианта.
+        expect(html, list).toContain('<option value=""')
+        for (const option of OPTION_LISTS[list]) {
+          expect(html, `${list}/${option.id}`).toContain(`value="${option.id}"`)
+        }
       }
     }
   })

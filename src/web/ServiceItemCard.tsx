@@ -2,6 +2,7 @@
 
 import {
   OPTION_LISTS,
+  isBinaryAvailability,
   isOfferedAvailability,
   requiresPrice,
   type ServiceItem,
@@ -64,43 +65,68 @@ export function serviceValueOrEmpty(
 }
 
 /**
- * Pass 1's question — "does the lounge have this?" — as a standalone control:
- * the item's own availability option list as a `<select>`, ahead of the same
- * `—` placeholder every other dropdown in this form uses for "nothing
- * answered yet" (see `FieldInput`, and `renderValues` on the review side).
+ * What one tap on a toggle button emits: the tapped option when it wasn't the
+ * answer, and `''` — cleared back to unanswered — when it already was. `''`,
+ * not `null`, deliberately: it is byte-for-byte what the `<select>`'s `—`
+ * placeholder emitted through `e.target.value`, and `saveServiceValue`
+ * normalises exactly that (`available === '' ? null : available`) at the
+ * write boundary. The un-tap is the toggle pair's replacement for `—`: a
+ * pair of buttons has no third button, so the deliberate un-selection path
+ * the dropdown provided must live in the second tap or nowhere.
  *
- * It used to render a plain checkbox for the 57 `yesNo` items and this
- * `<select>` only for the one item with its own list (`8.3` Vaping policy).
- * A checkbox has two states and this answer has three, and the state it
- * could not express is the one a flagged item most often needs: `checked=
- * available === 'yes'` drew "no" and "nothing said" identically, so a filler
- * whose truthful correction was "no" — the natural answer to the reviewer's
- * most common reason code, `empty` — saw a control that already looked like
- * "no" and could do nothing with it. Doing nothing saved nothing: the flag
- * stayed open, `serviceItemAnswered` stayed false, `submitSubmission` kept
- * refusing and naming the item, and the only way out was to check the box and
- * uncheck it again. On the fixes screen that is the entire response surface
- * for the flag; on Pass 1 it is the same trap one screen over, since a lounge
- * that genuinely lacks 40 of the 58 items can only say so by ticking and
- * unticking 40 boxes. Both screens render this one control, so both are fixed
- * by the same change rather than by a second availability rule.
+ * The merge over `serviceValueOrEmpty` is the same one the select's onChange
+ * does below — a first answer carries every attribute the server expects, a
+ * later one never drops an attribute Pass 2 already filled in.
  *
- * `<select>` rather than a radio pair, though radios answer in one tap: the
- * Pass 1 row is itself a `<label>` wrapping the item text and the control, so
- * that a tap anywhere in a 58-row list lands on the answer (see
- * `ServicesPass1`). A `<label>` cannot wrap a radio GROUP — it forwards to
- * the first control — so radios would make a tap on the item's name answer
- * "Yes", which is worse than a slow control: it is a wrong answer nobody
- * typed. The dropdown also keeps the deliberate un-selection path (`''`,
- * normalised to `null` at the write boundary, see `saveServiceValue`) that
- * the checkbox never had.
+ * Exported pure, like `FieldInput`'s `nextSelectValue`, because the unit
+ * suite has no DOM to click in (`renderToStaticMarkup` only) — this is the
+ * function `fieldContract.test.ts` pins the clearing semantics on.
+ */
+export function availabilityAfterTap(
+  current: ServiceValueInput | undefined,
+  optionId: string,
+): ServiceValueInput {
+  const base = serviceValueOrEmpty(current)
+  return { ...base, available: base.available === optionId ? '' : optionId }
+}
+
+/**
+ * Pass 1's question — "does the lounge have this?" — as a standalone control.
+ * Two renderings, chosen by the schema (`isBinaryAvailability`, i.e. "does
+ * this item's own option list hold exactly two options" — never a hand-kept
+ * item list):
  *
- * The options come from `OPTION_LISTS[item.availabilityList]`, so nothing
- * here restates what "yes"/"no" are — the last availability condition in the
- * codebase that was not delegated to the schema (`available === 'yes'`,
- * review Minor 8) is gone with the checkbox, along with the
- * `isBinaryAvailability` predicate that only existed to pick between the two
- * renderings.
+ *  - binary items (57 of 58 today): a Yes|No toggle-button pair, labels from
+ *    `OPTION_LISTS[item.availabilityList]`'s own localized labels. Neither
+ *    button pressed IS the third state — unanswered stays visible, which is
+ *    the tri-state requirement (I2) that killed the original checkbox:
+ *    `checked = available === 'yes'` drew "no" and "nothing said" identically,
+ *    so a filler whose truthful correction was "no" (the natural answer to the
+ *    reviewer's most common reason code, `empty`) saw a control that already
+ *    looked like "no". `aria-pressed` on both buttons makes the same three
+ *    states real for a screen reader, and `role="group"` named after the item
+ *    keeps 58 pairs of otherwise identical "Yes"/"No" buttons tellable apart.
+ *    Tapping the pressed button clears back to unanswered — see
+ *    `availabilityAfterTap` above.
+ *
+ *  - everything else (`8.3` Vaping policy's three-option list today): the
+ *    `<select>` with the same `—` placeholder every other dropdown in this
+ *    form uses for "nothing answered yet".
+ *
+ * History, because this control has been all three shapes now. Checkbox →
+ * dropdown was I2 (the fixes-screen fix wave): tri-state answer, two-state
+ * control. That change rejected RADIOS for a concrete hazard: the Pass 1 row
+ * is a `<label>` wrapping item text + control, a label forwards activation to
+ * its first labelable descendant, so tapping an item's NAME would have
+ * answered "Yes" — a wrong answer nobody typed. Real `<button>`s are
+ * labelable too, so the toggle pair steps into the SAME trap if left inside
+ * that label — verified in the browser on this branch, not assumed: with the
+ * row still a `<label>`, a click on "Air Conditioning"'s name pressed its Yes
+ * button. The fix is structural and lives in `ServicesPass1`: a binary row is
+ * a plain `<div>`, not a label (see the comment there); this component stays
+ * wrapper-agnostic. Dropdown → toggle pair trades that solved problem's
+ * one-tap cost back: 57 of 58 answers are now one tap again, without giving
+ * up the third state or the deliberate un-selection path.
  *
  * Emits a whole `ServiceValueInput`, merged over `EMPTY_SERVICE_ATTRS`, so a
  * first answer carries every attribute the server expects and a later one
@@ -115,6 +141,23 @@ export function ServiceAvailabilityInput(props: {
   const { pick } = useLocale()
   const { item, value } = props
   const options = OPTION_LISTS[item.availabilityList]
+
+  if (isBinaryAvailability(item)) {
+    return (
+      <span className="avail-toggle" role="group" aria-label={pick(item.label)}>
+        {options.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            aria-pressed={value?.available === option.id}
+            onClick={() => props.onChange(availabilityAfterTap(value, option.id))}
+          >
+            {pick(option.label)}
+          </button>
+        ))}
+      </span>
+    )
+  }
 
   return (
     <select

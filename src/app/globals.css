@@ -29,6 +29,14 @@ body {
   bottom: 0;
   background: #fff;
   padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  /* Above the step content it sticks over. Not optional since the content
+     gained positioned elements of its own: the pressed availability toggle
+     carries z-index: 1 (see .avail-toggle below), and a sticky bar with
+     z-index: auto loses to that — a pressed "Yes" scrolled under the bar
+     painted THROUGH it, over the Submit button (seen in the browser at a
+     short viewport on the fixes screen). 10 keeps it under the step
+     navigator's panel (z-index: 20), which may legitimately drop over it. */
+  z-index: 10;
 }
 /* The step's primary action (Next; Submit on the review step and the fixes
    screen): the form's one accent — the same #2563eb the progress segments
@@ -177,10 +185,42 @@ body {
   border-bottom: 1px solid #f0f1f3;
 }
 .pass1-row span { min-width: 0; flex: 1 1 auto; }
-/* Наличие — дропдаун у всех 58 позиций (раньше чекбокс у 57 из них, см.
-   `ServiceAvailabilityInput`). Ширина по содержимому, а не 100% как у полей
+/* Наличие у небинарной позиции (список не из двух вариантов, сегодня одна —
+   8.3 Vaping) — дропдаун. Ширина по содержимому, а не 100% как у полей
    карточки: он стоит в одной flex-строке с названием позиции, а не под ним. */
 .pass1-row select { width: auto; flex: 0 0 auto; }
+.pass1-row .avail-toggle { flex: 0 0 auto; }
+
+/* Пара-переключатель «Да | Нет» бинарной позиции (см.
+   `ServiceAvailabilityInput`): сегментированный контрол — две кнопки со
+   слитой рамкой, чтобы пара читалась как ОДИН выбор, а не два действия.
+   Три состояния должны различаться с одного взгляда (I2): не нажато ничего —
+   обе кнопки тихие, с рамкой, на фоне контролов; нажатая — залита акцентом
+   формы (#2563eb, тот же, что у .shell-primary и сегментов прогресса; белый
+   текст на нём — те же ~4.5:1, и в тёмной теме он работает как есть — довод
+   .shell-primary). Именно поэтому «нет» НЕ красится в свой цвет: залитая
+   синим кнопка «No» очевидно отличается и от «Yes», и от пустой пары, а
+   красный в этой форме уже занят ошибками. Высота — глобальные 44px кнопок,
+   те же, что у select в соседних строках: высота строки не меняется от того,
+   какой из двух контролов в ней стоит. */
+.avail-toggle { display: inline-flex; }
+/* Вертикальный паддинг 9px, а не глобальные 10px кнопок: 24px строки текста
+   + 18px паддингов + 2px рамок = ровно те же 44px, что у select соседней
+   небинарной строки (его держит min-height) — иначе строка 8.3 была бы на
+   2px ниже 57 остальных. Тап-цель не страдает: 44px и есть требуемый пол. */
+.avail-toggle button { min-width: 58px; padding-top: 9px; padding-bottom: 9px; }
+.avail-toggle button:first-child { border-radius: 8px 0 0 8px; }
+.avail-toggle button:last-child { border-radius: 0 8px 8px 0; margin-left: -1px; }
+/* Нажатая кнопка поверх соседа (рамки слиты отрицательным отступом):
+   без z-index её акцентную рамку с одной стороны накрывала бы серая рамка
+   соседней ненажатой. */
+.avail-toggle button[aria-pressed='true'] {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+  position: relative;
+  z-index: 1;
+}
 
 .pass2-card,
 .fix-card {
@@ -617,6 +657,17 @@ button:disabled { opacity: .4; }
     border-color: #2a2d34;
   }
   .pass1-row { border-color: #2a2d34; }
+  /* Restated after the generic dark `button` rule above, same reasoning as
+     .shell-primary: the pressed state keeps the accent as-is on dark, and
+     this line is where that decision is visible rather than left to the
+     attribute selector's higher specificity. Unpressed buttons are covered
+     by the generic dark button rule (dark surface, dark border) — which is
+     exactly the "quiet" third state on dark. */
+  .avail-toggle button[aria-pressed='true'] {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #fff;
+  }
   .pass2-card,
   .fix-card { border-color: #2a2d34; }
   /* Тот же довод, что у пастельных фонов экрана проверки ниже: светлая

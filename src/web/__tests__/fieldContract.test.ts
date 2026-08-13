@@ -7,12 +7,14 @@ import {
   validateServiceValue,
   needsDetail,
   fieldByKey,
+  isBinaryAvailability,
+  serviceItemAnswered,
   type Field,
   type SelectValue,
   type ServiceValueInput,
 } from '@/form-schema'
 import { numberFieldValue } from '../FieldInput'
-import { EMPTY_SERVICE_ATTRS } from '../ServiceItemCard'
+import { EMPTY_SERVICE_ATTRS, availabilityAfterTap } from '../ServiceItemCard'
 
 /**
  * Every attribute a first-pass answer can possibly carry, before Pass 2 has
@@ -164,6 +166,73 @@ describe('контракт FieldInput ↔ validateField', () => {
           expect(result.ok, `${item.key} / available "${option.id}"`).toBe(true)
         }
       }
+    })
+  })
+
+  /**
+   * The Yes|No toggle pair's emission contract, pinned on the exported pure
+   * `availabilityAfterTap` because the unit suite has no DOM to click in —
+   * the same technique `nextSelectValue.test.ts` uses for `FieldInput`.
+   *
+   * The load-bearing case is the SECOND tap on the pressed button: a pair of
+   * buttons has no `—` to select, so the deliberate un-selection path the
+   * dropdown provided lives in that tap or nowhere. It must emit exactly what
+   * the select's `—` emitted — `available: ''`, which `saveServiceValue`
+   * normalises to `null` at the write boundary — and the result must count as
+   * NOT answered for completeness, or clearing would quietly stop being
+   * possible again (the checkbox's original I2 sin, in the other direction).
+   */
+  describe('пара-переключатель наличия: что излучает тап (availabilityAfterTap)', () => {
+    const binaryItems = SERVICE_ITEMS.filter((item) => isBinaryAvailability(item))
+
+    it('в матрице есть бинарные позиции, и небинарные тоже (иначе ветки ниже пусты)', () => {
+      expect(binaryItems.length).toBeGreaterThan(0)
+      expect(binaryItems.length).toBeLessThan(SERVICE_ITEMS.length)
+    })
+
+    it('первый тап по варианту — ровно то, что излучал select: EMPTY + available', () => {
+      for (const item of binaryItems) {
+        for (const option of OPTION_LISTS[item.availabilityList]) {
+          const emitted = availabilityAfterTap(undefined, option.id)
+          expect(emitted).toEqual({ ...EMPTY_SERVICE_ATTRS, available: option.id })
+          expect(validateServiceValue(item, emitted).ok, `${item.key}/${option.id}`).toBe(true)
+        }
+      }
+    })
+
+    it('повторный тап по нажатой кнопке очищает до «не отвечено», и полнота снова считает позицию недостающей', () => {
+      for (const item of binaryItems) {
+        for (const option of OPTION_LISTS[item.availabilityList]) {
+          const answered = { ...EMPTY_SERVICE_ATTRS, available: option.id }
+          const cleared = availabilityAfterTap(answered, option.id)
+          // '' и только '': это байт-в-байт значение `—` из e.target.value,
+          // которое saveServiceValue нормализует в null (см. values.ts).
+          expect(cleared.available, `${item.key}/${option.id}`).toBe('')
+          expect(validateServiceValue(item, cleared).ok, item.key).toBe(true)
+          expect(serviceItemAnswered(item, cleared), item.key).toBe(false)
+        }
+      }
+    })
+
+    it('тап по другой кнопке переключает ответ, а не очищает его', () => {
+      const item = binaryItems[0]!
+      const [first, second] = OPTION_LISTS[item.availabilityList]
+      const switched = availabilityAfterTap(
+        { ...EMPTY_SERVICE_ATTRS, available: first!.id },
+        second!.id,
+      )
+      expect(switched.available).toBe(second!.id)
+    })
+
+    it('оба вида тапа сохраняют атрибуты второго прохода — то же слияние, что у select', () => {
+      const item = binaryItems[0]!
+      const [yes, no] = OPTION_LISTS[item.availabilityList]
+      const withPass2 = {
+        available: yes!.id, chargeType: 'chargeable', price: 10,
+        currency: 'EUR', slotMinutes: 60, bookingRequired: true, details: 'note',
+      }
+      expect(availabilityAfterTap(withPass2, no!.id)).toEqual({ ...withPass2, available: no!.id })
+      expect(availabilityAfterTap(withPass2, yes!.id)).toEqual({ ...withPass2, available: '' })
     })
   })
 
