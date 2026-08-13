@@ -1,8 +1,9 @@
 import { test as base, expect, type Locator, type Page } from '@playwright/test'
 import { execSync } from 'node:child_process'
+import { resolve } from 'node:path'
 import { BLOCKS } from '../src/form-schema/blocks'
 import { fieldByKey } from '../src/form-schema/fields'
-import { SEED_REVIEWER_EMAIL } from '../scripts/dev-support'
+import { SEED_REVIEWER_EMAIL, loadEnvFile } from '../scripts/dev-support'
 
 /**
  * Сторона проверяющего и круг «отметили → вернули → поправили → отправили
@@ -98,6 +99,36 @@ function seed(mode: SeedMode, label: string): { fillUrl: string; lounge: string 
  */
 function loginLinkFor(email: string): string {
   return execSync(`npx tsx scripts/dev-login-link.ts ${email}`, { encoding: 'utf8' }).trim()
+}
+
+/**
+ * Запускает `ops.ts` — тем же путём, что и настоящая эксплуатация, — но
+ * ГАРАНТИРОВАННО против dev-базы. `DATABASE_URL` передаётся явно, из
+ * `.env.local`, и это не перестраховка: `ops.ts` — прод-инструмент, он
+ * первым читает `.env.production.local`, и на машине разработчика с этим
+ * файлом тест без явного URL тихо писал бы В БОЕВУЮ базу. Явная переменная
+ * окружения побеждает оба файла (см. `loadEnvFile`), поэтому команда идёт в
+ * ту же dev-базу, что и сид. `loadEnvFile` заполняет только отсутствующее —
+ * экспортированный снаружи `DATABASE_URL` по-прежнему главнее, тем же
+ * правилом, что и везде.
+ *
+ * `stdinLine` — для `set-password`: пароль приходит первой строкой stdin, а
+ * не argv (в argv он остался бы в истории шелла и в `ps` — см. `ops.ts`).
+ */
+function opsAgainstDevDb(args: string, stdinLine?: string): void {
+  loadEnvFile(resolve(process.cwd(), '.env.local'))
+  const url = process.env.DATABASE_URL
+  if (!url) throw new Error('DATABASE_URL не задан (нет .env.local?)')
+  execSync(`npx tsx scripts/ops.ts ${args}`, {
+    input: stdinLine === undefined ? undefined : `${stdinLine}\n`,
+    encoding: 'utf8',
+    env: { ...process.env, DATABASE_URL: url },
+  })
+}
+
+/** Пароль участнику — через настоящий ops-путь (`set-password`, stdin). */
+function setPasswordFor(email: string, password: string): void {
+  opsAgainstDevDb(`set-password ${email}`, password)
 }
 
 /**
@@ -653,4 +684,80 @@ test('вход в кабинет: ответ формы не выдаёт сос
   await page.goto(loginUrl)
   await expect(page.getByRole('heading', { name: 'Lounge Onboarding' })).toBeVisible()
   expect(new URL(page.url()).pathname).toBe('/admin/login')
+})
+
+test('вход по паролю: ops set-password → настоящая форма → кабинет; отказ один на любую причину', async ({
+  page,
+  watched,
+}) => {
+  // Свой участник на каждый прогон, НЕ общий `SEED_REVIEWER_EMAIL` — и не
+  // ради чистоты: сценарий ниже меняет пароль, а смена отзывает остальные
+  // сессии участника. У сидового проверяющего «остальные» — это живые сессии
+  // параллельно идущих файлов (`registry.spec.ts` входит тем же адресом), и
+  // тест ронял бы соседей посреди их работы. У свежего участника отзывать
+  // нечего, кроме своего.
+  const member = `e2e-pw-${Math.random().toString(36).slice(2, 10)}@example.com`
+  opsAgainstDevDb(`invite ${member}`)
+  const password = `e2e-password-${Math.random().toString(36).slice(2, 10)}`
+  setPasswordFor(member, password)
+
+  await page.goto('/admin/login')
+  await expectRendered(watched, page.getByRole('heading', { name: 'Lounge Onboarding' }))
+
+  // Неверный пароль, неизвестная почта — ОДИН И ТОТ ЖЕ текст отказа (это
+  // сравнение экранов, как у `sent` в сценарии magic-ссылки: то единственное,
+  // что видит перебирающий). Отдельное «вы заблокированы» или «нет такого
+  // адреса» перечисляло бы состав команды.
+  const failed = 'Sign-in failed. Check the email and password.'
+
+  await page.getByLabel('Work email').fill(member)
+  await page.getByLabel('Password').fill('definitely not the password')
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByText(failed)).toBeVisible()
+  expect(new URL(page.url()).pathname).toBe('/admin/login')
+
+  await page.getByLabel('Work email').fill('definitely-not-on-the-team@example.com')
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByText(failed)).toBeVisible()
+  expect(new URL(page.url()).pathname).toBe('/admin/login')
+
+  // Верная пара открывает кабинет: действие ставит ту же cookie, что маршрут
+  // magic-ссылки (`sessionCookieOptions` — одно определение на оба входа).
+  await page.getByLabel('Work email').fill(member)
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expectRendered(watched, page.getByRole('heading', { name: 'Lounges' }))
+  expect(new URL(page.url()).pathname).toBe('/admin')
+
+  // Смена пароля со страницы кабинета: старые сессии — кроме этой — гаснут
+  // (юнит-тесты держат «кроме этой», здесь важен сам путь с экрана), новый
+  // пароль действует. Заодно это единственная проверка, что /admin/password
+  // вообще отрисовывается (класс дефекта «страница не открылась», ради
+  // которого существует expectRendered).
+  await page.getByRole('link', { name: 'Password' }).click()
+  await expectRendered(watched, page.getByRole('heading', { name: 'Change password' }))
+
+  const newPassword = `${password}-rotated`
+  await page.getByLabel('Current password').fill(password)
+  await page.getByLabel('New password', { exact: true }).fill(newPassword)
+  await page.getByLabel('New password, again').fill(newPassword)
+  await page.getByRole('button', { name: 'Change password' }).click()
+  await expect(page.getByText('Password updated', { exact: false })).toBeVisible()
+
+  // Текущая сессия пережила смену — кабинет всё ещё открыт…
+  await page.goto('/admin')
+  await expectRendered(watched, page.getByRole('heading', { name: 'Lounges' }))
+
+  // …а старый пароль больше не входит (в новом контексте без cookie).
+  await page.context().clearCookies()
+  await page.goto('/admin/login')
+  await page.getByLabel('Work email').fill(member)
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByText(failed)).toBeVisible()
+
+  await page.getByLabel('Password').fill(newPassword)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expectRendered(watched, page.getByRole('heading', { name: 'Lounges' }))
 })
