@@ -281,6 +281,11 @@ button:disabled { opacity: .4; }
 .review-notice { color: #92400e; }
 .login { max-width: 340px; margin: 12vh auto; display: flex; flex-direction: column; gap: 10px; padding: 0 16px; }
 .login input, .login button { padding: 10px; font: inherit; border-radius: 8px; border: 1px solid #c9ced6; }
+.login-error { margin: 0; color: #b91c1c; font-size: 14px; }
+/* Разделитель «or» между паролем (основной путь) и magic-ссылкой
+   (второстепенный): просто приглушённый текст, не линия — форма узкая. */
+.login-sep { margin: 2px 0; text-align: center; opacity: .5; font-size: 13px; }
+.login-alt { background: none; opacity: .8; }
 /* Реестр лаунжей (/admin). Таблица на всю ширину: у неё семь колонок, и
    узкая колонка «истории», как у прежнего списка (.admin-home, удалён вместе
    со своим экраном), резала бы её горизонтальной прокруткой. */
@@ -458,4 +463,8 @@ button:disabled { opacity: .4; }
   .al-once { color: #fcd34d; }
   .dl-panel { border-color: #5b2323; }
   .dl-warning { color: #fca5a5; }
+  /* Вход и смена пароля: тёмно-красный текст ошибки тонет на тёмном фоне —
+     светлый тон того же цвета (довод .se-error). Контролы и .login-alt
+     (фон none) уже накрыты общим правилом для button выше. */
+  .login-error, .pw-error { color: #fca5a5; }
 }

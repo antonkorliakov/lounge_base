@@ -1,35 +1,13 @@
-'use client'
+import { LocaleProvider } from '@/i18n/context'
+import { LoginForm } from '@/web/LoginForm'
 
-import { useState } from 'react'
-import { requestLoginAction } from './actions'
-
+// `initial="en"` — то же записанное отложенное решение, что у остальных
+// страниц /admin (см. комментарий в `admin/page.tsx`): интерфейс кабинета
+// сегодня показывается по-английски, RU-строки лежат в компонентах рядом.
 export default function LoginPage(): React.JSX.Element {
-  const [email, setEmail] = useState('')
-  const [sent, setSent] = useState(false)
-
-  if (sent) {
-    return <main className="login"><p>Check your inbox for the sign-in link.</p></main>
-  }
-
   return (
-    <main className="login">
-      <h1>Lounge Onboarding</h1>
-      <label htmlFor="email">Work email</label>
-      <input
-        id="email"
-        type="email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-      />
-      <button
-        type="button"
-        onClick={async () => {
-          await requestLoginAction(email)
-          setSent(true)
-        }}
-      >
-        Send sign-in link
-      </button>
-    </main>
+    <LocaleProvider initial="en">
+      <LoginForm />
+    </LocaleProvider>
   )
 }

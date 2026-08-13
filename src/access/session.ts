@@ -44,6 +44,37 @@ export const SESSION_COOKIE = 'lounge_session'
  */
 export const SESSION_COOKIE_MAX_AGE_SECONDS = 90 * 24 * 60 * 60
 
+/**
+ * Атрибуты cookie сессии — одним объектом, потому что мест, которые его
+ * ставят, теперь ДВА: маршрут обмена magic-ссылки
+ * (`admin/login/[token]/route.ts`, через `response.cookies.set`) и действие
+ * парольного входа (`admin/login/actions.ts`, через `cookies()` из
+ * `next/headers` — действию некуда деть `NextResponse`, у него нет
+ * response-объекта, а `cookies().set` в Server Function — штатный путь по
+ * документации `next/dist/docs`). Оба API принимают один и тот же набор
+ * опций; две инлайновые копии — это два места, где `httpOnly` или `secure`
+ * можно забыть поправить вместе.
+ *
+ * Комментарий к `SESSION_COOKIE_MAX_AGE_SECONDS` выше говорит «cookie
+ * пишется один раз, при входе» — оба места и есть входы; утверждение
+ * не меняется.
+ */
+export function sessionCookieOptions(): {
+  httpOnly: boolean
+  sameSite: 'lax'
+  secure: boolean
+  path: string
+  maxAge: number
+} {
+  return {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: SESSION_COOKIE_MAX_AGE_SECONDS,
+  }
+}
+
 export async function requireSession(): Promise<{ memberId: string; email: string }> {
   const store = await cookies()
   const sessionId = store.get(SESSION_COOKIE)?.value

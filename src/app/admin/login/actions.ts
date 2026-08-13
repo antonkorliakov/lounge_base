@@ -1,10 +1,13 @@
 'use server'
 
 import { after } from 'next/server'
+import { cookies } from 'next/headers'
 import { db } from '@/db/client'
-import { requestLogin } from '@/access/team'
+import { loginWithPassword, requestLogin } from '@/access/team'
+import { SESSION_COOKIE, sessionCookieOptions } from '@/access/session'
 import { createMailer } from '@/notify/mailer'
 import { loginMail } from '@/notify/messages'
+import type { Localized } from '@/form-schema'
 
 // Пол на длительность ответа. Без него известная почта (SELECT + INSERT в
 // requestLogin) и неизвестная (один SELECT) отвечают за заметно разное
@@ -65,4 +68,59 @@ export async function requestLoginAction(
   if (elapsed < MIN_RESPONSE_MS) await delay(MIN_RESPONSE_MS - elapsed)
 
   return { sent: true }
+}
+
+// Свой пол, не MIN_RESPONSE_MS, и выше него — потому что у парольного входа
+// другая арифметика. Разницу «есть ли scrypt в ветке» закрывает не пол, а
+// фиктивный хэш в `loginWithPassword` (ветка без реального хэша сжигает те
+// же ~50+ мс о DUMMY_STORED_HASH — пол в 150 мс, под которым одна ветка
+// стоит почти нисколько, а другая всю цену scrypt, не прикрыл бы ничего:
+// медленная ветка просто вылезала бы за него). Полу остаётся спрятать
+// остаток: лишний UPDATE счётчика на неверном пароле против его отсутствия
+// на неизвестной почте. 400 мс — с запасом больше типичной суммы
+// SELECT + scrypt + UPDATE, чтобы пол в типичном случае действительно
+// СВЯЗЫВАЛ длительность, а не был всегда ниже неё (пол, который никогда не
+// достигается, ничего не выравнивает). Та же оговорка, что у
+// MIN_RESPONSE_MS: это выравнивание типичного случая, не гарантия
+// константного времени при любых условиях.
+const PASSWORD_MIN_RESPONSE_MS = 400
+
+// Один — буквально один и тот же объект — ответ на все четыре причины
+// отказа (нет такой почты / пароль не задан / пароль неверный / вход
+// заблокирован): тело и статус (у server action он всегда 200) неотличимы,
+// различие умирает в `loginWithPassword`, который на любую из причин
+// возвращает null. Отдельный текст «вы заблокированы» подтверждал бы, что
+// адрес в команде. Не экспортируется не по забывчивости: из модуля с
+// 'use server' можно экспортировать только async-функции.
+const LOGIN_FAILED: Localized = {
+  en: 'Sign-in failed. Check the email and password.',
+  ru: 'Войти не получилось. Проверьте почту и пароль.',
+}
+
+export async function loginWithPasswordAction(
+  email: string,
+  password: string,
+): Promise<{ ok: true } | { ok: false; error: Localized }> {
+  const startedAt = Date.now()
+  const result = await loginWithPassword(db(), email, password)
+
+  if (result) {
+    // Той же cookie с теми же атрибутами, что ставит маршрут magic-ссылки
+    // (`login/[token]/route.ts`), — из одного `sessionCookieOptions`. У
+    // действия нет NextResponse, поэтому путь другой: `cookies().set` из
+    // `next/headers` — штатный способ Server Function по документации
+    // (`next/dist/docs`: set/delete разрешены в Server Functions и Route
+    // Handlers, до начала стриминга).
+    const store = await cookies()
+    store.set(SESSION_COOKIE, result.sessionId, sessionCookieOptions())
+  }
+
+  // Пол накрывает и успех, и отказ: успеху скрывать нечего (ответ сам
+  // говорит «вошёл»), но одна ветвь без пола была бы ещё одним таймером,
+  // по которому можно отличать ветки отказа от почти-успеха.
+  const elapsed = Date.now() - startedAt
+  if (elapsed < PASSWORD_MIN_RESPONSE_MS) await delay(PASSWORD_MIN_RESPONSE_MS - elapsed)
+
+  if (!result) return { ok: false, error: LOGIN_FAILED }
+  return { ok: true }
 }
