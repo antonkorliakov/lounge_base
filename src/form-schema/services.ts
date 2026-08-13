@@ -263,6 +263,27 @@ export function isOfferedAvailability(
 }
 
 /**
+ * True when this item's availability question is a plain either/or — and
+ * therefore rendered as a Yes|No toggle pair instead of a dropdown (see
+ * `ServiceAvailabilityInput`).
+ *
+ * A predicate of this name existed once and was deliberately deleted when the
+ * dropdown unified all 58 items — it picked between a checkbox and a select,
+ * and the checkbox it guarded was the two-state control that could not say
+ * "no" as distinct from "nothing said" (I2). This one guards a rendering that
+ * CAN say all three (neither button pressed is a visible state), so the
+ * predicate is legitimate again; what stays deliberate is where it lives (the
+ * schema, next to the lists it reads) and what it reads: the option list's
+ * CONTENT — exactly two options — never its name. A future two-option list
+ * (`allowedNotAllowed` today, anything added later) gets the toggle pair
+ * automatically and with its OWN labels, instead of behaving differently
+ * from `yesNo` because a UI file compared list ids.
+ */
+export function isBinaryAvailability(item: ServiceItem): boolean {
+  return OPTION_LISTS[item.availabilityList].length === 2
+}
+
+/**
  * True for the two `chargeType` ids that require a price and currency —
  * "chargeable" and "both". `requiresPrice(chargeType)` being false covers
  * both "complimentary" and "not yet answered" (`null`) alike — this

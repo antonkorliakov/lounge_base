@@ -6,10 +6,12 @@ import {
   SERVICE_ITEMS,
   SERVICE_ATTRIBUTES,
   serviceItemByKey,
+  isBinaryAvailability,
   isOfferedAvailability,
   requiresPrice,
   serviceItemAnswered,
 } from '../services'
+import { OPTION_LISTS } from '../option-lists'
 
 // Golden fixture: item key -> exact English label as read from the source
 // xlsx (sheet `Services & Amenities`). Regenerate with:
@@ -105,6 +107,23 @@ describe('матрица услуг', () => {
   it('вейпинг имеет собственный список вместо да/нет', () => {
     const vaping = SERVICE_ITEMS.find((i) => i.key === '8.3')
     expect(vaping?.availabilityList).toBe('vaping')
+  })
+
+  // `isBinaryAvailability` выбирает отрисовку контрола наличия (пара кнопок
+  // против дропдауна, см. `ServiceAvailabilityInput`) и читает СОДЕРЖИМОЕ
+  // списка — ровно два варианта, — а не его имя: список с другим именем и
+  // двумя вариантами обязан вести себя как `yesNo`, иначе выбор контрола
+  // снова стал бы рукописным перечнем позиций.
+  it('бинарность — это «в списке ровно два варианта», не имя списка', () => {
+    for (const item of SERVICE_ITEMS) {
+      expect(isBinaryAvailability(item), item.key).toBe(
+        OPTION_LISTS[item.availabilityList].length === 2,
+      )
+    }
+    // Обе ветки реально населены: 8.3 (vaping, три варианта) — дропдаун,
+    // всё остальное сегодня — пара.
+    expect(isBinaryAvailability(SERVICE_ITEMS.find((i) => i.key === '8.3')!)).toBe(false)
+    expect(isBinaryAvailability(SERVICE_ITEMS.find((i) => i.key === '2.1')!)).toBe(true)
   })
 
   it('только вейпинг использует список вейпинга; всё остальное — да/нет', () => {
