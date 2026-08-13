@@ -40,17 +40,24 @@ async function clickNext(page: Page, times = 1): Promise<void> {
 const FIELD_STEP_COUNT = 15
 
 /**
- * Pass 1's availability control for one item, by the item's own label.
+ * One button of a binary item's availability toggle pair, addressed the way
+ * assistive tech addresses it: the pair is a `role="group"` named after the
+ * item, holding a "Yes" and a "No" button (see `ServiceAvailabilityInput`).
  *
- * It is a `<select>` for every one of the 58 items now, not a checkbox for 57
- * of them: a checkbox cannot express "no" as distinct from "nothing said",
- * which is the answer a returned questionnaire most often needs (see
- * `ServiceAvailabilityInput`). So these tests say `selectOption('yes')` where
- * they used to say `check()`, and read the answer back as a value rather than
- * as a checked state.
+ * This control has been three shapes now. The checkbox could not express
+ * "no" as distinct from "nothing said" (I2); the `<select>` that replaced it
+ * could, so these tests said `selectOption('yes')` for a while; the toggle
+ * pair keeps all three states visible and brings the answer back to one tap,
+ * so they now say `click()` on the named button — and read the answer back
+ * as `aria-pressed`, the same attribute the stylesheet keys the pressed
+ * look on, rather than as a value. Non-binary items (8.3 Vaping) still
+ * render the `<select>`; no test currently drives that one here (the render
+ * side of it is pinned by `src/web/__tests__/fixesOnly.test.tsx`).
  */
-function availability(page: Page, itemLabel: string): Locator {
-  return page.getByText(itemLabel).locator('..').getByRole('combobox')
+function availability(page: Page, itemLabel: string, answer: 'Yes' | 'No'): Locator {
+  return page
+    .getByRole('group', { name: itemLabel })
+    .getByRole('button', { name: answer, exact: true })
 }
 
 test('поле сохраняется автоматически, статус отражает это, переключатель языка меняет подписи и возвращается', async ({ page }) => {
@@ -82,7 +89,7 @@ test('два прохода по услугам: детали спрашиваю
   await expect(page.getByRole('heading', { name: 'What does the lounge offer?' })).toBeVisible()
 
   // Отметить одну услугу — вторую (Runway View) оставить нетронутой.
-  await availability(page, 'Wifi Access').selectOption('yes')
+  await availability(page, 'Wifi Access', 'Yes').click()
   await clickNext(page)
 
   await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
@@ -103,7 +110,7 @@ test('выбор в первом проходе по услугам сохран
   await clickNext(page, FIELD_STEP_COUNT)
   await expect(page.getByRole('heading', { name: 'What does the lounge offer?' })).toBeVisible()
 
-  await availability(page, 'Wifi Access').selectOption('yes')
+  await availability(page, 'Wifi Access', 'Yes').click()
 
   // Wait for the 600ms autosave debounce plus the round trip to actually
   // persist this — before the fix, `validateServiceValue` refused it, so
@@ -115,7 +122,21 @@ test('выбор в первом проходе по услугам сохран
   await clickNext(page, FIELD_STEP_COUNT)
   await expect(page.getByRole('heading', { name: 'What does the lounge offer?' })).toBeVisible()
 
-  await expect(availability(page, 'Wifi Access')).toHaveValue('yes')
+  await expect(availability(page, 'Wifi Access', 'Yes')).toHaveAttribute('aria-pressed', 'true')
+
+  // Тап по уже нажатой кнопке — это сознательная очистка: путь «передумал»,
+  // который у дропдауна жил в `—`, у пары живёт во втором тапе (см.
+  // `availabilityAfterTap`). Очистка — такое же сохраняемое изменение, как и
+  // ответ: после перезагрузки позиция обязана быть НЕ отвеченной (обе кнопки
+  // отжаты), а не тихо вернуться к «yes» из React-состояния.
+  await availability(page, 'Wifi Access', 'Yes').click()
+  await expect(availability(page, 'Wifi Access', 'Yes')).toHaveAttribute('aria-pressed', 'false')
+  await expect(page.getByText('Saved')).toBeVisible()
+
+  await page.reload()
+  await clickNext(page, FIELD_STEP_COUNT)
+  await expect(availability(page, 'Wifi Access', 'Yes')).toHaveAttribute('aria-pressed', 'false')
+  await expect(availability(page, 'Wifi Access', 'No')).toHaveAttribute('aria-pressed', 'false')
 })
 
 test('отказ сервера показывает ошибку у позиции и НЕ отображается как "Saved" (Critical 2)', async ({ page }) => {
@@ -131,7 +152,7 @@ test('отказ сервера показывает ошибку у позиц�
   // still enforces that a "chargeable" answer needs a price — R1 only
   // removed the "must have SOME chargeType at all" gate, not this
   // internal-consistency rule.
-  await availability(page, 'Wifi Access').selectOption('yes')
+  await availability(page, 'Wifi Access', 'Yes').click()
   await clickNext(page)
   await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
 
@@ -305,14 +326,17 @@ test('экран правок: у каждой категории есть ра�
   })
 
   // Позиция услуг: наличие (то, что раньше жило только в первом проходе и на
-  // этот экран не попадало вовсе) плюс весь набор атрибутов. Два дропдауна в
-  // порядке разметки карточки: наличие, затем «платно/бесплатно» (см.
-  // `ServiceItemCard`). Наличие читается как ЗНАЧЕНИЕ, а не как галочка:
+  // этот экран не попадало вовсе) плюс весь набор атрибутов. Wifi — бинарная
+  // позиция, так что наличие здесь — пара кнопок Да|Нет с нажатым «Yes»
+  // (`aria-pressed` — тот же атрибут, по которому красится нажатая кнопка),
+  // а единственный дропдаун карточки — «платно/бесплатно» (см.
+  // `ServiceItemCard`). Нажатость читается как СОСТОЯНИЕ с тремя исходами:
   // именно этого чекбокс и не мог показать — «нет» у него выглядел так же,
   // как «ничего не сказано».
-  await expect(serviceCard.getByRole('combobox')).toHaveCount(2)
-  await expect(serviceCard.getByRole('combobox').first()).toHaveValue('yes')
-  await expect(serviceCard.getByRole('combobox').nth(1)).toHaveValue('complimentary')
+  await expect(availability(page, 'Wifi Access', 'Yes')).toHaveAttribute('aria-pressed', 'true')
+  await expect(availability(page, 'Wifi Access', 'No')).toHaveAttribute('aria-pressed', 'false')
+  await expect(serviceCard.getByRole('combobox')).toHaveCount(1)
+  await expect(serviceCard.getByRole('combobox')).toHaveValue('complimentary')
   await expect(serviceCard.locator('input[type="number"]')).toHaveCount(1)
   await expect(serviceCard.locator('textarea')).toHaveCount(1)
 
