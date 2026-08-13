@@ -53,10 +53,14 @@ export type ActionResult =
  * ушло — ссылка на экране ревьюера была бы лишней экспозицией живого
  * доступа, который оператор уже получил в почту), и здесь есть `notice`.
  *
- * `fillUrl` появляется в ОДНОМ случае: почта не может доставить письмо
- * (`mailDelivers()` в `notify/mailer.ts` — false), и вручить ссылку больше
- * некому, кроме экрана. Рядом с ним всегда стоит `notice`, говорящий, что
- * письма НЕ БЫЛО, — сам URL этого не говорит.
+ * `fillUrl` появляется в одном РОДЕ случаев: письмо до оператора не дошло, а
+ * ссылка уже выписана и существует только здесь (хранится лишь хэш, см.
+ * `issueFillToken`) — вручить её больше некому, кроме экрана. Случая таких
+ * два, и различает их notice, а не тип: почта не доставляет вовсе
+ * (`mailDelivers()` — false) либо отправка упала при настроенном SMTP
+ * (хвост `send_failed` в `sendFillLink`). Рядом с `fillUrl` всегда стоит
+ * `notice`, говорящий, что письма НЕ БЫЛО и почему, — сам URL этого не
+ * говорит.
  */
 export type FillLinkActionResult =
   | { ok: true; notice?: Localized; fillUrl?: string }
@@ -93,6 +97,26 @@ const LINK_NOT_MAILED_NOTICE: Localized = {
 const MAIL_NOT_CONFIGURED_NOTICE: Localized = {
   en: 'Saved. Email is not configured on this server (SMTP_URL) — the operator was not notified.',
   ru: 'Сохранено. Почта на этом сервере не настроена (SMTP_URL) — оператор не уведомлён.',
+}
+
+/**
+ * Ещё два текста — та же пара действий, но другая причина: SMTP настроен, а
+ * отправка УПАЛА (провайдер отверг письмо; или сам `createMailer()` бросил на
+ * недостающем `MAIL_FROM` — для ревьюера это одно и то же, см. хвост
+ * `send_failed` в `sendFillLink`). Слова другие нарочно: «почта не настроена»
+ * значит «эта среда не шлёт вообще» — чинится настройкой среды; «письмо не
+ * отправилось» — «шлёт, но сейчас не вышло» — чинится у провайдера. Концовка
+ * общая с парой выше: письма нет, вручить ссылку оператору может только сам
+ * ревьюер.
+ */
+const RETURNED_LINK_SEND_FAILED_NOTICE: Localized = {
+  en: 'Saved. The email to the operator failed to send — hand them this link yourself:',
+  ru: 'Сохранено. Письмо оператору не отправилось — передайте ему эту ссылку сами:',
+}
+
+const LINK_SEND_FAILED_NOTICE: Localized = {
+  en: 'The email failed to send — hand the operator this link yourself:',
+  ru: 'Письмо не отправилось — передайте оператору эту ссылку сами:',
 }
 
 export async function flagAction(
@@ -300,10 +324,17 @@ async function notifyOrNotice(
  * на экране ревьюера была бы лишней экспозицией живого доступа; `shown`
  * несёт ссылку — письма не было, экран остался единственным местом, где она
  * вообще существует (хранится только хэш, см. `issueFillToken`).
+ *
+ * `reason` при `shown` — для текста notice, не для ветвления логики: письма
+ * не было либо потому, что эта среда не шлёт вовсе (`mail_not_configured`),
+ * либо потому, что отправка при настроенном SMTP упала (`send_failed`).
+ * Механика у вызывающих одна (ссылка на экран), а сказать ревьюеру они
+ * обязаны разное — «настройте среду» и «сейчас не вышло» требуют разных
+ * следующих шагов от того, кто чинит.
  */
 type FillLinkOutcome =
   | { outcome: 'mailed'; to: string }
-  | { outcome: 'shown'; fillUrl: string }
+  | { outcome: 'shown'; fillUrl: string; reason: 'mail_not_configured' | 'send_failed' }
   | { outcome: 'no_recipient' }
 
 /**
@@ -324,7 +355,8 @@ type FillLinkOutcome =
  *    `resendFillLinkAction`'s комментарий — разбор всех трёх состояний).
  *    Выбор `changesRequestedMail`/`fillLinkMail` имеет смысл только для
  *    письма, которое действительно уходит, поэтому и `flagCount` читается
- *    только в этом хвосте.
+ *    только в этом хвосте. Если отправка ПАДАЕТ, хвост сходит в `shown` —
+ *    см. комментарий у `try` ниже: ссылка к этому моменту уже выписана.
  *  - почта не доставляет (`SMTP_URL` пуст — сегодняшний бой) — ссылка
  *    возвращается вызывающему и попадает на экран ревьюера (`shown`).
  *    Раньше этот случай молча шёл «почтовым» хвостом: консольный почтальон
@@ -369,7 +401,7 @@ async function sendFillLink(input: {
       submissionId: input.submissionId,
       ttlDays: FILL_TOKEN_TTL_DAYS,
     })
-    return { outcome: 'shown', fillUrl: `${base}/f/${token}` }
+    return { outcome: 'shown', fillUrl: `${base}/f/${token}`, reason: 'mail_not_configured' }
   }
 
   const to = await contactEmail(input.submissionId)
@@ -380,17 +412,41 @@ async function sendFillLink(input: {
     submissionId: input.submissionId,
     ttlDays: FILL_TOKEN_TTL_DAYS,
   })
-  const common = {
-    to,
-    loungeName: await loungeName(input.submissionId),
-    fillUrl: `${base}/f/${token}`,
-  }
+  const fillUrl = `${base}/f/${token}`
 
-  await createMailer().send(
-    input.status === 'changes_requested' && flagCount > 0
-      ? changesRequestedMail({ ...common, flagCount })
-      : fillLinkMail(common),
-  )
+  // Граница `try` — граница выписки: всё, что падает ПОСЛЕ `issueFillToken`,
+  // падает с уже существующей ссылкой на руках, и с этого момента отказ
+  // означал бы объявить её потерянной — хранится только хэш, восстановить
+  // нечем, а «попробуйте снова» при жёстком отказе провайдера падает вечно
+  // (боевой случай: Resend в тестовом режиме доставляет только на адрес
+  // владельца аккаунта — письмо оператору отвергается при каждой отправке; та
+  // же форма у опечатки в relay или домена, отвергнутого на SMTP-времени).
+  // Поэтому упавшая отправка — не ошибка действия, а хвост `shown` с причиной
+  // `send_failed`: то же правило честности, что и у ветки без SMTP, — notice
+  // говорит, что письма НЕ БЫЛО, и ссылка вручается ревьюеру.
+  //
+  // Одним `try` ловится и построение почтальона, не только `send`:
+  // `createMailer()` бросает синхронно на недостающем `MAIL_FROM`, а
+  // `createTransport` может бросить на кривом `SMTP_URL` — ровно то, о чём
+  // предупреждает `notify/mailer.ts` («treat construction failures the same
+  // way as send failures»). Для ревьюера разницы нет: письма нет, env-переменные
+  // с его экрана не чинятся, а ссылка в руках — единственный путь оператора к
+  // форме. Громкий отказ здесь не сообщил бы ничего, что можно исправить, —
+  // только потерял бы этот путь.
+  try {
+    const common = { to, loungeName: await loungeName(input.submissionId), fillUrl }
+    await createMailer().send(
+      input.status === 'changes_requested' && flagCount > 0
+        ? changesRequestedMail({ ...common, flagCount })
+        : fillLinkMail(common),
+    )
+  } catch (err) {
+    console.error(
+      `[admin/s/${input.submissionId}] fill link mail failed to send — handing the link back to the reviewer`,
+      err,
+    )
+    return { outcome: 'shown', fillUrl, reason: 'send_failed' }
+  }
   return { outcome: 'mailed', to }
 }
 
@@ -409,16 +465,24 @@ export async function requestChangesAction(
   // берётся из результата самого перехода, а не перечитывается: это то
   // состояние, в которое анкету перевела уже закоммиченная транзакция.
   //
-  // Хвост `shown` (почта не настроена) возвращает ссылку НА ЭКРАН вместе с
-  // notice о том, что письма не было: переход состоялся, оператор должен
-  // как-то узнать о нём и получить доступ к правкам, и кроме ревьюера
-  // вручить ему ссылку некому. Раньше эта ветка тихо печатала письмо в
-  // stdout и показывала чистый успех — ревьюер считал оператора
-  // уведомлённым, а ссылки не существовало больше нигде.
+  // Хвост `shown` возвращает ссылку НА ЭКРАН вместе с notice о том, что
+  // письма не было — что почта не настроена, что отправка упала: переход
+  // состоялся, оператор должен как-то узнать о нём и получить доступ к
+  // правкам, и кроме ревьюера вручить ему ссылку некому. Раньше первая из
+  // причин тихо печатала письмо в stdout и показывала чистый успех — ревьюер
+  // считал оператора уведомлённым, а ссылки не существовало больше нигде;
+  // вторая давала notice «попробуйте снова» про уже выписанную ссылку,
+  // которую повтор не вернул бы никогда.
   let sent: FillLinkOutcome
   try {
     sent = await sendFillLink({ submissionId, status: result.status })
   } catch (err) {
+    // Сюда доходят только сбои ДО выписки токена (чтение `II.1.3`,
+    // `openFlags`, сама `issueFillToken`): всё после неё `sendFillLink` ловит
+    // сам и возвращает ссылку хвостом `shown`/`send_failed`. Ссылки, которую
+    // можно было бы вручить, здесь НЕТ — уведомление честно говорит, что
+    // письмо не ушло, а «Переслать ссылку» как следующий шаг верен: он
+    // выпишет новую.
     console.error(`[admin/s/${submissionId}] failed to send notification mail`, err)
     return { ok: true, notice: MAIL_FAILED_NOTICE }
   }
@@ -427,7 +491,16 @@ export async function requestChangesAction(
     case 'no_recipient':
       return { ok: true, notice: NO_CONTACT_EMAIL_NOTICE }
     case 'shown':
-      return { ok: true, notice: RETURNED_LINK_NOT_MAILED_NOTICE, fillUrl: sent.fillUrl }
+      // Переход уже закоммичен, и обе причины начинаются с «Сохранено.» —
+      // упавшее письмо не делает возврат несостоявшимся (см. `ActionResult`).
+      return {
+        ok: true,
+        notice:
+          sent.reason === 'send_failed'
+            ? RETURNED_LINK_SEND_FAILED_NOTICE
+            : RETURNED_LINK_NOT_MAILED_NOTICE,
+        fillUrl: sent.fillUrl,
+      }
     case 'mailed':
       return { ok: true }
   }
@@ -533,28 +606,26 @@ export async function resendFillLinkAction(
     sent = await sendFillLink({ submissionId, status })
   } catch (err) {
     console.error(`[admin/s/${submissionId}] failed to resend fill link mail`, err)
-    // Было `ok: true` с уведомлением «A new link was created, but the email
-    // failed to send». Изменено на отказ, по двум причинам, и обе — про то же
-    // «не утверждать непроверенного».
+    // Сюда доходят только сбои ДО выписки токена (чтение `II.1.3`,
+    // `openFlags`, сама `issueFillToken`): упавшую ПОСЛЕ выписки отправку
+    // `sendFillLink` ловит сам и возвращает ссылку хвостом
+    // `shown`/`send_failed` — выписанная рабочая ссылка не объявляется
+    // потерянной, пока она в руках. Поэтому текст утверждает ровно то, что
+    // этот код теперь ЗНАЕТ: ссылки не появилось (не «письмо не отправилось»
+    // — до письма дело не дошло), у оператора ничего нового нет, повторить
+    // безопасно.
     //
-    // Во-первых, «ссылка создана» этот код проверить больше не может: в `try`
-    // теперь и выдача токена, и отправка (см. `sendFillLink`), так что упасть
-    // мог любой из шагов.
-    //
-    // Во-вторых, `notice` рядом с `ok: true` значит здесь ровно одно —
-    // «решение по анкете состоялось, а уведомление о нём не ушло» (см.
-    // комментарий к `ActionResult` выше). У пересылки решения нет: письмо и
-    // есть всё её действие. Не ушло письмо — не произошло ничего, и это тот же
-    // довод, по которому отсутствие `II.1.3` выше даёт отказ, а не мягкое
-    // уведомление. Лишняя строка в `fill_tokens` (если письмо упало уже после
-    // выдачи) проверяющему ничего не говорит и ничего от него не требует —
-    // это просто ещё одна живая ссылка на ту же анкету, а они и так не
-    // отзываются (см. `issueFillToken`).
+    // Отказ, а не `ok: true` с уведомлением, по прежнему доводу: `notice`
+    // рядом с `ok: true` значит здесь ровно одно — «решение по анкете
+    // состоялось, а уведомление о нём не ушло» (см. комментарий к
+    // `ActionResult` выше). У пересылки решения нет: ссылка и есть всё её
+    // действие. Нет ссылки — не произошло ничего, и это тот же довод, по
+    // которому отсутствие `II.1.3` выше даёт отказ, а не мягкое уведомление.
     return {
       ok: false,
       error: {
-        en: 'The email failed to send — the operator has no new link. Try again shortly.',
-        ru: 'Письмо не отправилось — новой ссылки у оператора нет. Попробуйте снова через некоторое время.',
+        en: 'Could not create a new link — nothing was sent to the operator. Try again shortly.',
+        ru: 'Не удалось создать новую ссылку — оператору ничего не отправлено. Попробуйте снова через некоторое время.',
       },
     }
   }
@@ -568,13 +639,21 @@ export async function resendFillLinkAction(
           ru: 'У анкеты нет контактной почты (II.1.3)',
         },
       }
-    // Почта не настроена: ссылка — на экран, с notice о том, что письма не
-    // было. Показ здесь безопасен по той же причине, по какой он обязателен:
-    // действие стоит за `requireSession()`, ссылку видит аутентифицированный
-    // ревьюер — а письмом она не уходила, так что экран не вторая копия
-    // доступа, а единственная (ср. `mailed` ниже, где всё наоборот).
+    // Письма не было — почта не настроена или отправка упала — и ссылка идёт
+    // на экран с notice, называющим причину. Показ здесь безопасен по той же
+    // причине, по какой он обязателен: действие стоит за `requireSession()`,
+    // ссылку видит аутентифицированный ревьюер — а письмом она не уходила,
+    // так что экран не вторая копия доступа, а единственная (ср. `mailed`
+    // ниже, где всё наоборот). Для `send_failed` строго говоря «не уходила»
+    // значит «провайдер не принял»; в исчезающе редком остатке (обрыв уже
+    // после приёма) экранная копия — та же экспозиция, что и повторная
+    // пересылка, а альтернатива — потерять единственную ссылку наверняка.
     case 'shown':
-      return { ok: true, notice: LINK_NOT_MAILED_NOTICE, fillUrl: sent.fillUrl }
+      return {
+        ok: true,
+        notice: sent.reason === 'send_failed' ? LINK_SEND_FAILED_NOTICE : LINK_NOT_MAILED_NOTICE,
+        fillUrl: sent.fillUrl,
+      }
     // Раньше здесь было тихое `{ ok: true }` — ревьюер нажимал «Переслать
     // ссылку», действие срабатывало, и экран не менялся вообще: с точки
     // зрения ревьюера "ничего не произошло" и "письмо ушло" выглядели

@@ -45,8 +45,10 @@ import type { OutgoingMail } from '@/notify/messages'
 const holder = vi.hoisted(() => ({
   db: undefined as Db | undefined,
   sent: [] as { to: string; subject: string; text: string }[],
-  /** Отправка падает — единственный сбой, который этот код обязан отличать от
-   *  «отправлять некому» (см. последний сценарий). */
+  /** Отправка падает при настроенном SMTP — жёсткий отказ провайдера в момент
+   *  `send` (боевой случай: Resend в тестовом режиме доставляет только на
+   *  адрес владельца аккаунта). Что обязано произойти — последний describe:
+   *  выписанная ссылка возвращается на экран, а не объявляется потерянной. */
   failSend: false,
   /** Что отвечает `mailDelivers()`: true — среда с настоящим SMTP (письма
    *  доставляются), false — сегодняшний бой (`SMTP_URL` пуст, ссылка обязана
@@ -322,46 +324,6 @@ describe('resendFillLinkAction: письмо описывает тот экра�
     expect(await tokenCount(db, submissionId)).toBe(0)
   })
 
-  /**
-   * Упавшая отправка — ОТКАЗ, а не `ok: true` с уведомлением, и это единственное
-   * место, где пересылка расходится с `requestChangesAction`/`approveAction`.
-   * У тех `notice` рядом с `ok: true` значит ровно одно: «решение по анкете
-   * состоялось (транзакция закоммичена), а уведомление о нём не ушло». У
-   * пересылки решения нет — письмо и есть всё её действие, так что не ушедшее
-   * письмо это «не произошло ничего», и показывать его как успех значило бы
-   * сказать проверяющему, что у оператора появилась ссылка, которой у него нет.
-   *
-   * Проверяется здесь, потому что этот случай недостижим ни из браузера (e2e не
-   * видит письма вовсе — консольный почтальон не печатает тело), ни из тестов
-   * построителей: он про то, как действие поступает с исключением, а не про то,
-   * какой текст сложился.
-   */
-  it('письмо не отправилось: отказ, а не успех с уведомлением', async () => {
-    const db = holder.db!
-    const submissionId = await seed(db, { status: 'changes_requested', flags: 1 })
-    holder.failSend = true
-
-    // Сбой попадает в лог (`console.error` в самом действии) — глушится, чтобы
-    // ожидаемая ошибка не читалась в выводе теста как настоящая.
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
-    try {
-      const result = await resendFillLinkAction(submissionId)
-
-      expect(result.ok).toBe(false)
-      if (result.ok) throw new Error('unreachable')
-      expect(result.error.en).toMatch(/no new link/i)
-      expect(result.error.ru).toMatch(/новой ссылки у оператора нет/)
-      expect(errors).toHaveBeenCalled()
-    } finally {
-      // Тест, который трогает общий `holder`, убирает за собой сам, а не
-      // полагается на `beforeEach` соседа — тот же приём, что у `holder.broken`
-      // в тесте маршрута фото.
-      holder.failSend = false
-      errors.mockRestore()
-    }
-
-    expect(holder.sent).toEqual([])
-  })
 })
 
 /**
@@ -556,6 +518,115 @@ describe('без SMTP: ссылка возвращается на экран, а
     // консольного почтальона и ревьюер видел чистый успех.
     expect(result.notice?.en).toMatch(/not configured/i)
     expect(result.notice?.ru).toMatch(/не настроена/)
+    expect(holder.sent).toEqual([])
+  })
+})
+
+/**
+ * SMTP настроен, а отправка ПАДАЕТ. Боевой повод: Resend в тестовом режиме
+ * (`MAIL_FROM=onboarding@resend.dev`, домен не подтверждён) доставляет только
+ * на адрес владельца аккаунта — письмо оператору провайдер отклоняет в момент
+ * отправки, и повтор падает вечно. Та же форма у любого жёсткого отказа:
+ * опечатка в relay, домен получателя отвергнут на SMTP-времени.
+ *
+ * Прежнее поведение было тупиком: «письмо не отправилось, попробуйте снова» —
+ * а токен к этому моменту уже выписан, хранится только его хэш, и ссылки не
+ * существовало больше нигде. Правило теперь то же, что у среды без SMTP:
+ * выписанная рабочая ссылка не объявляется потерянной, пока она в руках, — она
+ * возвращается на экран (`shown`, причина `send_failed`), а notice говорит,
+ * что письмо НЕ ушло, и ссылку надо вручить самому.
+ *
+ * Текст notice ОБЯЗАН отличаться от «почта не настроена»: ревьюер должен
+ * видеть разницу между «эта среда не шлёт вообще» и «отправка только что
+ * упала». Закреплено not-match'ами на текст соседней ветки.
+ *
+ * Проверяется здесь, а не в e2e: из браузера этот случай недостижим (e2e-среда
+ * без SMTP идёт веткой `mail_not_configured`), а тесты построителей писем не
+ * знают, как действие поступает с исключением.
+ */
+describe('SMTP настроен, но отправка упала: ссылка возвращается на экран', () => {
+  beforeEach(async () => {
+    holder.db = await createTestDb()
+    holder.sent = []
+    holder.failSend = true
+    holder.smtpConfigured = true
+  })
+
+  it('пересылка: успех с РАБОЧЕЙ ссылкой и notice про упавшее письмо, а не тупиковый отказ', async () => {
+    const db = holder.db!
+    const submissionId = await seed(db, { status: 'changes_requested', flags: 1 })
+
+    // Сбой попадает в лог (`console.error` в `sendFillLink`) — глушится, чтобы
+    // ожидаемая ошибка не читалась в выводе теста как настоящая.
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const result = await resendFillLinkAction(submissionId)
+
+      expect(result.ok).toBe(true)
+      if (!result.ok) throw new Error('unreachable')
+
+      // Ссылка не «похожа на ссылку», а открывает ЭТУ анкету — токен из URL
+      // проходит настоящий resolveFillToken по настоящей строке fill_tokens.
+      expect(result.fillUrl).toBeDefined()
+      expect(await resolveFillToken(db, tokenFromMail(result.fillUrl!))).toEqual({ submissionId })
+      expect(await tokenCount(db, submissionId)).toBe(1)
+
+      // Причина названа та, что была: отправка УПАЛА — не «почта не
+      // настроена» (эта среда шлёт, просто не вышло) и не «Link sent to …».
+      // Концовка та же, что у ветки без SMTP: вручить ссылку самому.
+      expect(result.notice?.en).toMatch(/failed to send/i)
+      expect(result.notice?.en).not.toMatch(/not configured/i)
+      expect(result.notice?.en).not.toContain('Link sent')
+      expect(result.notice?.ru).toMatch(/не отправилось/)
+      expect(result.notice?.ru).not.toMatch(/не настроена/)
+      expect(result.notice?.ru).toMatch(/передайте оператору эту ссылку сами/)
+
+      // Сбой не проглочен молча — он в логе сервера.
+      expect(errors).toHaveBeenCalled()
+    } finally {
+      // Тест, который трогает общий `holder`, убирает за собой сам, а не
+      // полагается на `beforeEach` соседа.
+      holder.failSend = false
+      errors.mockRestore()
+    }
+
+    expect(holder.sent).toEqual([])
+  })
+
+  it('возврат на правку: переход закоммичен, ссылка на экран, notice не притворяется, что возврат не удался', async () => {
+    const db = holder.db!
+    const submissionId = await seed(db, { status: 'submitted', flags: 2 })
+
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const result = await requestChangesAction(submissionId)
+
+      expect(result.ok).toBe(true)
+      if (!result.ok) throw new Error('unreachable')
+
+      // Переход состоялся ДО письма и не откатывается из-за него: упавшая
+      // отправка — проблема доставки, а не свидетельство неверного решения
+      // (см. `createMailer`'s комментарий в `notify/mailer.ts`).
+      const [row] = await db
+        .select({ status: submissions.status })
+        .from(submissions)
+        .where(eq(submissions.id, submissionId))
+      expect(row?.status).toBe('changes_requested')
+
+      expect(await resolveFillToken(db, tokenFromMail(result.fillUrl!))).toEqual({ submissionId })
+
+      // «Сохранено.» — тем же словом, что у соседних notice действий с уже
+      // закоммиченной транзакцией; причина — упавшее письмо, не «не настроена».
+      expect(result.notice?.en).toMatch(/^Saved\./)
+      expect(result.notice?.en).toMatch(/failed to send/i)
+      expect(result.notice?.ru).toMatch(/^Сохранено\./)
+      expect(result.notice?.ru).toMatch(/не отправилось/)
+      expect(result.notice?.ru).not.toMatch(/не настроена/)
+    } finally {
+      holder.failSend = false
+      errors.mockRestore()
+    }
+
     expect(holder.sent).toEqual([])
   })
 })
