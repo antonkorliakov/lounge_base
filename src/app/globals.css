@@ -286,6 +286,12 @@ button:disabled { opacity: .4; }
    (второстепенный): просто приглушённый текст, не линия — форма узкая. */
 .login-sep { margin: 2px 0; text-align: center; opacity: .5; font-size: 13px; }
 .login-alt { background: none; opacity: .8; }
+
+/* Смена пароля (/admin/password): тот же узкий столбик, что и вход. */
+.pw-error { margin: 0; color: #b91c1c; font-size: 14px; }
+.pw-notice { margin: 0; color: #15803d; font-size: 14px; }
+.pw-back { font-size: 13px; }
+.registry-password { font-size: 13px; }
 /* Реестр лаунжей (/admin). Таблица на всю ширину: у неё семь колонок, и
    узкая колонка «истории», как у прежнего списка (.admin-home, удалён вместе
    со своим экраном), резала бы её горизонтальной прокруткой. */
@@ -464,7 +470,9 @@ button:disabled { opacity: .4; }
   .dl-panel { border-color: #5b2323; }
   .dl-warning { color: #fca5a5; }
   /* Вход и смена пароля: тёмно-красный текст ошибки тонет на тёмном фоне —
-     светлый тон того же цвета (довод .se-error). Контролы и .login-alt
-     (фон none) уже накрыты общим правилом для button выше. */
+     светлый тон того же цвета; насыщенный зелёный уведомления — светлым по
+     той же причине (доводы .se-error и .review-state-approved). Контролы и
+     .login-alt (фон none) уже накрыты общим правилом для button выше. */
   .login-error, .pw-error { color: #fca5a5; }
+  .pw-notice { color: #86efac; }
 }

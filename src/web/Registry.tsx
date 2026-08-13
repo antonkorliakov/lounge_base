@@ -74,6 +74,7 @@ const ALL_LOUNGES_XLSX: Localized = {
   en: 'Excel, all lounges incl. unapproved',
   ru: 'Excel, все лаунжи, включая непринятые',
 }
+const PASSWORD_LINK: Localized = { en: 'Password', ru: 'Пароль' }
 
 export function Registry(props: {
   rows: RegistryTableRow[]
@@ -135,6 +136,12 @@ export function Registry(props: {
             <a href="/admin/export?format=xlsx&includeUnapproved=1">{pick(ALL_LOUNGES_XLSX)}</a>
           )}
         </div>
+        {/* Единственный вход на /admin/password: страница без ссылки на неё —
+            мёртвая. В той же строке шапки, но не среди выгрузок — это про
+            аккаунт, не про данные. */}
+        <a className="registry-password" href="/admin/password">
+          {pick(PASSWORD_LINK)}
+        </a>
       </header>
 
       {/* Завести лаунж и получить его первую ссылку заполнения — бывшая
