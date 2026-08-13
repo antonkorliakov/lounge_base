@@ -29,6 +29,13 @@
       "when": 1786384475399,
       "tag": "0003_white_absorbing_man",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786604527960,
+      "tag": "0004_clever_terrax",
+      "breakpoints": true
     }
   ]
 }

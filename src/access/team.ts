@@ -1,8 +1,14 @@
 import { randomBytes, createHash } from 'node:crypto'
-import { and, eq, gt, isNull } from 'drizzle-orm'
+import { and, eq, gt, isNull, ne, sql } from 'drizzle-orm'
 import type { Localized } from '@/form-schema'
-import type { Db } from '@/db/types'
+import type { Db, Tx } from '@/db/types'
 import { teamMembers, loginTokens, sessions } from '@/db/schema'
+import {
+  DUMMY_STORED_HASH,
+  MIN_PASSWORD_LENGTH,
+  hashPassword,
+  verifyPassword,
+} from './password'
 
 // Exported so anything that describes this TTL to a human — currently
 // `loginMail` in `src/notify/messages.ts`, pinned by a test there — reads
@@ -171,13 +177,205 @@ export async function consumeLoginToken(
     const row = updated[0]
     if (!row) return null
 
-    const [session] = await tx
-      .insert(sessions)
-      .values({ memberId: row.memberId, expiresAt: daysFromNow(SESSION_TTL_DAYS) })
-      .returning()
-
-    return { sessionId: session!.id, memberId: row.memberId }
+    const { sessionId } = await createSession(tx, row.memberId)
+    return { sessionId, memberId: row.memberId }
   })
+}
+
+/**
+ * ЕДИНСТВЕННОЕ место, где создаётся строка `sessions`. Оба входа — обмен
+ * magic-ссылки (`consumeLoginToken`, внутри его транзакции) и парольный
+ * (`loginWithPassword`) — выдают сессию этим вызовом, поэтому TTL и всё,
+ * что «сессия» значит (скользящее продление, отзыв — см. `resolveSession`,
+ * `endSession` и соседей), у двух путей не могут разъехаться: второй копии
+ * INSERT-а просто нет.
+ *
+ * `Db | Tx`: `consumeLoginToken` обязан звать это внутри своей транзакции
+ * (all-or-nothing с пометкой токена использованным — см. его комментарий),
+ * а парольному входу транзакция не нужна — это один INSERT без второй
+ * записи, с которой ему нужно быть атомарным.
+ */
+async function createSession(db: Db | Tx, memberId: string): Promise<{ sessionId: string }> {
+  const [session] = await db
+    .insert(sessions)
+    .values({ memberId, expiresAt: daysFromNow(SESSION_TTL_DAYS) })
+    .returning({ id: sessions.id })
+
+  return { sessionId: session!.id }
+}
+
+// 5 подряд неверных паролей закрывают парольный вход участника на 15 минут.
+// Экспортируются ради тестов, которые закрепляют оба числа поведением, а не
+// перечитыванием констант из этого же файла.
+export const PASSWORD_LOCKOUT_THRESHOLD = 5
+export const PASSWORD_LOCKOUT_MINUTES = 15
+
+/**
+ * Парольный вход: почта + пароль → та же сессия, что выдаёт magic-ссылка
+ * (общий `createSession` выше). Возвращает `null` на ЛЮБУЮ неудачу —
+ * неизвестная почта, участник без пароля, неверный пароль, действующая
+ * блокировка — без различимого признака, какая именно: различие обязано
+ * умереть здесь, иначе форма входа перечисляет состав команды (тот же
+ * довод, что у `requestLogin`), а отдельное «вы заблокированы»
+ * подтверждало бы, что адрес существует.
+ *
+ * Время тоже выравнено по веткам: каждая ветка неудачи, у которой нет
+ * настоящего хэша, прожигает `verifyPassword` о `DUMMY_STORED_HASH` с теми
+ * же параметрами scrypt — иначе «нет такого адреса» отвечал бы на всю
+ * стоимость scrypt быстрее «неверного пароля», и никакой разумный пол на
+ * длительность ответа (см. действие входа) этого не прикрыл бы. Остаточная
+ * разница веток — один UPDATE счётчика на неверном пароле — прячется под
+ * пол в действии.
+ *
+ * Защита от перебора — минимальная, но настоящая, и её пределы названы:
+ * счётчик подряд неверных попыток НА УЧАСТНИКА с блокировкой на
+ * `PASSWORD_LOCKOUT_MINUTES` после `PASSWORD_LOCKOUT_THRESHOLD` неудач.
+ * Распределённый перебор по многим адресам (по одной попытке на адрес) и
+ * перебор по IP это не ловит — защита от него живёт уровнем ниже
+ * (rate-limit платформы), не здесь.
+ *
+ * Инкремент счётчика — одним UPDATE с арифметикой в SQL, а не
+ * read-modify-write из JS: две параллельные неверные попытки иначе обе
+ * прочитали бы 4 и обе записали бы 5 — потерянный инкремент ровно на
+ * пороге. Оба CASE читают СТАРЫЕ значения строки (семантика UPDATE в
+ * постгресе), поэтому «истёкшая блокировка начинает счёт заново с 1, а не
+ * продолжает с порога» и «порог достигнут — закрыть» выражаются одним
+ * выражением без гонки. Это не семейство lock-order-заслонов:
+ * `team_members` не входит в охраняемые таблицы, и `src/access` вне
+ * сканируемых корней (см. отчёт задачи) — но сама форма «атомарный UPDATE
+ * вместо SELECT-потом-UPDATE» — та же, что у `consumeLoginToken`.
+ */
+export async function loginWithPassword(
+  db: Db,
+  email: string,
+  password: string,
+): Promise<{ sessionId: string; memberId: string } | null> {
+  const rows = await db
+    .select({
+      id: teamMembers.id,
+      passwordHash: teamMembers.passwordHash,
+      failedPasswordAttempts: teamMembers.failedPasswordAttempts,
+      passwordLockedUntil: teamMembers.passwordLockedUntil,
+    })
+    .from(teamMembers)
+    .where(eq(teamMembers.email, normalizeEmail(email)))
+    .limit(1)
+
+  const member = rows[0]
+  if (!member) {
+    await verifyPassword(password, DUMMY_STORED_HASH)
+    return null
+  }
+
+  const locked = member.passwordLockedUntil !== null && member.passwordLockedUntil > new Date()
+  if (locked || member.passwordHash === null) {
+    // Результат сжигаемой проверки игнорируется намеренно: у заблокированного
+    // участника даже ВЕРНЫЙ пароль не открывает сессию (иначе блокировка не
+    // мешала бы перебору — угадавший входит), а сравнивать с фиктивным
+    // хэшем — единственный способ не выдать временем, была ли проверка.
+    await verifyPassword(password, DUMMY_STORED_HASH)
+    return null
+  }
+
+  const ok = await verifyPassword(password, member.passwordHash)
+  if (!ok) {
+    const lockoutExpired = sql`${teamMembers.passwordLockedUntil} is not null and ${teamMembers.passwordLockedUntil} <= now()`
+    await db
+      .update(teamMembers)
+      .set({
+        failedPasswordAttempts: sql`case
+          when ${lockoutExpired} then 1
+          else ${teamMembers.failedPasswordAttempts} + 1
+        end`,
+        passwordLockedUntil: sql`case
+          when ${lockoutExpired} then null
+          when ${teamMembers.failedPasswordAttempts} + 1 >= ${PASSWORD_LOCKOUT_THRESHOLD}
+            then now() + (${PASSWORD_LOCKOUT_MINUTES} * interval '1 minute')
+          else ${teamMembers.passwordLockedUntil}
+        end`,
+      })
+      .where(eq(teamMembers.id, member.id))
+    return null
+  }
+
+  // Успех гасит счётчик — иначе четыре старые неудачи держали бы участника
+  // в одном шаге от блокировки неограниченно долго. Запись только когда есть
+  // что гасить: обычный вход не должен писать в `team_members` вовсе.
+  if (member.failedPasswordAttempts > 0 || member.passwordLockedUntil !== null) {
+    await db
+      .update(teamMembers)
+      .set({ failedPasswordAttempts: 0, passwordLockedUntil: null })
+      .where(eq(teamMembers.id, member.id))
+  }
+
+  const { sessionId } = await createSession(db, member.id)
+  return { sessionId, memberId: member.id }
+}
+
+/**
+ * ЕДИНСТВЕННАЯ точка записи пароля — и для смены из кабинета
+ * (`/admin/password`), и для консольного `ops set-password`: одна функция
+ * хэширует (`hashPassword`, `access/password.ts`) и одна проверяет правило
+ * `MIN_PASSWORD_LENGTH`, так что два пути не могут разойтись ни форматом,
+ * ни границей допустимого.
+ *
+ * Смена пароля гасит счётчик неудач и блокировку: новый пароль означает,
+ * что старые неудачные попытки — о пароле, которого больше нет.
+ */
+export async function setMemberPassword(
+  db: Db,
+  memberId: string,
+  password: string,
+): Promise<{ ok: true } | { ok: false; error: Localized }> {
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return {
+      ok: false,
+      error: {
+        en: `Password must be at least ${MIN_PASSWORD_LENGTH} characters`,
+        ru: `Пароль должен быть не короче ${MIN_PASSWORD_LENGTH} символов`,
+      },
+    }
+  }
+
+  const passwordHash = await hashPassword(password)
+  await db
+    .update(teamMembers)
+    .set({ passwordHash, failedPasswordAttempts: 0, passwordLockedUntil: null })
+    .where(eq(teamMembers.id, memberId))
+
+  return { ok: true }
+}
+
+/**
+ * `setMemberPassword` по почте, для `ops set-password`: скрипту человек
+ * называет адрес, а не UUID. Неизвестная почта — честный отказ, как у
+ * команды `login` там же: защита «один ответ на любой адрес» — свойство
+ * ВЕБ-границы входа, а консольный скрипт, выдающий доступ, обязан говорить
+ * правду тому, кто его запустил.
+ */
+export async function setMemberPasswordByEmail(
+  db: Db,
+  email: string,
+  password: string,
+): Promise<{ ok: true } | { ok: false; error: Localized }> {
+  const rows = await db
+    .select({ id: teamMembers.id })
+    .from(teamMembers)
+    .where(eq(teamMembers.email, normalizeEmail(email)))
+    .limit(1)
+
+  const member = rows[0]
+  if (!member) {
+    return {
+      ok: false,
+      error: {
+        en: 'This address is not on the team',
+        ru: 'Этой почты нет в команде',
+      },
+    }
+  }
+
+  return setMemberPassword(db, member.id, password)
 }
 
 /**
@@ -262,4 +460,24 @@ export async function endSession(db: Db, sessionId: string): Promise<void> {
  */
 export async function endAllSessionsForMember(db: Db, memberId: string): Promise<void> {
   await db.delete(sessions).where(eq(sessions.memberId, memberId))
+}
+
+/**
+ * Смена пароля — каноничный момент отозвать ВСЕ ОСТАЛЬНЫЕ сессии участника
+ * (человек меняет пароль в том числе потому, что подозревает утечку — чужая
+ * живая сессия обесценила бы смену), но НЕ ту, из которой он это делает:
+ * разлогинить его в ответ на правильное действие — наказание за
+ * осторожность. Поэтому третья функция рядом с `endSession` (ровно одна) и
+ * `endAllSessionsForMember` (все до единой, kill switch увольнения — тот
+ * случай, где щадить текущую как раз нельзя): «все, кроме этой» — не
+ * вырожденный случай ни одной из двух.
+ */
+export async function endOtherSessionsForMember(
+  db: Db,
+  memberId: string,
+  keepSessionId: string,
+): Promise<void> {
+  await db
+    .delete(sessions)
+    .where(and(eq(sessions.memberId, memberId), ne(sessions.id, keepSessionId)))
 }

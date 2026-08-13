@@ -170,6 +170,17 @@ export const teamMembers = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     email: text('email').notNull(),
     name: text('name').notNull(),
+    // Пароль — второй путь входа РЯДОМ с magic-ссылкой, а не вместо неё
+    // (почта не отправляется, SMTP не настроен — см. `ops.ts`). NULL — у
+    // участника пароля нет, и парольный путь для него просто не работает;
+    // формат строки самоописывающийся, см. `access/password.ts`.
+    passwordHash: text('password_hash'),
+    // Минимальная, но настоящая защита от перебора: счётчик подряд неверных
+    // паролей и время, до которого парольный вход участника закрыт. На
+    // участника, не на IP — распределённый перебор по многим адресам этим
+    // не ловится (сказано в `loginWithPassword`, не спрятано).
+    failedPasswordAttempts: integer('failed_password_attempts').notNull().default(0),
+    passwordLockedUntil: timestamp('password_locked_until', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [unique('team_members_email_unique').on(table.email)],
