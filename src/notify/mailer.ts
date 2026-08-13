@@ -180,6 +180,12 @@ export function mailDelivers(): boolean {
  *    not just at `send`. Whatever wires this in should treat construction
  *    failures the same way as send failures — see above — not assume only
  *    `send` can fail.
+ *
+ * That wiring exists now and follows both points: the review actions catch
+ * construction and send in one `try` (`notifyOrNotice`, and `sendFillLink`'s
+ * mailed tail, which additionally hands the already-minted fill link back to
+ * the reviewer's screen instead of reporting it lost — see
+ * `src/app/admin/s/[submissionId]/actions.ts`).
  */
 export function createMailer(): Mailer {
   // The branch IS `mailDelivers()` — not a second reading of `SMTP_URL` that
