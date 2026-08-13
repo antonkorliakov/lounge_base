@@ -251,6 +251,31 @@ button:disabled { opacity: .4; }
      required" checkbox row is a label too and must keep its flex layout —
      and .pass2-card label alone would out-rank plain .field-check. */
   .pass2-card label:not(.field-check) { display: block; }
+
+  /* Services pass 1 stays ONE column on desktop, deliberately. The row is a
+     whole-row <label> whose two-language item names wrap freely (see
+     .pass1-row above); split across two ~310px columns, the long names
+     ("Wheelchair Assistance Available") wrap to two-three lines and
+     flex-wrap drops the select onto its own line, so half the rows come out
+     twice as tall as their neighbours — a ragged checkerboard that is
+     harder to scan than one long list. Scanning is what this screen is for:
+     in the 648px column the name sits left, the answer right — a settings
+     list — and on desktop the length scrolls with a wheel, not a thumb.
+
+     Photo slots, by contrast, do go side by side: each slot is a compact
+     self-contained block (heading, thumbnail, button) that wastes the
+     column's right half when stacked. auto-fit rather than a fixed 2 lets
+     the fixes screen — which renders this same section with a single
+     flagged slot inside a .fix-card — give that one slot the full card
+     width instead of pinning it to half of an otherwise empty grid. Inside
+     the 648px column this makes two ~310px columns, and .photo-slot img's
+     existing max-width: 100% caps a real photo at its cell. */
+  .photos {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    column-gap: 24px;
+    align-items: start;
+  }
 }
 
 .review-screen { display: grid; grid-template-columns: 200px 1fr; min-height: 100dvh; }
