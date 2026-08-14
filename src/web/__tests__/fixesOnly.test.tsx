@@ -319,6 +319,65 @@ describe('контрол отмеченной позиции услуг', () => 
   })
 })
 
+/**
+ * Отмеченный multi_select (сегодня одно поле — III.6.6, зоны; перечисление
+ * идёт от `FIELDS`, так что второе такое поле попадёт сюда само) приходит на
+ * экран правок ЧИПАМИ — теми же кнопками с `aria-pressed`, что и на основной
+ * форме: `FixesOnly` рендерит тот же `FieldInput`, отдельной ветки у него
+ * нет, и этот describe пришпиливает, что так и осталось.
+ */
+describe('контрол отмеченного multi_select поля — чипы', () => {
+  const multiFields = FIELDS.filter((f) => f.type === 'multi_select')
+
+  it('в схеме есть multi_select-поля (иначе проверки ниже пусты)', () => {
+    expect(multiFields.length).toBeGreaterThan(0)
+  })
+
+  it('каждый вариант списка — кнопка-чип, чекбоксов больше нет', () => {
+    for (const field of multiFields) {
+      const html = renderFixes([flagFor(field.key)])
+      for (const option of OPTION_LISTS[field.optionList!]) {
+        expect(html, `${field.key}/${option.id}`).toContain(
+          `aria-pressed="false">${option.label.en}</button>`,
+        )
+      }
+      expect(html, field.key).not.toContain('type="checkbox"')
+    }
+  })
+
+  it('членство видно как нажатость: выбранный вариант нажат, остальные нет', () => {
+    for (const field of multiFields) {
+      const [first, ...rest] = OPTION_LISTS[field.optionList!]
+      const html = renderFixes([flagFor(field.key)], {
+        fieldValues: { [field.key]: [first!.id] },
+      })
+      expect(html, field.key).toContain(`aria-pressed="true">${first!.label.en}</button>`)
+      for (const option of rest) {
+        expect(html, `${field.key}/${option.id}`).toContain(
+          `aria-pressed="false">${option.label.en}</button>`,
+        )
+      }
+    }
+  })
+
+  // Тот же инвариант, что у строк первого прохода (`servicesPass1.test.tsx`,
+  // ловушка b): <label> переадресует активацию первому labelable-потомку, а
+  // <button> — labelable, значит НИ ОДНА кнопка не должна оказаться внутри
+  // label — иначе клик по заголовку поля нажимал бы первый чип. Поэтому
+  // заголовок multi_select в `FieldInput` — <span>, не общий <label htmlFor>.
+  it('ни одна кнопка-чип не внутри label, и заголовок поля — не label', () => {
+    for (const field of multiFields) {
+      const html = renderFixes([flagFor(field.key)])
+      for (const chunk of html.split('<label').slice(1)) {
+        const inside = chunk.slice(0, chunk.indexOf('</label>'))
+        expect(inside, field.key).not.toContain('<button')
+      }
+      expect(html, field.key).toContain(`class="field-label">${field.label.en}<`)
+      expect(html, field.key).not.toContain(`<label class="field-label" for="${field.key}"`)
+    }
+  })
+})
+
 describe('контрол отмеченного слота фото', () => {
   it('рисует загрузку именно этого слота и не тянет остальные три', () => {
     const html = renderFixes([flagFor('entrance')])

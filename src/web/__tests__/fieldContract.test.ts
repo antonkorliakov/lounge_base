@@ -13,7 +13,7 @@ import {
   type SelectValue,
   type ServiceValueInput,
 } from '@/form-schema'
-import { numberFieldValue } from '../FieldInput'
+import { multiSelectAfterTap, numberFieldValue } from '../FieldInput'
 import { EMPTY_SERVICE_ATTRS, availabilityAfterTap } from '../ServiceItemCard'
 
 /**
@@ -236,6 +236,57 @@ describe('контракт FieldInput ↔ validateField', () => {
     })
   })
 
+  /**
+   * The multi_select chips' emission contract, pinned on the exported pure
+   * `multiSelectAfterTap` — the same technique as `availabilityAfterTap`
+   * above. The chips replaced the checkboxes' `e.target.checked` branch pair,
+   * and this describe is what holds the replacement to the ORIGINAL emission:
+   * `onChange` still receives the array of selected option ids, order-stable
+   * — a toggle-on appends at the end, a toggle-off removes exactly the tapped
+   * id and nothing else, and the order of everything untouched survives both.
+   * `renderValues` and the review screen print this array as-is, so order
+   * stability is visible product behaviour, not an implementation nicety.
+   */
+  describe('чипы multi_select: что излучает тап (multiSelectAfterTap)', () => {
+    it('тап по ненажатому чипу дописывает его В КОНЕЦ, не трогая порядок уже выбранных', () => {
+      expect(multiSelectAfterTap([], 'departure')).toEqual(['departure'])
+      expect(multiSelectAfterTap(['departure'], 'arrival')).toEqual(['departure', 'arrival'])
+      expect(multiSelectAfterTap(['transit', 'arrival'], 'departure'))
+        .toEqual(['transit', 'arrival', 'departure'])
+    })
+
+    it('тап по нажатому чипу убирает ровно его, порядок остальных не меняется', () => {
+      expect(multiSelectAfterTap(['arrival', 'departure', 'transit'], 'departure'))
+        .toEqual(['arrival', 'transit'])
+      expect(multiSelectAfterTap(['departure'], 'departure')).toEqual([])
+    })
+
+    it('двойной тап возвращает исходное членство (вкл выкл = ничего не сказано)', () => {
+      const start = ['transit', 'arrival']
+      expect(multiSelectAfterTap(multiSelectAfterTap(start, 'departure'), 'departure'))
+        .toEqual(start)
+    })
+
+    it('на реальных полях: полный набор, собранный тапами, проходит валидацию, и каждое снятие тоже', () => {
+      for (const field of FIELDS.filter((f) => f.type === 'multi_select')) {
+        const options = field.optionList ? OPTION_LISTS[field.optionList] : []
+        // Собрать всё по одному тапу — как заполняющий.
+        let selected: string[] = []
+        for (const option of options) selected = multiSelectAfterTap(selected, option.id)
+        expect(selected, field.key).toEqual(options.map((o) => o.id))
+        expect(validateField(field, selected).ok, field.key).toBe(true)
+        // И снять по одному: каждый промежуточный шаг — валидное значение
+        // (кроме пустого у required-поля, что уже пришпилено выше).
+        for (const option of options) {
+          const after = multiSelectAfterTap(selected, option.id)
+          expect(after, `${field.key} / minus "${option.id}"`)
+            .toEqual(selected.filter((id) => id !== option.id))
+          if (after.length > 0) expect(validateField(field, after).ok, field.key).toBe(true)
+        }
+      }
+    })
+  })
+
   describe('очистка позиции услуг до «—» (I3, серверная сторона)', () => {
     const cleared = (): ServiceValueInput => ({ ...EMPTY_SERVICE_ATTRS, available: '' })
 
@@ -291,10 +342,12 @@ describe('контракт FieldInput ↔ validateField', () => {
     })
 
     // The empty-array case above is the "cleared" end of the contract; this
-    // is the other end — every individual checkbox `FieldInput.tsx` can
-    // actually tick, one at a time (`[...selected, option.id]` from an empty
-    // start). Previously only `[]` was walked, leaving every one of the
-    // field's real options untested from the UI-emission side.
+    // is the other end — every individual chip `FieldInput.tsx` can actually
+    // press, one at a time, built by the exact function its `onClick` calls
+    // (`multiSelectAfterTap` from an empty start — the chips inherited the
+    // checkboxes' append verbatim). Previously only `[]` was walked, leaving
+    // every one of the field's real options untested from the UI-emission
+    // side.
     it('multi_select: каждый отдельный вариант списка проходит валидацию', () => {
       const multiSelectFields = FIELDS.filter((f) => f.type === 'multi_select')
       expect(multiSelectFields.length).toBeGreaterThan(0)
@@ -303,7 +356,7 @@ describe('контракт FieldInput ↔ validateField', () => {
         const options = field.optionList ? OPTION_LISTS[field.optionList] : []
         expect(options.length, field.key).toBeGreaterThan(0)
         for (const option of options) {
-          const result = validateField(field, [option.id])
+          const result = validateField(field, multiSelectAfterTap([], option.id))
           expect(result.ok, `${field.key} / option "${option.id}"`).toBe(true)
         }
       }
