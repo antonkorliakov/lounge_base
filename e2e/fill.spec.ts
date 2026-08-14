@@ -139,6 +139,63 @@ test('выбор в первом проходе по услугам сохран
   await expect(availability(page, 'Wifi Access', 'No')).toHaveAttribute('aria-pressed', 'false')
 })
 
+/**
+ * Один чип multi_select-поля зон (III.6.6, экран 11 «Terminal & Zone
+ * Information»), адресованный так же, как кнопки пары наличия выше: группа
+ * названа подписью поля (`role="group"` + `aria-label` в `FieldInput`), чип —
+ * кнопка с вариантом списка `zone`. До чипов здесь стояли чекбоксы, и никакой
+ * e2e их не трогал вовсе — поле жило только на юнит-стороне контракта; ответ
+ * читается как `aria-pressed`, тот же атрибут, по которому красится нажатый
+ * чип.
+ */
+function zoneChip(page: Page, option: string): Locator {
+  return page
+    .getByRole('group', { name: 'Arrival / Departure / Transit' })
+    .getByRole('button', { name: option, exact: true })
+}
+
+test('чипы multi_select: членство переключается, сохраняется и переживает перезагрузку, клик по заголовку поля ничего не нажимает', async ({ page }) => {
+  const url = seed()
+  await page.goto(url)
+
+  await clickNext(page, 10) // I, II.1–4, III.1–5 → III.6
+  await expect(page.getByRole('heading', { name: 'Terminal & Zone Information' })).toBeVisible()
+
+  // Ловушка b, применённая к этому полю: заголовок поля НЕ label (см.
+  // `FieldInput`'s multi_select branch и инвариант в fixesOnly.test.tsx),
+  // так что клик по нему не должен нажать первый чип.
+  await page.locator('.field-label', { hasText: 'Arrival / Departure / Transit' }).click()
+  await expect(zoneChip(page, 'Arrival')).toHaveAttribute('aria-pressed', 'false')
+  await expect(zoneChip(page, 'Departure')).toHaveAttribute('aria-pressed', 'false')
+  await expect(zoneChip(page, 'Transit')).toHaveAttribute('aria-pressed', 'false')
+
+  // Членство, а не одиночный выбор: два нажатых чипа сосуществуют.
+  await zoneChip(page, 'Departure').click()
+  await zoneChip(page, 'Transit').click()
+  await expect(zoneChip(page, 'Departure')).toHaveAttribute('aria-pressed', 'true')
+  await expect(zoneChip(page, 'Transit')).toHaveAttribute('aria-pressed', 'true')
+  await expect(zoneChip(page, 'Arrival')).toHaveAttribute('aria-pressed', 'false')
+  await expect(page.getByText('Saved')).toBeVisible()
+
+  await page.reload()
+  await clickNext(page, 10)
+  await expect(zoneChip(page, 'Departure')).toHaveAttribute('aria-pressed', 'true')
+  await expect(zoneChip(page, 'Transit')).toHaveAttribute('aria-pressed', 'true')
+  await expect(zoneChip(page, 'Arrival')).toHaveAttribute('aria-pressed', 'false')
+
+  // Второй тап по нажатому чипу — снятие ИМЕННО его: сосед остаётся нажат,
+  // и снятие — такое же сохраняемое изменение, как и выбор.
+  await zoneChip(page, 'Transit').click()
+  await expect(zoneChip(page, 'Transit')).toHaveAttribute('aria-pressed', 'false')
+  await expect(zoneChip(page, 'Departure')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByText('Saved')).toBeVisible()
+
+  await page.reload()
+  await clickNext(page, 10)
+  await expect(zoneChip(page, 'Transit')).toHaveAttribute('aria-pressed', 'false')
+  await expect(zoneChip(page, 'Departure')).toHaveAttribute('aria-pressed', 'true')
+})
+
 test('отказ сервера показывает ошибку у позиции и НЕ отображается как "Saved" (Critical 2)', async ({ page }) => {
   const url = seed()
   await page.goto(url)
