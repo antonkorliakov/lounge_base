@@ -56,6 +56,24 @@ export function numberFieldValue(raw: string): number | null {
   return raw === '' ? null : Number(raw)
 }
 
+/**
+ * Membership after a tap on one chip of a `multi_select`: already selected →
+ * drop it (`filter` keeps the order of the remaining ids untouched), not yet
+ * selected → append at the END. This is byte-for-byte the emission the old
+ * checkboxes produced from `e.target.checked` — the control changed shape
+ * (checkbox → toggle chip), the emitted value did not, so `renderValues`, the
+ * validator and the server see exactly what they always saw.
+ *
+ * Exported pure — the unit suite has no DOM to click in — the same technique
+ * `nextSelectValue`/`numberFieldValue` above and `availabilityAfterTap` in
+ * `ServiceItemCard` already use; pinned in `fieldContract.test.ts`.
+ */
+export function multiSelectAfterTap(selected: string[], optionId: string): string[] {
+  return selected.includes(optionId)
+    ? selected.filter((id) => id !== optionId)
+    : [...selected, optionId]
+}
+
 export function FieldInput(props: {
   field: Field
   value: unknown
@@ -154,26 +172,43 @@ export function FieldInput(props: {
       const selected = Array.isArray(value) ? (value as string[]) : []
       const options = field.optionList ? OPTION_LISTS[field.optionList] : []
 
+      // Чипы вместо чекбоксов: чекбокс попадал под общее правило
+      // `.field input { width: 100% }` и растягивался на всю карточку на
+      // ОБЕИХ ширинах (та же болезнь, что у «Нужна бронь» до
+      // `.pass2-card input[type='checkbox']` — а этот случай тем правилом не
+      // накрыт). Визуальный язык — тот же, что у пары Да|Нет
+      // (`ServiceAvailabilityInput` / `.avail-toggle`): нажато = акцентная
+      // заливка, не нажато = тихая рамка, состояние читается из
+      // `aria-pressed` — но раскладка своя (`.chip-row`): членство в
+      // множестве, каждый чип независим, поэтому чипы разделены зазором и
+      // свободно переносятся на новую строку, а не слиты в сегменты.
+      //
+      // Заголовок поля здесь — <span>, не общий `label` сверху: <label> над
+      // рядом настоящих <button> — в точности форма ловушки b (переадресация
+      // клика по заголовку первой labelable-кнопке, см.
+      // `servicesPass1.test.tsx` и решение `ServicesPass1` сделать бинарную
+      // строку <div>). Сегодня `htmlFor={field.key}` не находит адресата
+      // (у чипов нет id), но не-label — защита структурой, а не совпадением.
+      // Имя группы для скринридера даёт `aria-label`, как у пары.
       return (
         <div className="field">
-          {label}
+          <span className="field-label">
+            {pick(field.label)}
+            {field.required && <span className="field-required">{t('form.required')}</span>}
+          </span>
           {hint}
-          {options.map((option) => (
-            <label key={option.id} className="field-check">
-              <input
-                type="checkbox"
-                checked={selected.includes(option.id)}
-                onChange={(e) =>
-                  onChange(
-                    e.target.checked
-                      ? [...selected, option.id]
-                      : selected.filter((id) => id !== option.id),
-                  )
-                }
-              />
-              {pick(option.label)}
-            </label>
-          ))}
+          <div className="chip-row" role="group" aria-label={pick(field.label)}>
+            {options.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                aria-pressed={selected.includes(option.id)}
+                onClick={() => onChange(multiSelectAfterTap(selected, option.id))}
+              >
+                {pick(option.label)}
+              </button>
+            ))}
+          </div>
           {errorNode}
         </div>
       )

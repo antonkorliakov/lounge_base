@@ -211,13 +211,33 @@ body {
 .avail-toggle button { min-width: 58px; padding-top: 9px; padding-bottom: 9px; }
 .avail-toggle button:first-child { border-radius: 8px 0 0 8px; }
 .avail-toggle button:last-child { border-radius: 0 8px 8px 0; margin-left: -1px; }
-/* Нажатая кнопка поверх соседа (рамки слиты отрицательным отступом):
-   без z-index её акцентную рамку с одной стороны накрывала бы серая рамка
-   соседней ненажатой. */
-.avail-toggle button[aria-pressed='true'] {
+/* Чипы multi_select (`FieldInput`, сегодня одно поле — III.6.6 «Прилёт /
+   Вылет / Транзит», но правило обслуживает любой multi_select). Чекбоксы,
+   которые тут стояли, попадали под `.field input { width: 100% }` выше и
+   растягивались во всю карточку на обеих ширинах. Тот же визуальный язык,
+   что у пары Да|Нет (см. общее правило нажатости ниже), но НЕ сегментный
+   контрол: это членство в множестве, каждый чип — независимый выбор,
+   поэтому чипы разделены зазором и переносятся на новую строку, когда не
+   помещаются (слитые отрицательным отступом рамки пары при переносе
+   развалились бы). Высоту 44px и тихую рамку ненажатого чипа держит
+   глобальное правило button. */
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Нажатое состояние — ОДНО правило на оба aria-pressed-контрола формы (пара
+   Да|Нет и чипы), а не вторая копия тех же трёх строк: акцент, рамка и белый
+   текст — общий визуальный язык (тот же #2563eb, что у .shell-primary и
+   сегментов прогресса; ~4.5:1, работает и в тёмной теме — см. пару выше). */
+.avail-toggle button[aria-pressed='true'],
+.chip-row button[aria-pressed='true'] {
   background: #2563eb;
   border-color: #2563eb;
   color: #fff;
+}
+/* Поверх соседа — только у слитой пары (рамки слиты отрицательным
+   отступом): без z-index акцентную рамку нажатой кнопки с одной стороны
+   накрывала бы серая рамка соседней ненажатой. Чипам с зазором наслаивать
+   нечего. */
+.avail-toggle button[aria-pressed='true'] {
   position: relative;
   z-index: 1;
 }
@@ -662,8 +682,11 @@ button:disabled { opacity: .4; }
      this line is where that decision is visible rather than left to the
      attribute selector's higher specificity. Unpressed buttons are covered
      by the generic dark button rule (dark surface, dark border) — which is
-     exactly the "quiet" third state on dark. */
-  .avail-toggle button[aria-pressed='true'] {
+     exactly the "quiet" third state on dark. One selector list for both
+     aria-pressed controls (the Yes|No pair and the multi_select chips),
+     mirroring the shared light-mode rule. */
+  .avail-toggle button[aria-pressed='true'],
+  .chip-row button[aria-pressed='true'] {
     background: #2563eb;
     border-color: #2563eb;
     color: #fff;
