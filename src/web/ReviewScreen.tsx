@@ -54,6 +54,17 @@ const NOTHING_FLAGGED: Localized = {
   ru: 'Отметьте хотя бы один ответ, прежде чем возвращать',
 }
 
+/**
+ * Чьё действие дало последний отклик — ВСЕЙ АНКЕТЫ или открытого блока. Кнопки
+ * разложены по этим же двум местам (решения по анкете — в шапке, пара по блоку
+ * — в подвале), и отклик обязан появляться там, откуда действие вызвали, иначе
+ * его не видно в момент нажатия: кнопки шапки можно нажать только когда шапка
+ * на экране, а подвал прилеплен к низу окна и виден всегда — в том числе из
+ * середины списка, где ставятся замечания (поэтому отклик flag/unflag идёт в
+ * подвал, а не в шапку, до которой от 58-й строки — целый экран прокрутки).
+ */
+type FeedbackScope = 'questionnaire' | 'block'
+
 export function ReviewScreen(props: {
   submissionId: string
   /**
@@ -105,6 +116,7 @@ export function ReviewScreen(props: {
   const [error, setError] = useState<Localized | null>(null)
   const [notice, setNotice] = useState<Localized | null>(null)
   const [fillUrl, setFillUrl] = useState<string | null>(null)
+  const [feedbackScope, setFeedbackScope] = useState<FeedbackScope>('questionnaire')
 
   const flagByKey = new Map(props.flags.map((flag) => [flag.fieldKey, flag]))
   const block = BLOCKS.find((b) => b.key === current)!
@@ -144,8 +156,12 @@ export function ReviewScreen(props: {
   // любой следующий результат её снимает (одноразовость сказана словами в
   // `FillLinkReveal`, а не охраняется удержанием на экране; повторное нажатие
   // просто выписывает новую — токены не отзываются, см. `issueFillToken`).
-  async function run(action: () => Promise<FillLinkActionResult>): Promise<void> {
+  async function run(
+    scope: FeedbackScope,
+    action: () => Promise<FillLinkActionResult>,
+  ): Promise<void> {
     const result = await action()
+    setFeedbackScope(scope)
     if (result.ok) {
       setError(null)
       setNotice(result.notice ?? null)
@@ -156,6 +172,28 @@ export function ReviewScreen(props: {
       setError(result.error)
     }
   }
+
+  // ОДНО представление отклика на оба места (см. `FeedbackScope`): состояние
+  // общее — отклик по-прежнему принадлежит ПОСЛЕДНЕМУ действию, и очередной
+  // результат снимает предыдущий, в каком бы месте тот ни стоял. Два отдельных
+  // состояния (шапке своё, подвалу своё) оставляли бы на экране два отклика
+  // разной давности — например, вчерашний отказ подтверждения рядом со
+  // свежепринятой анкетой. `fillUrl` приходит только от действий шапки
+  // («Вернуть на правку», «Переслать ссылку» — см. `FillLinkActionResult`),
+  // так что ссылка заполнения в подвале не появится никогда.
+  const feedback = (
+    <>
+      {error && <p className="review-error">{pick(error)}</p>}
+      {notice && <p className="review-notice">{pick(notice)}</p>}
+      {/* Ссылка заполнения, которую письмо не унесло (почта не настроена —
+          `fillUrl` приходит только в этом случае). Вступление к ней — сам
+          `notice` выше («письма не было, передайте сами»), поэтому у
+          компонента своего вступления нет. `key` обязателен: повторная
+          пересылка выписывает НОВУЮ ссылку, и «Скопировано» прежней не
+          должно её пережить (см. `FillLinkReveal`). */}
+      {fillUrl && <FillLinkReveal key={fillUrl} url={fillUrl} />}
+    </>
+  )
 
   return (
     <div className="review-screen">
@@ -193,6 +231,60 @@ export function ReviewScreen(props: {
           <p className={`review-state review-state-${props.state.status}`}>
             <b>{pick(props.state.label)}</b> {pick(props.state.note)}
           </p>
+
+          {/* Решения по ВСЕЙ анкете — в шапке, рядом с состоянием анкеты,
+              которое они меняют. Раньше они стояли в подвале одним рядом с
+              «Подтвердить блок» и выглядели повторяющимися на каждом из 27
+              блоков — хотя блок здесь ни при чём (найдено пользователем).
+              В подвале остаётся только пара по открытому блоку. */}
+          <div className="review-actions">
+            <button
+              type="button"
+              disabled={!decisions.allowed || props.flags.length === 0}
+              title={decisionHint ?? (props.flags.length === 0 ? pick(NOTHING_FLAGGED) : undefined)}
+              onClick={() => void run('questionnaire', () => requestChangesAction(props.submissionId))}
+            >
+              {locale === 'ru' ? 'Вернуть на правку' : 'Request changes'} · {props.flags.length}
+            </button>
+            <button
+              type="button"
+              disabled={!props.state.resend.allowed}
+              title={props.state.resend.allowed ? undefined : pick(props.state.resend.reason)}
+              onClick={() => void run('questionnaire', () => resendFillLinkAction(props.submissionId))}
+            >
+              {locale === 'ru' ? 'Переслать ссылку' : 'Resend link'}
+            </button>
+            {/* «Принять» выключается ТОЛЬКО по статусу, хотя у неё есть и
+                другие условия (все блоки подтверждены, ни одного открытого
+                замечания). Это не непоследовательность: те два условия —
+                незаконченная работа проверяющего, и отказ действия называет,
+                СКОЛЬКО именно блоков осталось и сколько замечаний открыто
+                (`approveSubmission`), чего выключенная кнопка сказать не
+                может. Статус же не про незаконченную работу: в нём шага не
+                бывает вовсе, сколько бы ни подтвердили.
+
+                `shell-primary` — главный утвердительный шаг анкеты несёт тот
+                же единственный акцент, что и главная кнопка формы заполнения
+                (то же правило, тот же цвет, та же прижимка к правому краю
+                ряда через его margin-left: auto), а не второй акцент,
+                заведённый для этого экрана. */}
+            <button
+              type="button"
+              className="shell-primary"
+              disabled={!decisions.allowed}
+              title={decisionHint}
+              onClick={() => void run('questionnaire', () => approveAction(props.submissionId))}
+            >
+              {locale === 'ru' ? 'Принять анкету' : 'Approve'}
+            </button>
+          </div>
+
+          {/* Отклик действий шапки — прямо под кнопками, которые его вызвали:
+              нажать их можно только когда шапка на экране, значит отклик здесь
+              виден в момент нажатия без всякой прокрутки. Сюда же приходит
+              ссылка заполнения (`FillLinkReveal` внутри `feedback`) — она
+              рождается только кнопками этого ряда. */}
+          {feedbackScope === 'questionnaire' && feedback}
         </header>
 
         <h2>{pick(block.label)}</h2>
@@ -226,90 +318,60 @@ export function ReviewScreen(props: {
               // объяснения. Объяснение стоит одной строкой в подписи
               // состояния наверху, тем же текстом (`state.note`).
               canFlag={props.state.flagging.allowed}
+              // Отклик — в подвал ('block'): замечание ставится из середины
+              // списка, и прилепленный подвал — единственное место, которое в
+              // этот момент гарантированно на экране (см. `FeedbackScope`).
               onRaise={(reason: FlagReason | null, comment: string) =>
-                void run(() => flagAction(props.submissionId, key, reason, comment))
+                void run('block', () => flagAction(props.submissionId, key, reason, comment))
               }
               onResolve={(flagId) =>
-                void run(() => unflagAction(props.submissionId, flagId))
+                void run('block', () => unflagAction(props.submissionId, flagId))
               }
             />
           )
         })}
 
-        {error && <p className="review-error">{pick(error)}</p>}
-        {notice && <p className="review-notice">{pick(notice)}</p>}
-        {/* Ссылка заполнения, которую письмо не унесло (почта не настроена —
-            `fillUrl` приходит только в этом случае). Вступление к ней — сам
-            `notice` выше («письма не было, передайте сами»), поэтому у
-            компонента своего вступления нет. `key` обязателен: повторная
-            пересылка выписывает НОВУЮ ссылку, и «Скопировано» прежней не
-            должно её пережить (см. `FillLinkReveal`). */}
-        {fillUrl && <FillLinkReveal key={fillUrl} url={fillUrl} />}
-
+        {/* Подвал — ТОЛЬКО решение по открытому блоку, и он прилеплен к низу
+            окна (см. `.review-foot` в globals.css): блок бывает в 58 строк, а
+            кнопка блока должна быть достижима из любой его строки — тот же
+            довод, что у `.shell-foot` формы заполнения. Отклик блочных
+            действий стоит внутри подвала по той же причине: он виден при
+            любом положении прокрутки. */}
         <div className="review-foot">
-          <button
-            type="button"
-            disabled={!decisions.allowed || props.flags.length === 0}
-            title={decisionHint ?? (props.flags.length === 0 ? pick(NOTHING_FLAGGED) : undefined)}
-            onClick={() => void run(() => requestChangesAction(props.submissionId))}
-          >
-            {locale === 'ru' ? 'Вернуть на правку' : 'Request changes'} · {props.flags.length}
-          </button>
-          <button
-            type="button"
-            disabled={!props.state.resend.allowed}
-            title={props.state.resend.allowed ? undefined : pick(props.state.resend.reason)}
-            onClick={() => void run(() => resendFillLinkAction(props.submissionId))}
-          >
-            {locale === 'ru' ? 'Переслать ссылку' : 'Resend link'}
-          </button>
-          {/* ОДНА кнопка на два направления, по текущему состоянию блока, а не
-              вторая кнопка рядом. «Подтвердить блок» была единственной и не
-              выключалась после нажатия: один промах мыши шёл в счёт 27/27
-              навсегда, `unconfirmBlock` существовал в `@/review/blocks` без
-              единого вызывающего, и обойти это можно было только отметив в
-              блоке любое поле, чтобы принятие отказало по замечаниям.
+          {feedbackScope === 'block' && feedback}
+          <div className="review-foot-actions">
+            {/* ОДНА кнопка на два направления, по текущему состоянию блока, а не
+                вторая кнопка рядом. «Подтвердить блок» была единственной и не
+                выключалась после нажатия: один промах мыши шёл в счёт 27/27
+                навсегда, `unconfirmBlock` существовал в `@/review/blocks` без
+                единого вызывающего, и обойти это можно было только отметив в
+                блоке любое поле, чтобы принятие отказало по замечаниям.
 
-              Подпись «Retract confirmation», а не «Unconfirm block»: `name` в
-              `getByRole` сопоставляется по ПОДСТРОКЕ и без учёта регистра, так
-              что «Unconfirm block» находился бы и по запросу «Confirm block» —
-              та же ловушка, что у кнопок `flag`/`Flag` (см. `e2e/review.spec.ts`),
-              из-за которой тест утверждал бы не про ту кнопку. */}
-          {blockConfirmed ? (
-            <button
-              type="button"
-              disabled={!decisions.allowed}
-              title={decisionHint}
-              onClick={() => void run(() => unconfirmBlockAction(props.submissionId, current))}
-            >
-              {locale === 'ru' ? 'Снять подтверждение' : 'Retract confirmation'}
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={!decisions.allowed || openInBlock > 0}
-              title={decisionHint ?? (openInBlock > 0 ? pick(BLOCK_HAS_OPEN_FLAGS) : undefined)}
-              onClick={() => void run(() => confirmBlockAction(props.submissionId, current))}
-            >
-              {locale === 'ru' ? 'Подтвердить блок' : 'Confirm block'}
-            </button>
-          )}
-          {/* «Принять» выключается ТОЛЬКО по статусу, хотя у неё есть и другие
-              условия (все блоки подтверждены, ни одного открытого замечания).
-              Это не непоследовательность: те два условия — незаконченная
-              работа проверяющего, и отказ действия называет, СКОЛЬКО именно
-              блоков осталось и сколько замечаний открыто
-              (`approveSubmission`), чего выключенная кнопка сказать не может.
-              Статус же не про незаконченную работу: в нём шага не бывает
-              вовсе, сколько бы ни подтвердили. */}
-          <button
-            type="button"
-            disabled={!decisions.allowed}
-            title={decisionHint}
-            onClick={() => void run(() => approveAction(props.submissionId))}
-          >
-            {locale === 'ru' ? 'Принять анкету' : 'Approve'}
-          </button>
+                Подпись «Retract confirmation», а не «Unconfirm block»: `name` в
+                `getByRole` сопоставляется по ПОДСТРОКЕ и без учёта регистра, так
+                что «Unconfirm block» находился бы и по запросу «Confirm block» —
+                та же ловушка, что у кнопок `flag`/`Flag` (см. `e2e/review.spec.ts`),
+                из-за которой тест утверждал бы не про ту кнопку. */}
+            {blockConfirmed ? (
+              <button
+                type="button"
+                disabled={!decisions.allowed}
+                title={decisionHint}
+                onClick={() => void run('block', () => unconfirmBlockAction(props.submissionId, current))}
+              >
+                {locale === 'ru' ? 'Снять подтверждение' : 'Retract confirmation'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={!decisions.allowed || openInBlock > 0}
+                title={decisionHint ?? (openInBlock > 0 ? pick(BLOCK_HAS_OPEN_FLAGS) : undefined)}
+                onClick={() => void run('block', () => confirmBlockAction(props.submissionId, current))}
+              >
+                {locale === 'ru' ? 'Подтвердить блок' : 'Confirm block'}
+              </button>
+            )}
+          </div>
         </div>
       </section>
     </div>

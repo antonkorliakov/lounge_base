@@ -456,7 +456,13 @@ button:disabled { opacity: .4; }
 .nav-dot-flagged { background: #dc2626; }
 .nav-dot-untouched { border: 1.5px solid #cbd0d6; }
 
-.review-pane { padding: 16px 20px; }
+/* Колонка, а не блок, ради одного свойства: margin-top: auto у .review-foot
+   прижимает подвал к низу панели и на коротком блоке (панель не ниже окна —
+   .review-screen держит min-height: 100dvh), тем же приёмом, что .shell +
+   .shell-foot на форме заполнения. Нижний отступ панели несёт сам подвал
+   (padding-bottom ниже): будь он на панели, прилепленный подвал стоял бы на
+   16px выше низа окна, и в эту щель просвечивали бы прокручиваемые строки. */
+.review-pane { display: flex; flex-direction: column; padding: 16px 20px 0; }
 /* Подпись анкеты: какой это лаунж и в каком состоянии анкета. Стоит над
    заголовком блока, потому что отвечает на вопросы, которые возникают ДО
    любого решения по блоку, — а экран не отвечал на них вовсе.
@@ -542,7 +548,47 @@ button:disabled { opacity: .4; }
 .frow-actions { display: flex; gap: 7px; margin-top: 8px; }
 .bt-flag { background: #dc2626; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
 .bt-flag:disabled { opacity: .5; cursor: default; }
-.review-foot { display: flex; gap: 8px; margin-top: 20px; padding-top: 14px; border-top: 1px solid #e4e6ea; }
+/* Решения по ВСЕЙ анкете — ряд в шапке, сразу под подписью состояния, которое
+   они меняют. Раньше все кнопки решений стояли одним рядом в подвале, и
+   «Принять анкету» рядом с «Подтвердить блок» читалась как кнопка блока,
+   повторяющаяся на каждой из 27 страниц (найдено пользователем). «Принять» —
+   главный утвердительный шаг анкеты и несёт .shell-primary: тот же
+   единственный акцент, что у главной кнопки формы заполнения, его
+   margin-left: auto прижимает её к правому краю ряда. Ссылка «Скачать xlsx»
+   в этот ряд НЕ входит и остаётся у заголовка: выгрузка — не решение по
+   анкете, она доступна в любом состоянии. */
+.review-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+/* Отклик действий шапки (error/notice/ссылка заполнения) — под рядом кнопок,
+   которые его вызвали; поджатые отступы вместо дефолтных у <p>, чтобы шапка
+   не разъезжалась. */
+.review-head .review-error,
+.review-head .review-notice { margin: 10px 0 0; }
+.review-head .link-reveal { margin-top: 8px; }
+/* Подвал — только решение по ОТКРЫТОМУ БЛОКУ, прилеплен к низу окна: блок
+   бывает в 58 строк, и «Подтвердить блок» должна быть достижима из любой его
+   строки — тот же довод и тот же приём, что у .shell-foot формы заполнения
+   (sticky, не fixed: высота подвала всегда занята в потоке, последнюю строку
+   блока не приходится вызволять из-под него вручную). Фон обязан быть
+   непрозрачным в обеих темах — в прилепленном состоянии под ним прокручиваются
+   строки. z-index: 10 — тем же уроком, что у .shell-foot: сегодня на этом
+   экране нет ни одного своего z-index, но контрол, который его заведёт,
+   иначе проехал бы ПОВЕРХ подвала (на форме заполнения это уже случалось —
+   см. комментарий у .shell-foot). */
+.review-foot {
+  margin-top: auto;
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  background: #fff;
+  padding: 12px 0 16px;
+  border-top: 1px solid #e4e6ea;
+}
+.review-foot-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Отклик блочных и строчных действий — внутри прилепленного подвала, над его
+   кнопками: виден при любом положении прокрутки (замечания ставятся из
+   середины списка). */
+.review-foot .review-error,
+.review-foot .review-notice { margin: 0 0 10px; }
 .review-error { color: #b91c1c; }
 .review-notice { color: #92400e; }
 .login { max-width: 340px; margin: 12vh auto; display: flex; flex-direction: column; gap: 10px; padding: 0 16px; }
@@ -711,6 +757,10 @@ button:disabled { opacity: .4; }
   .frow-editor,
   .review-head,
   .review-foot { border-color: #2a2d34; }
+  /* Прилепленный подвал обязан оставаться непрозрачным и в тёмной теме — фон
+     страницы, чтобы прокручиваемые строки не просвечивали сквозь кнопки (тот
+     же довод, что у тёмного .shell-foot выше). */
+  .review-foot { background: #111317; }
   /* Пилюля состояния: рамка и текст одного цвета, поэтому в тёмном режиме
      нужны оба — синий #1d4ed8 и зелёный #15803d на тёмном фоне читаются как
      тёмное на тёмном. Тот же довод, что у пастельных фонов выше. */
