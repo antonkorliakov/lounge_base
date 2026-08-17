@@ -277,6 +277,22 @@ test('замечание, возврат на правку, исправлени
   ])
   expect(single.suggestedFilename()).toBe(`${lounge} (IST).xlsx`)
 
+  // ── Кнопки разложены по области действия ──────────────────────────────────
+  // Решения по ВСЕЙ анкете («Вернуть на правку», «Переслать ссылку»,
+  // «Принять») — в шапке; в подвале — только решение по открытому блоку.
+  // Раньше все они стояли одним рядом в подвале, и «Принять анкету» выглядела
+  // кнопкой блока, повторяющейся на каждой из 27 страниц (найдено
+  // пользователем). Утверждается состав ОБОИХ мест, а не только наличие
+  // кнопок где-то на странице: иначе тест не отличил бы переезд от второго
+  // ряда тех же кнопок.
+  const head = page.locator('.review-head')
+  const foot = page.locator('.review-foot')
+  for (const name of [/Request changes/, 'Resend link', APPROVE]) {
+    await expect(head.getByRole('button', { name })).toBeVisible()
+  }
+  await expect(foot.getByRole('button')).toHaveCount(1)
+  await expect(foot.getByRole('button', { name: CONFIRM_BLOCK })).toBeVisible()
+
   // ── Отметить одно поле ────────────────────────────────────────────────────
   const fullName = row(page, FULL_NAME)
   await flag(fullName, 'needs detail', 'Укажите полное юридическое название')
@@ -329,8 +345,13 @@ test('замечание, возврат на правку, исправлени
   // правду, и ссылка стоит под ним. Ветку С настоящим SMTP (письмо уходит,
   // ссылки на экране НЕТ — лишняя экспозиция) браузером отсюда не проверить;
   // она закреплена юнит-тестами (`resend-fill-link.test.ts`).
-  await expect(page.locator('.review-notice')).toContainText('the operator was NOT emailed')
-  await expect(page.locator('.al-url')).toBeVisible()
+  // И notice, и ссылка стоят В ШАПКЕ, под кнопками, которые их вызвали:
+  // нажать «Вернуть на правку» можно только когда шапка на экране, значит
+  // отклик в этом месте виден сразу после нажатия, без прокрутки. Локатор
+  // сужен до .review-head сознательно — он утверждает не только «отклик
+  // есть», но и «отклик там, где ревьюер сейчас смотрит».
+  await expect(head.locator('.review-notice')).toContainText('the operator was NOT emailed')
+  await expect(head.locator('.al-url')).toBeVisible()
 
   // ── «Переслать ссылку» отдаёт ссылку тем же видом ─────────────────────────
   // Кнопка включается без перезагрузки: `requestChangesAction` вызывает
@@ -343,11 +364,11 @@ test('замечание, возврат на правку, исправлени
   // «Добавить лаунж» (`FillLinkReveal`, см. registry.spec.ts): видимый URL,
   // копирование и предупреждение об одноразовости.
   await resend.click()
-  await expect(page.locator('.review-notice')).toContainText(
+  await expect(head.locator('.review-notice')).toContainText(
     'Email is not configured on this server, so nothing was sent',
   )
   await expect(page.locator('.review-error')).toHaveCount(0)
-  const revealed = page.locator('.al-url')
+  const revealed = head.locator('.al-url')
   await expect(revealed).toBeVisible()
   const revealedUrl = await revealed.inputValue()
   expect(revealedUrl).toMatch(/\/f\/[A-Za-z0-9_-]+/)
@@ -417,7 +438,10 @@ test('принять анкету можно только когда снято 
   await expect(navItems).toHaveCount(BLOCKS.length)
 
   await approve.click()
-  await expect(page.locator('.review-error')).toHaveText(
+  // Отказ принятия — отклик уровня АНКЕТЫ, поэтому стоит в шапке, под самой
+  // кнопкой «Approve» (см. `FeedbackScope` в `ReviewScreen`). Дальше по тесту
+  // локатор не сужается: отклик на экране один — последнего действия.
+  await expect(page.locator('.review-head .review-error')).toHaveText(
     `${BLOCKS.length} block(s) not confirmed`,
   )
 
