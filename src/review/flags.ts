@@ -77,9 +77,24 @@ export async function raiseFlag(
     return fail('Unknown field', 'Неизвестное поле')
   }
 
+  /**
+   * A selected reason ALONE is a complete flag: the fixes screen renders the
+   * reason code prominently (`FixesOnly`'s `.fix-comment b`, fed by
+   * `FLAG_REASON_LABELS`), so a comment-less "not filled in" is fully
+   * actionable for the operator. What carries no information is a flag with
+   * NEITHER a reason nor text — only that is refused. The comment column is
+   * `text NOT NULL` (`db/schema.ts`), so the empty comment is stored as `''`,
+   * which every consumer already renders as "nothing after the reason label"
+   * rather than as an empty red box (`FieldRow`'s `.frow-comment`,
+   * `FixesOnly`'s `.fix-comment`; `decide.ts` and `requestChangesMail` only
+   * count flags).
+   */
   const comment = input.comment.trim()
-  if (comment === '') {
-    return fail('Say what is wrong', 'Напишите, что не так')
+  if (input.reason === null && comment === '') {
+    return fail(
+      'Pick a reason or write what is wrong',
+      'Выберите причину или напишите, что не так',
+    )
   }
 
   /**

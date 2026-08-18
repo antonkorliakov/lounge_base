@@ -71,12 +71,33 @@ describe('замечания', () => {
     expect(result.ok).toBe(false)
   })
 
-  it('пустой комментарий отклоняется', async () => {
+  // Выбранная причина — САМА ПО СЕБЕ полное замечание: экран правок показывает
+  // её код заметно (`FixesOnly`, `FLAG_REASON_LABELS`), так что «не заполнено»
+  // без текста полностью понятно оператору. Раньше пустой комментарий
+  // отклонялся всегда — и тест на этом месте пиннил именно это.
+  it('одной причины достаточно — комментарий сохраняется пустым', async () => {
     const db = await createTestDb()
     const submissionId = await seedSubmitted(db)
 
     const result = await raiseFlag(db, {
       ...flag(submissionId, 'III.2.4'), comment: '   ',
+    })
+
+    expect(result.ok).toBe(true)
+    const open = await openFlags(db, submissionId)
+    expect(open).toHaveLength(1)
+    expect(open[0]?.reason).toBe('needs_detail')
+    expect(open[0]?.comment).toBe('')
+  })
+
+  // …но замечание БЕЗ причины и БЕЗ текста не несёт оператору никакой
+  // информации — только оно и отклоняется.
+  it('без причины и без комментария отклоняется', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedSubmitted(db)
+
+    const result = await raiseFlag(db, {
+      ...flag(submissionId, 'III.2.4'), reason: null, comment: '   ',
     })
     expect(result.ok).toBe(false)
   })
@@ -103,6 +124,25 @@ describe('замечания', () => {
     const open = await openFlags(db, submissionId)
     expect(open).toHaveLength(1)
     expect(open[0]?.comment).toBe('Уточнённая формулировка')
+  })
+
+  // Путь обновления апсерта (`ON CONFLICT ... DO UPDATE`) пишет и `comment`:
+  // перезамечание одной причиной поверх прежнего с текстом не должно оставить
+  // устаревший текст рядом с новой причиной — оператор прочёл бы претензию,
+  // которой ревьюер больше не предъявляет.
+  it('перезамечание одной причиной затирает прежний комментарий', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedSubmitted(db)
+
+    await raiseFlag(db, flag(submissionId, 'III.2.4'))
+    await raiseFlag(db, {
+      ...flag(submissionId, 'III.2.4'), reason: 'empty', comment: '',
+    })
+
+    const open = await openFlags(db, submissionId)
+    expect(open).toHaveLength(1)
+    expect(open[0]?.reason).toBe('empty')
+    expect(open[0]?.comment).toBe('')
   })
 
   it('снятое замечание уходит из открытых', async () => {
