@@ -89,6 +89,19 @@ export function FieldRow(props: {
   const [comment, setComment] = useState('')
 
   /**
+   * Выбранная причина — САМА ПО СЕБЕ полное замечание (то же правило, что у
+   * `raiseFlag`): экран правок показывает её код заметно (`FixesOnly`,
+   * `FLAG_REASON_LABELS`), так что «не заполнено» без текста полностью
+   * понятно оператору. Раньше кнопка «Отметить» требовала комментарий
+   * всегда, но нигде об этом не говорила — клик по чипу «ничего не делал» с
+   * точки зрения проверяющего, потому что выключенная кнопка своим розовым
+   * выглядела нажимаемой (см. `.bt-flag:disabled` в globals.css). Пока не
+   * выбрано и не написано ничего, под кнопками стоит подсказка — теми же
+   * словами, какими отказал бы сервер.
+   */
+  const complete = reason !== null || comment.trim() !== ''
+
+  /**
    * URL-ы, картинка по которым не загрузилась. Без этого состояния мёртвая
    * ссылка рисуется как рамка 120×120 с браузерным значком битой картинки, а
    * `alt` внутри `line-height: 0` (см. `globals.css`, `.frow-photo`) не
@@ -216,7 +229,7 @@ export function FieldRow(props: {
               <button
                 type="button"
                 className="bt-flag"
-                disabled={comment.trim() === ''}
+                disabled={!complete}
                 onClick={() => {
                   props.onRaise(reason, comment)
                   setOpen(false)
@@ -230,6 +243,13 @@ export function FieldRow(props: {
                 {locale === 'ru' ? 'Отмена' : 'Cancel'}
               </button>
             </div>
+            {!complete && (
+              <p className="field-hint">
+                {locale === 'ru'
+                  ? 'Выберите причину или напишите, что не так'
+                  : 'Pick a reason or write what is wrong'}
+              </p>
+            )}
           </div>
         )}
       </div>

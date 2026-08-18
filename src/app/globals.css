@@ -547,7 +547,16 @@ button:disabled { opacity: .4; }
 .frow-editor textarea { width: 100%; min-height: 60px; padding: 8px; font: inherit; border: 1px solid #d3d6db; border-radius: 6px; }
 .frow-actions { display: flex; gap: 7px; margin-top: 8px; }
 .bt-flag { background: #dc2626; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
-.bt-flag:disabled { opacity: .5; cursor: default; }
+/* Выключенная «Отметить» обязана ВЫГЛЯДЕТЬ выключенной. Прежнее правило
+   (opacity: .5 поверх собственного красного) перекрывало общий
+   `button:disabled { opacity: .4 }` и оставляло кнопку розовой — то есть на
+   вид нажимаемой, и клик по чипу причины «ничего не делал» с точки зрения
+   проверяющего. Здесь красный на время выключения заменяется серым, а
+   opacity НЕ объявляется — общая `.4` из `button:disabled` применяется сама,
+   так что кнопка гаснет ровно тем же образом, что и остальные выключенные
+   кнопки. Серый одинаково читается гашёным и на светлом, и на тёмном фоне,
+   поэтому тёмному режиму своя копия не нужна. */
+.bt-flag:disabled { background: #6b7280; cursor: default; }
 /* Решения по ВСЕЙ анкете — ряд в шапке, сразу под подписью состояния, которое
    они меняют. Раньше все кнопки решений стояли одним рядом в подвале, и
    «Принять анкету» рядом с «Подтвердить блок» читалась как кнопка блока,

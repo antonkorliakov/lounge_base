@@ -12,7 +12,7 @@ import {
 } from '@/form-schema'
 import { isFlaggableKey } from '@/review/flags'
 import { LocaleProvider } from '@/i18n/context'
-import { UI } from '@/i18n/dictionaries'
+import { UI, FLAG_REASON_LABELS } from '@/i18n/dictionaries'
 import { FixesOnly, fixTargetFor, type Flag } from '../FixesOnly'
 import type { ServiceValueInput } from '@/form-schema'
 
@@ -453,6 +453,24 @@ describe('контрол отмеченного слота фото', () => {
       expect(html).toContain(`${UI['photos.remove'].en}: ${extra.label.en} 1`)
       expect(html).toContain(`${UI['photos.remove'].en}: ${extra.label.en} 2`)
     })
+  })
+})
+
+/**
+ * Замечание из одной причины (комментарий '') — с тех пор как `raiseFlag`
+ * принимает причину без текста, это обычная карточка, а не вырожденный
+ * случай: код причины показан жирным, и никакого пустого красного абзаца
+ * после него не остаётся (комментарий и код живут в ОДНОМ `<p
+ * class="fix-comment">`, так что пустой текст ничего не добавляет).
+ */
+describe('замечание без комментария — только причина', () => {
+  it('карточка показывает код причины и не рисует пустой абзац', () => {
+    const key = FIELDS[0]!.key
+    const html = renderFixes([{ fieldKey: key, reason: 'empty', comment: '' }])
+    expect(html).toContain(`<b>${FLAG_REASON_LABELS.empty.en}</b>`)
+    expect(html).not.toContain('<p class="fix-comment"></p>')
+    // И контрол на месте — карточка остаётся действенной, а не только читаемой.
+    expect(CONTROL_RE.test(html)).toBe(true)
   })
 })
 
