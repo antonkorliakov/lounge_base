@@ -151,6 +151,65 @@ async function expectRendered(watched: Watched, marker: Locator): Promise<void> 
   }).toPass({ timeout: 20_000 })
 }
 
+/**
+ * Гейт «страница не только отрисовалась, но и ОЖИЛА» — для форм, где кнопку
+ * включает клиентское состояние React.
+ *
+ * Гонка, которую это закрывает: `fill()` может успеть ДО гидрации.
+ * `expectRendered` (и любой видимый маркер вообще) доказывает только
+ * серверную отрисовку: HTML со всеми полями приходит раньше, чем исполнится
+ * JS и React навесит обработчики. `fill()` у Playwright ждёт видимости и
+ * editable, но НЕ интерактивности — на загруженной машине (параллельные
+ * воркеры плюс компиляция dev-сервера задерживают выдачу чанков) он вписывает
+ * текст в DOM, пока состояние React ещё `''`. Контролируемый инпут при
+ * гидрации чужой DOM-текст в состояние не подхватывает, задним числом события
+ * не приходят — кнопка, включаемая этим состоянием, остаётся disabled
+ * навсегда, и тест умирает 30-секундным таймаутом на клике (три прогона
+ * подряд, всегда в одном месте — /admin/password).
+ *
+ * Закрывается гонка ПОВТОРОМ заполнения, а не расширенным таймаутом: правило
+ * включения кнопки синхронно со state (`filled` в `PasswordChange.tsx`,
+ * `!email || !password` в `LoginForm.tsx`), поэтому первый же ДОШЕДШИЙ fill
+ * после гидрации включает кнопку на той же итерации — исход детерминирован,
+ * а не «подождали подольше и повезло». Перезаполняются все поля разом:
+ * проиграть гонку мог любой из них, не только последний.
+ *
+ * Каждая итерация СНАЧАЛА очищает поле и только потом пишет значение, и это
+ * не перестраховка, а условие работоспособности повтора: value tracker
+ * React'а инициализируется В МОМЕНТ гидрации текущим значением DOM — тем
+ * самым текстом, который проигравший гонку fill уже оставил в поле. Повтор
+ * тем же значением не меняет value, tracker не видит перехода, onChange не
+ * зовётся — состояние так и остаётся `''` при живом клиенте (проверено
+ * инструментированным прогоном: 18 повторов на гидрированной странице не
+ * включили кнопку, пока очистки не было). `fill('')` даёт настоящий переход
+ * значения, следующий `fill(value)` — второй; хотя бы один из них гидрация
+ * уже видит.
+ *
+ * Сломанное правило включения это НЕ глотает: если кнопка не включается и при
+ * живом клиенте, повторы исчерпываются и тест падает — `toPass` перебрасывает
+ * последнюю внутреннюю ошибку, то есть `toBeEnabled` с локатором кнопки и
+ * сообщением ниже, а не безымянный таймаут.
+ *
+ * Нужен только ПЕРВОМУ заполнению после загрузки документа: клиент,
+ * сработавший хоть раз (кнопка включилась, пришёл клиентский отклик), — уже
+ * доказательство гидрации, и дальнейшие `fill()` на той же странице безопасны.
+ */
+async function fillEnabling(
+  fields: ReadonlyArray<readonly [Locator, string]>,
+  gated: Locator,
+): Promise<void> {
+  await expect(async () => {
+    for (const [field, value] of fields) {
+      await field.fill('')
+      await field.fill(value)
+    }
+    await expect(
+      gated,
+      'кнопка не включилась после заполнения полей — если это последняя итерация, правило включения сломано',
+    ).toBeEnabled({ timeout: 250 })
+  }).toPass({ timeout: 20_000 })
+}
+
 /** Открывает засеянную анкету так же, как проверяющий: из реестра лаунжей
  *  (`/admin`, план 3 — прежде здесь был список «Awaiting review»). Имя лаунжа
  *  в строке реестра — ссылка на последнюю анкету. Возвращает URL экрана
@@ -728,12 +787,21 @@ test('вход в кабинет: ответ формы не выдаёт сос
   // как текст экрана — то единственное, что видит проверяющий.
   const sent = 'Check your inbox for the sign-in link.'
 
-  await page.getByLabel('Work email').fill('definitely-not-on-the-team@example.com')
+  // Первое заполнение после загрузки документа — через fillEnabling: кнопку
+  // включает состояние React, и до гидрации fill() уходит в пустоту (см. сам
+  // хелпер).
+  await fillEnabling(
+    [[page.getByLabel('Work email'), 'definitely-not-on-the-team@example.com']],
+    page.getByRole('button', { name: 'Send sign-in link' }),
+  )
   await page.getByRole('button', { name: 'Send sign-in link' }).click()
   await expect(page.getByText(sent)).toBeVisible()
 
   await page.goto('/admin/login')
-  await page.getByLabel('Work email').fill(SEED_REVIEWER_EMAIL)
+  await fillEnabling(
+    [[page.getByLabel('Work email'), SEED_REVIEWER_EMAIL]],
+    page.getByRole('button', { name: 'Send sign-in link' }),
+  )
   await page.getByRole('button', { name: 'Send sign-in link' }).click()
   await expect(page.getByText(sent)).toBeVisible()
 
@@ -784,8 +852,16 @@ test('вход по паролю: ops set-password → настоящая фор
   // адреса» перечисляло бы состав команды.
   const failed = 'Sign-in failed. Check the email and password.'
 
-  await page.getByLabel('Work email').fill(member)
-  await page.getByLabel('Password').fill('definitely not the password')
+  // Первое заполнение после загрузки документа — через fillEnabling (см. сам
+  // хелпер); дальнейшие fill() на этой же странице безопасны: включившаяся
+  // кнопка уже доказала гидрацию.
+  await fillEnabling(
+    [
+      [page.getByLabel('Work email'), member],
+      [page.getByLabel('Password'), 'definitely not the password'],
+    ],
+    page.getByRole('button', { name: 'Sign in' }),
+  )
   await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page.getByText(failed)).toBeVisible()
   expect(new URL(page.url()).pathname).toBe('/admin/login')
@@ -813,9 +889,18 @@ test('вход по паролю: ops set-password → настоящая фор
   await expectRendered(watched, page.getByRole('heading', { name: 'Change password' }))
 
   const newPassword = `${password}-rotated`
-  await page.getByLabel('Current password').fill(password)
-  await page.getByLabel('New password', { exact: true }).fill(newPassword)
-  await page.getByLabel('New password, again').fill(newPassword)
+  // Тот самый доказанный случай гонки (три падения полной параллельной сюиты
+  // подряд): /admin/password открыт обычной ссылкой <a>, документ загружен
+  // заново, и fill() до гидрации оставлял состояние React пустым — кнопка не
+  // включалась все 30 секунд. Подробно — у fillEnabling.
+  await fillEnabling(
+    [
+      [page.getByLabel('Current password'), password],
+      [page.getByLabel('New password', { exact: true }), newPassword],
+      [page.getByLabel('New password, again'), newPassword],
+    ],
+    page.getByRole('button', { name: 'Change password' }),
+  )
   await page.getByRole('button', { name: 'Change password' }).click()
   await expect(page.getByText('Password updated', { exact: false })).toBeVisible()
 
@@ -826,8 +911,15 @@ test('вход по паролю: ops set-password → настоящая фор
   // …а старый пароль больше не входит (в новом контексте без cookie).
   await page.context().clearCookies()
   await page.goto('/admin/login')
-  await page.getByLabel('Work email').fill(member)
-  await page.getByLabel('Password').fill(password)
+  // Снова свежая загрузка документа — снова первое заполнение через
+  // fillEnabling.
+  await fillEnabling(
+    [
+      [page.getByLabel('Work email'), member],
+      [page.getByLabel('Password'), password],
+    ],
+    page.getByRole('button', { name: 'Sign in' }),
+  )
   await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page.getByText(failed)).toBeVisible()
 
