@@ -293,8 +293,28 @@ test('замечание, возврат на правку, исправлени
   await expect(foot.getByRole('button')).toHaveCount(1)
   await expect(foot.getByRole('button', { name: CONFIRM_BLOCK })).toBeVisible()
 
-  // ── Отметить одно поле ────────────────────────────────────────────────────
+  // ── Одной причины достаточно: чип без текста — полное замечание ──────────
+  // Пока не выбрано и не написано ничего, «Flag» выключена и под кнопками
+  // видна подсказка (раньше кнопка молча требовала комментарий, и клик по
+  // чипу «ничего не делал»); клик по чипу включает кнопку без единого
+  // символа текста, а отмеченная строка показывает код причины.
   const fullName = row(page, FULL_NAME)
+  await fullName.hover()
+  await fullName.locator('.frow-act').click()
+  const flagButton = fullName.locator('.bt-flag')
+  await expect(flagButton).toBeDisabled()
+  await expect(fullName.getByText('Pick a reason or write what is wrong')).toBeVisible()
+  await fullName.getByRole('button', { name: 'not filled in' }).click()
+  await expect(flagButton).toBeEnabled()
+  await flagButton.click()
+  await expect(fullName).toHaveClass(/frow-flagged/)
+  await expect(fullName.locator('.frow-comment b')).toHaveText('not filled in')
+  // Дальше цикл идёт с настоящим замечанием с текстом — чип-замечание
+  // снимается, и на его месте ставится то, которое поедет оператору.
+  await fullName.locator('.frow-undo').click()
+  await expect(fullName).not.toHaveClass(/frow-flagged/)
+
+  // ── Отметить одно поле ────────────────────────────────────────────────────
   await flag(fullName, 'needs detail', 'Укажите полное юридическое название')
 
   // Блок с открытым замечанием подтвердить нельзя — кнопка выключена.
