@@ -479,6 +479,24 @@ button:disabled { opacity: .4; }
 .review-back:hover { text-decoration: underline; }
 .review-head h1 { margin: 0 0 7px; font-size: 19px; }
 .review-iata { font-weight: 400; font-size: 15px; opacity: .55; }
+/* Кнопка-иконка «скопировать ссылку на анкету» — у самого имени анкеты (жест
+   Jira: цепочка у ключа задачи). Плоская, без рамки: это не решение по анкете
+   и в ряду решений ей не место; фон появляется только под курсором.
+   line-height: 0 убирает строчный зазор под svg, vertical-align сажает глиф
+   на оптическую середину строки заголовка. Выключенное состояние гасится
+   общим button:disabled { opacity } — своя копия не нужна. */
+.review-copylink {
+  margin-left: 6px; padding: 3px 5px;
+  border: 0; border-radius: 6px; background: none;
+  color: #5a6472; cursor: pointer;
+  line-height: 0; vertical-align: -4px;
+}
+.review-copylink:hover:not(:disabled) { background: #edeff3; color: #16181c; }
+.review-copylink:disabled { cursor: default; }
+/* «Скопировано» — краткоживущий отклик у самой кнопки (см. ReviewScreen), а
+   не notice под рядом решений: подтверждение стоит там, где было действие.
+   Зелёный — тот же утвердительный, что у пилюли принятой анкеты. */
+.review-copied { margin-left: 4px; font-size: 12px; font-weight: 400; color: #15803d; }
 .review-export { float: right; font-weight: 400; font-size: 13px; }
 .review-state { margin: 0; font-size: 13px; opacity: .85; }
 .review-state b {
@@ -777,6 +795,13 @@ button:disabled { opacity: .4; }
   /* Тот же приём, что у .review-state: насыщенный синий #2563eb на тёмном
      фоне тонет; светлый оттенок того же синего остаётся ссылочным цветом. */
   .review-back { color: #7ab3ff; }
+  /* Кнопка копирования: серый глифа и ховерный фон — светлые пары своих
+     светлых значений (сам тёмно-серый #5a6472 на тёмном фоне тонет — тот же
+     довод, что у пилюль состояния); «Скопировано» — светлый зелёный, тем же
+     тоном, что у принятой анкеты. */
+  .review-copylink { color: #9aa3af; }
+  .review-copylink:hover:not(:disabled) { background: #1a1c21; color: #f0f1f3; }
+  .review-copied { color: #86efac; }
   .review-state-submitted b { border-color: #60a5fa; color: #93c5fd; }
   .review-state-changes_requested b { border-color: #d97706; color: #fcd34d; }
   .review-state-approved b { border-color: #22c55e; color: #86efac; }

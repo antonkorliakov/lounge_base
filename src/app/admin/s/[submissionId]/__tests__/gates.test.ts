@@ -3,7 +3,7 @@ import { submissionStatus } from '@/db/schema'
 import type { SubmissionStatus } from '@/db/schema'
 import { EDITABLE_STATUSES } from '@/submissions/editable'
 import { REVIEW_STATUSES } from '@/review/blocks'
-import { reviewStateFor, resendGateFor } from '../gates'
+import { reviewStateFor, copyLinkGateFor } from '../gates'
 
 /**
  * Экран проверки не говорил, в каком состоянии анкета, и предлагал все четыре
@@ -71,9 +71,13 @@ describe('reviewStateFor: состояние анкеты и применимы�
     ])
   })
 
-  it('пересылка ссылки — тот же ответ, что у самого действия', () => {
+  it('выдача ссылки заполнения — тот же ответ, что у самого действия', () => {
     for (const status of STATUSES) {
-      expect(reviewStateFor(status).resend, status).toEqual(resendGateFor(status))
+      expect(reviewStateFor(status).copyLink, status).toEqual(copyLinkGateFor(status))
     }
+    // И пин самого окна: ссылка выдаётся ровно там, где она откроет форму.
+    expect(STATUSES.filter((status) => copyLinkGateFor(status).allowed)).toEqual(
+      STATUSES.filter((status) => EDITABLE_STATUSES.has(status)),
+    )
   })
 })

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { BLOCKS, PHOTO_SLOTS, type Localized } from '@/form-schema'
 import type { RenderedCell } from './renderValues'
 import type { BlockState } from '@/review/blocks'
@@ -12,7 +12,7 @@ import { FieldRow } from './FieldRow'
 import { FillLinkReveal } from './FillLinkReveal'
 import {
   flagAction, unflagAction, confirmBlockAction, unconfirmBlockAction,
-  requestChangesAction, approveAction, resendFillLinkAction,
+  requestChangesAction, approveAction, copyFillLinkAction,
   type FillLinkActionResult,
 } from '@/app/admin/s/[submissionId]/actions'
 // `import type` — стирается при компиляции, так что серверный модуль (а с ним
@@ -55,6 +55,24 @@ const NOTHING_FLAGGED: Localized = {
 }
 
 /**
+ * Имя кнопки копирования — оно же и подпись для скринридера, и подсказка
+ * `title` во включённом состоянии (у выключенной в `title` стоит причина
+ * гейта, тем же соглашением, что у остальных кнопок шапки). «На анкету», а не
+ * просто «ссылку»: рядом в шапке живёт «Скачать xlsx», и без уточнения два
+ * соседних действия читались бы как копирование и скачивание одного и того же.
+ */
+const COPY_LINK: Localized = { en: 'Copy fill link', ru: 'Скопировать ссылку на анкету' }
+const COPIED: Localized = { en: 'Copied', ru: 'Скопировано' }
+
+/** Вступление к плану Б (см. `copyFillLink` ниже): буфер отказал, ссылка уже
+ *  выписана — показывается тем же `FillLinkReveal`, что и после возврата на
+ *  правку, а notice объясняет, почему она на экране, а не в буфере. */
+const CLIPBOARD_FAILED_NOTICE: Localized = {
+  en: 'Could not copy to the clipboard — copy the link below yourself:',
+  ru: 'Скопировать в буфер обмена не вышло — скопируйте ссылку ниже сами:',
+}
+
+/**
  * Чьё действие дало последний отклик — ВСЕЙ АНКЕТЫ или открытого блока. Кнопки
  * разложены по этим же двум местам (решения по анкете — в шапке, пара по блоку
  * — в подвале), и отклик обязан появляться там, откуда действие вызвали, иначе
@@ -92,7 +110,7 @@ export function ReviewScreen(props: {
    * что `title` не существует ни на touch-устройстве, ни для скринридера. Это
    * подсказка, НЕ защита: гейты стоят в самих серверных действиях и
    * транзакциях решений (`confirmBlock`, `requestChanges`,
-   * `approveSubmission`, `resendFillLinkAction`, `unconfirmBlockAction`),
+   * `approveSubmission`, `copyFillLinkAction`, `unconfirmBlockAction`),
    * потому что серверное действие вызывается по сети напрямую и клиентский
    * компонент ему не преграда.
    */
@@ -117,6 +135,13 @@ export function ReviewScreen(props: {
   const [notice, setNotice] = useState<Localized | null>(null)
   const [fillUrl, setFillUrl] = useState<string | null>(null)
   const [feedbackScope, setFeedbackScope] = useState<FeedbackScope>('questionnaire')
+  // «Скопировано» у кнопки копирования — краткоживущий отклик УДАВШЕГОСЯ
+  // копирования, и только его: отказ действия и отказ буфера идут обычной
+  // дорожкой feedback (см. `copyFillLink`). Таймер в ref, а не в state:
+  // его смена не повод перерисовываться, а повторное нажатие обязано
+  // перезапустить отсчёт, значит прежний таймер нужно уметь снять.
+  const [copied, setCopied] = useState(false)
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const flagByKey = new Map(props.flags.map((flag) => [flag.fieldKey, flag]))
   const block = BLOCKS.find((b) => b.key === current)!
@@ -148,20 +173,24 @@ export function ReviewScreen(props: {
   // Смешивать это с `error` означало бы показать успешное действие как
   // отказ, хотя решение уже закоммичено и откатывать его нечем.
   //
-  // Тип — `FillLinkActionResult`, потому что два из семи действий («Переслать
-  // ссылку», «Вернуть на правку») могут вернуть успех со ссылкой заполнения
+  // Тип — `FillLinkActionResult`, потому что «Вернуть на правку» может
+  // вернуть успех со ссылкой заполнения
   // (`fillUrl` — только когда почта не доставляет, см. его комментарий в
   // `actions.ts`); остальные возвращают `ActionResult`, который к нему
   // присваиваем. Ссылка, как и `notice`, — свойство ПОСЛЕДНЕГО действия:
   // любой следующий результат её снимает (одноразовость сказана словами в
-  // `FillLinkReveal`, а не охраняется удержанием на экране; повторное нажатие
-  // просто выписывает новую — токены не отзываются, см. `issueFillToken`).
+  // `FillLinkReveal`, а не охраняется удержанием на экране; свежую всегда
+  // выдаёт кнопка копирования — токены не отзываются, см. `issueFillToken`).
+  // Кнопка копирования ходит НЕ через `run` — см. `copyFillLink` ниже.
   async function run(
     scope: FeedbackScope,
     action: () => Promise<FillLinkActionResult>,
   ): Promise<void> {
     const result = await action()
     setFeedbackScope(scope)
+    // Свежий результат гасит и «Скопировано»: это отклик ПРЕДЫДУЩЕГО действия,
+    // и пережить следующее он не должен (см. `copyFillLink`).
+    setCopied(false)
     if (result.ok) {
       setError(null)
       setNotice(result.notice ?? null)
@@ -173,24 +202,69 @@ export function ReviewScreen(props: {
     }
   }
 
+  /**
+   * Кнопка копирования у названия лаунжа: действие отдаёт свежую ссылку, клиент
+   * кладёт её в буфер. НЕ через `run()`: у успеха здесь другой отклик —
+   * краткоживущее «Скопировано» у самой кнопки, а не notice в feedback (текст
+   * «действие удалось» рядом с местом действия, как у Jira-цепочки, — а не
+   * строка ниже ряда решений, которую надо соотнести с нажатым).
+   *
+   * Отклик последнего действия — по-прежнему один на экран: удавшееся
+   * копирование снимает прежние error/notice/ссылку (иначе рядом со свежим
+   * «Скопировано» осталась бы, например, вчерашняя ссылка возврата на правку —
+   * ДРУГАЯ, не та, что в буфере), а любой следующий результат гасит
+   * «Скопировано» — этим же правилом, только в обратную сторону.
+   *
+   * План Б: `navigator.clipboard.writeText` требует secure context и может
+   * отказать (то же знание, что у `FillLinkReveal`). Ссылка к этому моменту
+   * уже выписана и существует только здесь — отказ буфера показывает её тем же
+   * `FillLinkReveal`, что и возврат на правку: один вид одноразовой ссылки на
+   * весь экран, с его собственной кнопкой копирования и планом Б внутри.
+   */
+  async function copyFillLink(): Promise<void> {
+    const result = await copyFillLinkAction(props.submissionId)
+    setFeedbackScope('questionnaire')
+    if (copiedTimer.current !== null) clearTimeout(copiedTimer.current)
+    if (!result.ok) {
+      setCopied(false)
+      setNotice(null)
+      setFillUrl(null)
+      setError(result.error)
+      return
+    }
+    setError(null)
+    try {
+      await navigator.clipboard.writeText(result.fillUrl)
+      setNotice(null)
+      setFillUrl(null)
+      setCopied(true)
+      copiedTimer.current = setTimeout(() => setCopied(false), 2500)
+    } catch {
+      setCopied(false)
+      setNotice(CLIPBOARD_FAILED_NOTICE)
+      setFillUrl(result.fillUrl)
+    }
+  }
+
   // ОДНО представление отклика на оба места (см. `FeedbackScope`): состояние
   // общее — отклик по-прежнему принадлежит ПОСЛЕДНЕМУ действию, и очередной
   // результат снимает предыдущий, в каком бы месте тот ни стоял. Два отдельных
   // состояния (шапке своё, подвалу своё) оставляли бы на экране два отклика
   // разной давности — например, вчерашний отказ подтверждения рядом со
   // свежепринятой анкетой. `fillUrl` приходит только от действий шапки
-  // («Вернуть на правку», «Переслать ссылку» — см. `FillLinkActionResult`),
-  // так что ссылка заполнения в подвале не появится никогда.
+  // («Вернуть на правку» — см. `FillLinkActionResult` — и план Б кнопки
+  // копирования), так что ссылка заполнения в подвале не появится никогда.
   const feedback = (
     <>
       {error && <p className="review-error">{pick(error)}</p>}
       {notice && <p className="review-notice">{pick(notice)}</p>}
-      {/* Ссылка заполнения, которую письмо не унесло (почта не настроена —
-          `fillUrl` приходит только в этом случае). Вступление к ней — сам
-          `notice` выше («письма не было, передайте сами»), поэтому у
-          компонента своего вступления нет. `key` обязателен: повторная
-          пересылка выписывает НОВУЮ ссылку, и «Скопировано» прежней не
-          должно её пережить (см. `FillLinkReveal`). */}
+      {/* Ссылка заполнения, которой не досталось буфера: письмо её не унесло
+          (почта не настроена / отправка упала — возврат на правку) либо буфер
+          отказал (план Б кнопки копирования). Вступление к ней — сам `notice`
+          выше, у каждого случая свой, поэтому у компонента своего вступления
+          нет. `key` обязателен: каждое следующее действие выписывает НОВУЮ
+          ссылку, и «Скопировано» прежней не должно её пережить
+          (см. `FillLinkReveal`). */}
       {fillUrl && <FillLinkReveal key={fillUrl} url={fillUrl} />}
     </>
   )
@@ -216,6 +290,49 @@ export function ReviewScreen(props: {
           </a>
           <h1>
             {props.lounge.name} <span className="review-iata">{props.lounge.iata}</span>
+            {/* Ссылка заполнения — в буфер, одним нажатием. Иконка-цепочка у
+                самого имени анкеты (жест Jira: цепочка у ключа задачи), а не
+                кнопка в ряду решений: копирование ссылки — не решение по
+                анкете, оно ничего в ней не меняет. Кнопка выключается по тому
+                же гейту, которым отказывает действие (`state.copyLink` —
+                ссылка обязана открывать форму), и выключенная несёт причину в
+                `title` — соглашение остальных кнопок шапки. `aria-label`
+                обязателен: имени-текста у кнопки нет, только глиф.
+                SVG — инлайном (глиф «цепочка», две дуги): в проекте нет
+                иконочной библиотеки, и один глиф — не повод её заводить. */}
+            <button
+              type="button"
+              className="review-copylink"
+              disabled={!props.state.copyLink.allowed}
+              aria-label={pick(COPY_LINK)}
+              title={
+                props.state.copyLink.allowed ? pick(COPY_LINK) : pick(props.state.copyLink.reason)
+              }
+              onClick={() => void copyFillLink()}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              </svg>
+            </button>
+            {/* role="status" — скринридер узнаёт об успехе так же, как зрячий:
+                подпись появляется на 2.5 секунды и гаснет сама (или раньше —
+                следующим действием, см. `run`). */}
+            {copied && (
+              <span className="review-copied" role="status">
+                {pick(COPIED)}
+              </span>
+            )}
             {/* Выгрузка ЭТОЙ анкеты — xlsx в структуре исходного файла
                 (`/admin/export/s/[submissionId]`). Обычный `<a>`, не действие:
                 файл отдаёт route handler, клиентскому бандлу из серверного
@@ -246,14 +363,12 @@ export function ReviewScreen(props: {
             >
               {locale === 'ru' ? 'Вернуть на правку' : 'Request changes'} · {props.flags.length}
             </button>
-            <button
-              type="button"
-              disabled={!props.state.resend.allowed}
-              title={props.state.resend.allowed ? undefined : pick(props.state.resend.reason)}
-              onClick={() => void run('questionnaire', () => resendFillLinkAction(props.submissionId))}
-            >
-              {locale === 'ru' ? 'Переслать ссылку' : 'Resend link'}
-            </button>
+            {/* «Переслать ссылку» здесь БЫЛО и убрано вместе со всей почтовой
+                пересылкой: без SMTP кнопка была ритуалом из двух шагов (нажать
+                → прочитать «письма не было» → скопировать из показа), а её
+                работу одним нажатием делает кнопка копирования у названия
+                лаунжа. Временно убран только интерфейс — почтовый хвост
+                решений жив, см. `sendFillLink` в actions.ts. */}
             {/* «Принять» выключается ТОЛЬКО по статусу, хотя у неё есть и
                 другие условия (все блоки подтверждены, ни одного открытого
                 замечания). Это не непоследовательность: те два условия —

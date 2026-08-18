@@ -40,11 +40,11 @@ import { REVIEW_STATUSES } from '@/review/blocks'
 export type Gate = { allowed: true } | { allowed: false; reason: Localized }
 
 /**
- * Тексты отказов пересылки — свой на каждый статус, потому что следующий шаг
- * проверяющего у них разный: анкету на проверке можно вернуть на правку и
- * переслать ссылку уже после этого, а принятую — нельзя (`requestChanges`
- * работает только из `submitted`, см. `REVIEW_STATUSES`), и предлагать это
- * было бы советом в тупик.
+ * Тексты отказов выдачи ссылки заполнения — свой на каждый статус, потому что
+ * следующий шаг проверяющего у них разный: анкету на проверке можно вернуть
+ * на правку и получить ссылку уже после этого, а принятую — нельзя
+ * (`requestChanges` работает только из `submitted`, см. `REVIEW_STATUSES`),
+ * и предлагать это было бы советом в тупик.
  *
  * Карта частичная, с обобщённым `FORM_CLOSED` на остальные случаи: если в
  * `submissionStatus` появится ещё один статус вне `EDITABLE_STATUSES`, отказ
@@ -69,7 +69,7 @@ const CLOSED_TO_FILLER: Partial<Record<SubmissionStatus, Localized>> = {
   },
 }
 
-export function resendGateFor(status: SubmissionStatus): Gate {
+export function copyLinkGateFor(status: SubmissionStatus): Gate {
   if (EDITABLE_STATUSES.has(status)) return { allowed: true }
   return { allowed: false, reason: CLOSED_TO_FILLER[status] ?? FORM_CLOSED }
 }
@@ -170,8 +170,8 @@ export type ReviewState = {
    * прямой вызов), хуже не станет ничем.
    */
   flagging: Gate
-  /** Тот же ответ, что получает `resendFillLinkAction` (`resendGateFor` выше). */
-  resend: Gate
+  /** Тот же ответ, что получает `copyFillLinkAction` (`copyLinkGateFor` выше). */
+  copyLink: Gate
 }
 
 export function reviewStateFor(status: SubmissionStatus): ReviewState {
@@ -186,6 +186,6 @@ export function reviewStateFor(status: SubmissionStatus): ReviewState {
       ? { allowed: true }
       : { allowed: false, reason: state.note },
     flagging: deliverable ? { allowed: true } : { allowed: false, reason: state.note },
-    resend: resendGateFor(status),
+    copyLink: copyLinkGateFor(status),
   }
 }

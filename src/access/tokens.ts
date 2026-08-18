@@ -12,8 +12,9 @@ const daysFromNow = (days: number): Date =>
 /**
  * Сколько живёт выданная ссылка заполнения. Одно значение на всю систему, а
  * не параметр, который каждый вызывающий подбирает сам: до этого число `30`
- * стояло голым литералом в ДВУХ местах (`requestChangesAction` и
- * `resendFillLinkAction` в `src/app/admin/s/[submissionId]/actions.ts`) —
+ * стояло голым литералом в ДВУХ местах (`requestChangesAction` и упразднённая
+ * с тех пор пересылка письмом — ныне `copyFillLinkAction` — в
+ * `src/app/admin/s/[submissionId]/actions.ts`) —
  * то есть одна политика была записана дважды, ровно тот класс дефекта,
  * который эта ветка уже находила трижды (см. `EDITABLE_STATUSES`,
  * `SaveResult`, `FLAG_REASONS`). Расхождение здесь было бы тихим: оба места

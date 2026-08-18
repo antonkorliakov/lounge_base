@@ -11,21 +11,27 @@ import { resolveFillToken } from '@/access/tokens'
 import type { OutgoingMail } from '@/notify/messages'
 
 /**
- * «Переслать ссылку» отправляло `changesRequestedMail` безусловно, без всякой
- * оглядки на статус анкеты: на анкете в `submitted` оператор получал письмо
- * «<Лаунж> — changes requested» с телом «N answer(s) need a correction.
- * Everything else is accepted» — про возврат, которого не было, — и ссылку,
- * открывающую экран `form.closed` (`FillForm`'s `EDITABLE_STATUSES`), то есть
- * форму, в которой нечего исправлять. При нуле открытых замечаний письмо
- * вдобавок сообщало «0 answer(s) need a correction».
+ * Куда и как уходит ссылка заполнения — оба оставшихся пути:
  *
- * Проверяется само действие, а не только построители писем. Утверждение,
+ *  - `copyFillLinkAction` — ручная выдача ревьюеру (кнопка копирования у
+ *    названия лаунжа). Пришла на смену пересылке письмом
+ *    (`resendFillLinkAction`), и главное её свойство — ПОЧТА НЕ УЧАСТВУЕТ НИ
+ *    В ОДНОЙ ВЕТКЕ: «дай мне ссылку» не превращается в отправку письма и
+ *    после настройки SMTP. Это свойство здесь закреплено нарочно в среде С
+ *    настроенной почтой — иначе тест доказывал бы лишь «в среде без SMTP
+ *    письма нет», что верно для чего угодно.
+ *  - `requestChangesAction` — уведомление об уже состоявшемся решении, единый
+ *    почтовый хвост (`sendFillLink`): письмо с реальным числом замечаний,
+ *    а без SMTP или при упавшей отправке — ссылка на экран с честным notice.
+ *
+ * Проверяются сами действия, а не только построители писем. Утверждение,
  * которое здесь важно, — «какое письмо ушло и ушло ли вообще», и оно живёт
  * ровно в этом файле: `src/notify/__tests__/messages.test.ts` может доказать,
  * что `fillLinkMail` ничего не выдумывает, но не то, что действие выбирает
- * именно его. Ровно та же граница, из-за которой тест маршрута загрузки фото
- * (`src/app/api/photos/__tests__/upload-route.test.ts`) проверяет маршрут, а не
- * `clearFlagsFor`: не хватало не построителя, а того, кто его позовёт.
+ * именно его (или не зовёт почту вовсе). Ровно та же граница, из-за которой
+ * тест маршрута загрузки фото (`src/app/api/photos/__tests__/upload-route.test.ts`)
+ * проверяет маршрут, а не `clearFlagsFor`: не хватало не построителя, а того,
+ * кто его позовёт.
  *
  * Замокано четыре модуля и ни одного больше:
  *  - `@/db/client` — на PGlite-стенд с настоящими миграциями (тот же приём и
@@ -35,7 +41,7 @@ import type { OutgoingMail } from '@/notify/messages'
  *    cookie, которых вне запроса не существует; авторизация проверяющего к
  *    этому дефекту не относится.
  *  - `next/cache` — `revalidatePath` вне рантайма Next не имеет смысла (само
- *    `resendFillLinkAction` его и не вызывает, но модуль его импортирует).
+ *    `copyFillLinkAction` его и не вызывает, но модуль его импортирует).
  *  - `@/notify/mailer` — почтальон копит письма вместо отправки, а
  *    `mailDelivers` отвечает по `holder.smtpConfigured` (настоящий читает
  *    `SMTP_URL` процесса — состояние среды, а не теста). Сами письма строят
@@ -52,7 +58,7 @@ const holder = vi.hoisted(() => ({
   failSend: false,
   /** Что отвечает `mailDelivers()`: true — среда с настоящим SMTP (письма
    *  доставляются), false — сегодняшний бой (`SMTP_URL` пуст, ссылка обязана
-   *  вернуться на экран). Оба режима закреплены — см. последний describe. */
+   *  вернуться на экран). Оба режима закреплены. */
   smtpConfigured: true,
 }))
 
@@ -87,7 +93,7 @@ vi.mock('@/notify/mailer', () => ({
   }),
 }))
 
-const { resendFillLinkAction, requestChangesAction, approveAction } = await import('../actions')
+const { copyFillLinkAction, requestChangesAction, approveAction } = await import('../actions')
 
 const OPERATOR_EMAIL = 'operations@primeclass.test'
 /** II.1.3 — Email Address - Lounge Operations Manager, единственное поле,
@@ -151,7 +157,7 @@ async function seed(
 
 /** Свежие ссылки анкеты. Сырой токен нигде не хранится (только его SHA-256),
  *  поэтому «выписан ли токен» проверяется по числу строк, а «рабочая ли
- *  ссылка» — прогоном токена из письма через `resolveFillToken`. */
+ *  ссылка» — прогоном токена из URL через `resolveFillToken`. */
 async function tokenCount(db: Db, submissionId: string): Promise<number> {
   const rows = await db
     .select({ submissionId: fillTokens.submissionId })
@@ -165,21 +171,22 @@ function onlyMail(): { to: string; subject: string; text: string } {
   return holder.sent[0]!
 }
 
-/** Токен из ссылки письма — последний сегмент `/f/<token>`. */
-function tokenFromMail(text: string): string {
+/** Токен из ссылки (письма или результата) — последний сегмент `/f/<token>`. */
+function tokenFromUrl(text: string): string {
   const match = /\/f\/([A-Za-z0-9_-]+)/.exec(text)
-  expect(match, `в письме нет ссылки /f/<token>:\n${text}`).not.toBeNull()
+  expect(match, `нет ссылки /f/<token>:\n${text}`).not.toBeNull()
   return match![1]!
 }
 
-describe('resendFillLinkAction: письмо описывает тот экран, который откроет ссылка', () => {
+describe('copyFillLinkAction: ссылка выдаётся ревьюеру, почта не участвует вовсе', () => {
   beforeEach(async () => {
     holder.db = await createTestDb()
     holder.sent = []
     holder.failSend = false
-    // Все сценарии этого describe — про среду, где почта ДОСТАВЛЯЕТСЯ:
-    // правило выбора письма и все его отказы живут в этой ветке. Среда без
-    // SMTP — отдельный describe ниже.
+    // Нарочно среда С НАСТРОЕННОЙ почтой: главное утверждение этого describe —
+    // действие не шлёт письма не потому, что нечем или некому, а по
+    // устройству («дай мне ссылку», не «отправь»). В среде без SMTP пустой
+    // `sent` не доказывал бы ничего.
     holder.smtpConfigured = true
   })
 
@@ -187,7 +194,7 @@ describe('resendFillLinkAction: письмо описывает тот экра�
     const db = holder.db!
     const submissionId = await seed(db, { status: 'submitted', flags: 1 })
 
-    const result = await resendFillLinkAction(submissionId)
+    const result = await copyFillLinkAction(submissionId)
 
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('unreachable')
@@ -208,7 +215,7 @@ describe('resendFillLinkAction: письмо описывает тот экра�
     const db = holder.db!
     const submissionId = await seed(db, { status: 'approved' })
 
-    const result = await resendFillLinkAction(submissionId)
+    const result = await copyFillLinkAction(submissionId)
 
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('unreachable')
@@ -222,118 +229,92 @@ describe('resendFillLinkAction: письмо описывает тот экра�
     expect(await tokenCount(db, submissionId)).toBe(0)
   })
 
-  it('возвращённая анкета с открытыми замечаниями: письмо о правках, ссылка рабочая', async () => {
+  it('возвращённая анкета: РАБОЧАЯ ссылка в результате, письма нет — хотя почта настроена и адресат есть', async () => {
     const db = holder.db!
+    // Контактная почта на месте, SMTP настроен: у пересылки письмом здесь
+    // ушло бы письмо. У копирования не должно — это и есть разница действий.
     const submissionId = await seed(db, { status: 'changes_requested', flags: 2 })
 
-    const result = await resendFillLinkAction(submissionId)
+    const result = await copyFillLinkAction(submissionId)
 
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
-    expect(result.notice?.en).toContain(OPERATOR_EMAIL)
-    // Ссылки в результате НЕТ: оператор получил её письмом, и копия на экране
-    // ревьюера была бы лишней экспозицией живого доступа (см. `mailed` в
-    // `resendFillLinkAction`). Появление URL здесь — регресс, а не бонус.
-    expect(result.fillUrl).toBeUndefined()
 
-    // Единственное состояние, в котором `changesRequestedMail` правдиво: возврат
-    // был, замечания открыты, и ссылка откроет экран правок.
-    const mail = onlyMail()
-    expect(mail.to).toBe(OPERATOR_EMAIL)
-    expect(mail.subject).toMatch(/changes requested/i)
-    expect(mail.text).toContain('2 answer(s) need a correction')
-
-    // И ссылка в письме действительно открывает ЭТУ анкету, а не просто
-    // выглядит как ссылка.
+    // Ссылка не «похожа на ссылку», а открывает ЭТУ анкету: токен из URL
+    // проходит настоящий resolveFillToken по настоящей строке fill_tokens.
+    expect(await resolveFillToken(db, tokenFromUrl(result.fillUrl))).toEqual({ submissionId })
     expect(await tokenCount(db, submissionId)).toBe(1)
-    expect(await resolveFillToken(db, tokenFromMail(mail.text))).toEqual({ submissionId })
+
+    // ГЛАВНЫЙ пин файла: почтальон не звался ни в одной ветке.
+    expect(holder.sent).toEqual([])
   })
 
-  it('черновик: письмо просто с ссылкой, без выдуманного возврата на правку', async () => {
+  it('черновик без контактной почты: ссылка выдаётся — адресат действию не нужен', async () => {
+    const db = holder.db!
+    // Ровно боевой случай, ради которого ручная выдача и существует: лаунж
+    // заведён, оператор ещё не открывал форму (II.1.3 пуст), ссылка истекла.
+    // У пересылки письмом это был отказ «нет контактной почты»; у копирования
+    // адресата нет по устройству, и отказ оставил бы анкету навсегда
+    // недоступной — за ссылкой снова пришлось бы ходить скриптом.
+    const submissionId = await seed(db, { status: 'draft', contact: null })
+
+    const result = await copyFillLinkAction(submissionId)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(await resolveFillToken(db, tokenFromUrl(result.fillUrl))).toEqual({ submissionId })
+    expect(holder.sent).toEqual([])
+  })
+
+  it('без SMTP поведение то же самое: у действия просто нет почтовой ветки', async () => {
+    const db = holder.db!
+    holder.smtpConfigured = false
+    const submissionId = await seed(db, { status: 'draft' })
+
+    const result = await copyFillLinkAction(submissionId)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(await resolveFillToken(db, tokenFromUrl(result.fillUrl))).toEqual({ submissionId })
+    expect(holder.sent).toEqual([])
+  })
+
+  it('повторный вызов выписывает НОВУЮ ссылку, прежняя продолжает работать', async () => {
     const db = holder.db!
     const submissionId = await seed(db, { status: 'draft' })
 
-    const result = await resendFillLinkAction(submissionId)
+    const first = await copyFillLinkAction(submissionId)
+    const second = await copyFillLinkAction(submissionId)
+    expect(first.ok && second.ok).toBe(true)
+    if (!first.ok || !second.ok) throw new Error('unreachable')
 
-    expect(result.ok).toBe(true)
-    if (!result.ok) throw new Error('unreachable')
-
-    // Тот самый случай, ради которого кнопка и появилась: ссылка на черновике
-    // истекла до отправки. Отказывать здесь (гейт «только changes_requested»)
-    // означало бы закрыть дефект вместе с главным применением кнопки.
-    const mail = onlyMail()
-    expect(mail.subject).not.toMatch(/changes requested/i)
-    expect(mail.text).not.toMatch(/correction|accepted/i)
-    expect(await resolveFillToken(db, tokenFromMail(mail.text))).toEqual({ submissionId })
+    // Токены не отзываются (`issueFillToken` — хранится только хэш, отзывать
+    // нечего): обе ссылки живут свой TTL, и интерфейс не вправе утверждать
+    // обратного. Обе — разные и обе открывают эту анкету.
+    expect(second.fillUrl).not.toBe(first.fillUrl)
+    expect(await resolveFillToken(db, tokenFromUrl(first.fillUrl))).toEqual({ submissionId })
+    expect(await resolveFillToken(db, tokenFromUrl(second.fillUrl))).toEqual({ submissionId })
+    expect(await tokenCount(db, submissionId)).toBe(2)
   })
 
-  it('возвращённая анкета, где все замечания уже сняты: не «0 answer(s) need a correction»', async () => {
-    const db = holder.db!
-    const submissionId = await seed(db, {
-      status: 'changes_requested',
-      flags: 1,
-      resolveAll: true,
-    })
-
-    const result = await resendFillLinkAction(submissionId)
-
-    expect(result.ok).toBe(true)
-    // Заполняющий уже исправил всё, но заново не отправил: `FillForm` покажет
-    // ему полную форму (экран правок гейтится на `flags.length > 0`), так что
-    // письмо про «что отмечено» было бы про пустое множество.
-    const mail = onlyMail()
-    expect(mail.text).not.toContain('0 answer(s)')
-    expect(mail.subject).not.toMatch(/changes requested/i)
-    expect(await resolveFillToken(db, tokenFromMail(mail.text))).toEqual({ submissionId })
-  })
-
-  it('порядок отказов: статус проверяется раньше контактной почты', async () => {
-    const db = holder.db!
-    const submissionId = await seed(db, { status: 'submitted', contact: null })
-
-    const result = await resendFillLinkAction(submissionId)
-
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('unreachable')
-    // Оба условия нарушены. Сказать про отсутствующий `II.1.3` на анкете,
-    // которую оператор всё равно не может открыть, значит послать проверяющего
-    // исправлять не то.
-    expect(result.error.en).toMatch(/under review/i)
-    expect(result.error.en).not.toMatch(/II\.1\.3/)
-  })
-
-  it('несуществующая анкета: отказ, а не письмо в никуда', async () => {
-    const result = await resendFillLinkAction('00000000-0000-0000-0000-000000000000')
+  it('несуществующая анкета: отказ, а не токен в никуда', async () => {
+    const result = await copyFillLinkAction('00000000-0000-0000-0000-000000000000')
 
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('unreachable')
     expect(result.error.en).toBe('Submission not found')
     expect(holder.sent).toEqual([])
   })
-
-  it('анкета, которую можно править, но без контактной почты: отказ, и токен не выписан', async () => {
-    const db = holder.db!
-    const submissionId = await seed(db, { status: 'draft', contact: null })
-
-    const result = await resendFillLinkAction(submissionId)
-
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('unreachable')
-    expect(result.error.en).toContain('II.1.3')
-    expect(holder.sent).toEqual([])
-    expect(await tokenCount(db, submissionId)).toBe(0)
-  })
-
 })
 
 /**
- * Тот же дефект с другой стороны. `requestChangesAction` слал
- * `changesRequestedMail` тоже безусловно — и это, в отличие от пересылки,
- * стоит за настоящим переходом, так что «возврат был» тут правда. Ложью могло
+ * `requestChangesAction` слал `changesRequestedMail` безусловно — и это, в
+ * отличие от упразднённой пересылки, стоит за настоящим переходом, так что
+ * «возврат был» тут правда. Ложью могло
  * стать число: открытые замечания читались ДО `requestChanges`, отдельным
  * незаблокированным запросом, и в письмо ставилось именно то, докоммитное
  * число (см. `sendFillLink`). Теперь и выбор письма, и число берутся из одного
- * чтения после коммита, и оба действия ходят одним путём.
+ * чтения после коммита.
  *
  * Проверяется наблюдаемое следствие: письмо о возврате называет столько
  * замечаний, сколько их в анкете, и уходит именно оно.
@@ -365,7 +346,7 @@ describe('requestChangesAction: письмо о возврате называе�
     expect(mail.subject).toMatch(/changes requested/i)
     expect(mail.text).toContain('2 answer(s) need a correction')
     expect(mail.text).not.toContain('0 answer(s)')
-    expect(await resolveFillToken(db, tokenFromMail(mail.text))).toEqual({ submissionId })
+    expect(await resolveFillToken(db, tokenFromUrl(mail.text))).toEqual({ submissionId })
 
     // И переход действительно состоялся — иначе утверждения выше говорили бы о
     // письме, отправленном ни по какому поводу.
@@ -376,6 +357,13 @@ describe('requestChangesAction: письмо о возврате называе�
     expect(row?.status).toBe('changes_requested')
   })
 
+  // Чего здесь НЕТ, и не по забывчивости: хвоста `fillLinkMail` при нуле
+  // замечаний. После ухода пересылки письмом он достижим только гонкой —
+  // второй проверяющий снимает последнее замечание в окне между коммитом
+  // `requestChanges` и чтением `flagCount` (см. `sendFillLink`), — а гонку из
+  // теста действия не поставить: `requestChanges` с нулём замечаний отказывает
+  // до письма (закреплено ниже). Правило «письмо не говорит „0 answer(s)“»
+  // держится на самом условии `flagCount > 0` и его комментарии.
   it('отказанный переход не шлёт письма и не выписывает токен', async () => {
     const db = holder.db!
     // Ни одного замечания — `requestChanges` откажет (`decide.ts`).
@@ -390,83 +378,20 @@ describe('requestChangesAction: письмо о возврате называе�
 })
 
 /**
- * Среда, где почта НЕ доставляется (`SMTP_URL` пуст — сегодняшний бой).
- * Найденный пользователем дефект: «Переслать ссылку» выписывало настоящий
- * токен, отчитывалось «Link sent to …», а письмо печатал консольный почтальон
- * — в лог функции, который никто не смотрит. Ссылка существовала, показана не
- * была и восстановлению не подлежала (хранится только хэш). Единственным
- * способом получить ссылку для СУЩЕСТВУЮЩЕГО лаунжа оставался скрипт.
- *
- * Правило теперь такое: токен выписывается тем же единственным потоком
- * (`sendFillLink`), но хвост другой — ссылка возвращается в результате
+ * Среда, где почта НЕ доставляется (`SMTP_URL` пуст — сегодняшний бой), для
+ * решений с почтовым хвостом. Найденный пользователем дефект: уведомление
+ * печаталось консольным почтальоном в stdout, ревьюер видел чистый успех, а
+ * единственный экземпляр ссылки (хранится только хэш) уходил в лог, который
+ * никто не смотрит. Правило теперь такое: ссылка возвращается в результате
  * действия (`fillUrl`) и попадает на экран ревьюера, а notice говорит, что
- * письма НЕ БЫЛО. Оба направления закреплены: этот describe — про «без SMTP
- * ссылка на экране», describe'ы выше — про «с SMTP письмо уходит, а ссылки в
- * результате нет» (см. их `fillUrl`-утверждения): ссылка на экране ревьюера,
- * когда оператор уже получил её почтой, — лишняя экспозиция живого доступа.
+ * письма НЕ БЫЛО.
  */
-describe('без SMTP: ссылка возвращается на экран, а не в stdout', () => {
+describe('без SMTP: решения кладут ссылку на экран, а не в stdout', () => {
   beforeEach(async () => {
     holder.db = await createTestDb()
     holder.sent = []
     holder.failSend = false
     holder.smtpConfigured = false
-  })
-
-  it('пересылка: результат несёт РАБОЧУЮ ссылку, notice честен про письмо', async () => {
-    const db = holder.db!
-    const submissionId = await seed(db, { status: 'changes_requested', flags: 1 })
-
-    const result = await resendFillLinkAction(submissionId)
-
-    expect(result.ok).toBe(true)
-    if (!result.ok) throw new Error('unreachable')
-
-    // Ссылка не «похожа на ссылку», а открывает ЭТУ анкету: токен из URL
-    // проходит настоящий resolveFillToken по настоящей строке fill_tokens.
-    expect(result.fillUrl).toBeDefined()
-    expect(await resolveFillToken(db, tokenFromMail(result.fillUrl!))).toEqual({ submissionId })
-    expect(await tokenCount(db, submissionId)).toBe(1)
-
-    // Письма не было и не притворялись: почтальон не звался, notice называет
-    // причину и следующий шаг, а не «Link sent to …».
-    expect(holder.sent).toEqual([])
-    expect(result.notice?.en).not.toContain('Link sent')
-    expect(result.notice?.en).toMatch(/not configured/i)
-    expect(result.notice?.ru).toMatch(/не настроена/)
-  })
-
-  it('черновик без контактной почты: ссылка всё равно выдаётся — адресат этому хвосту не нужен', async () => {
-    const db = holder.db!
-    // Ровно боевой случай, ради которого всё затевалось: лаунж заведён,
-    // оператор ещё не открывал форму (II.1.3 пуст), ссылка истекла. С SMTP
-    // здесь отказ «нет контактной почты» — письмо некому слать (закреплено
-    // выше). Без SMTP письмо не участвует вовсе: отказ по отсутствующему
-    // адресату, который не был бы использован, оставил бы анкету навсегда
-    // недоступной — за ссылкой снова пришлось бы ходить скриптом.
-    const submissionId = await seed(db, { status: 'draft', contact: null })
-
-    const result = await resendFillLinkAction(submissionId)
-
-    expect(result.ok).toBe(true)
-    if (!result.ok) throw new Error('unreachable')
-    expect(await resolveFillToken(db, tokenFromMail(result.fillUrl!))).toEqual({ submissionId })
-    expect(holder.sent).toEqual([])
-  })
-
-  it('гейт по статусу не ослаблен: на анкете под проверкой отказ, токена нет', async () => {
-    const db = holder.db!
-    const submissionId = await seed(db, { status: 'submitted' })
-
-    const result = await resendFillLinkAction(submissionId)
-
-    // Показ на экране не более позволителен, чем письмо: ссылка на закрытую
-    // форму бесполезна тем же способом (`EDITABLE_STATUSES` — правило одно,
-    // `resendGateFor` стоит ДО выбора хвоста).
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('unreachable')
-    expect(result.error.en).toMatch(/under review/i)
-    expect(await tokenCount(db, submissionId)).toBe(0)
   })
 
   it('возврат на правку: переход состоялся, ссылка на экран, письмо не выдумано', async () => {
@@ -486,7 +411,7 @@ describe('без SMTP: ссылка возвращается на экран, а
       .where(eq(submissions.id, submissionId))
     expect(row?.status).toBe('changes_requested')
 
-    expect(await resolveFillToken(db, tokenFromMail(result.fillUrl!))).toEqual({ submissionId })
+    expect(await resolveFillToken(db, tokenFromUrl(result.fillUrl!))).toEqual({ submissionId })
     expect(holder.sent).toEqual([])
     // Раньше эта ветка показывала чистый успех — ревьюер считал оператора
     // уведомлённым. Теперь notice говорит, что письма НЕ ушло, и что ссылку
@@ -552,51 +477,12 @@ describe('SMTP настроен, но отправка упала: ссылка 
     holder.smtpConfigured = true
   })
 
-  it('пересылка: успех с РАБОЧЕЙ ссылкой и notice про упавшее письмо, а не тупиковый отказ', async () => {
-    const db = holder.db!
-    const submissionId = await seed(db, { status: 'changes_requested', flags: 1 })
-
-    // Сбой попадает в лог (`console.error` в `sendFillLink`) — глушится, чтобы
-    // ожидаемая ошибка не читалась в выводе теста как настоящая.
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
-    try {
-      const result = await resendFillLinkAction(submissionId)
-
-      expect(result.ok).toBe(true)
-      if (!result.ok) throw new Error('unreachable')
-
-      // Ссылка не «похожа на ссылку», а открывает ЭТУ анкету — токен из URL
-      // проходит настоящий resolveFillToken по настоящей строке fill_tokens.
-      expect(result.fillUrl).toBeDefined()
-      expect(await resolveFillToken(db, tokenFromMail(result.fillUrl!))).toEqual({ submissionId })
-      expect(await tokenCount(db, submissionId)).toBe(1)
-
-      // Причина названа та, что была: отправка УПАЛА — не «почта не
-      // настроена» (эта среда шлёт, просто не вышло) и не «Link sent to …».
-      // Концовка та же, что у ветки без SMTP: вручить ссылку самому.
-      expect(result.notice?.en).toMatch(/failed to send/i)
-      expect(result.notice?.en).not.toMatch(/not configured/i)
-      expect(result.notice?.en).not.toContain('Link sent')
-      expect(result.notice?.ru).toMatch(/не отправилось/)
-      expect(result.notice?.ru).not.toMatch(/не настроена/)
-      expect(result.notice?.ru).toMatch(/передайте оператору эту ссылку сами/)
-
-      // Сбой не проглочен молча — он в логе сервера.
-      expect(errors).toHaveBeenCalled()
-    } finally {
-      // Тест, который трогает общий `holder`, убирает за собой сам, а не
-      // полагается на `beforeEach` соседа.
-      holder.failSend = false
-      errors.mockRestore()
-    }
-
-    expect(holder.sent).toEqual([])
-  })
-
   it('возврат на правку: переход закоммичен, ссылка на экран, notice не притворяется, что возврат не удался', async () => {
     const db = holder.db!
     const submissionId = await seed(db, { status: 'submitted', flags: 2 })
 
+    // Сбой попадает в лог (`console.error` в `sendFillLink`) — глушится, чтобы
+    // ожидаемая ошибка не читалась в выводе теста как настоящая.
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
       const result = await requestChangesAction(submissionId)
@@ -613,7 +499,7 @@ describe('SMTP настроен, но отправка упала: ссылка 
         .where(eq(submissions.id, submissionId))
       expect(row?.status).toBe('changes_requested')
 
-      expect(await resolveFillToken(db, tokenFromMail(result.fillUrl!))).toEqual({ submissionId })
+      expect(await resolveFillToken(db, tokenFromUrl(result.fillUrl!))).toEqual({ submissionId })
 
       // «Сохранено.» — тем же словом, что у соседних notice действий с уже
       // закоммиченной транзакцией; причина — упавшее письмо, не «не настроена».
@@ -622,7 +508,12 @@ describe('SMTP настроен, но отправка упала: ссылка 
       expect(result.notice?.ru).toMatch(/^Сохранено\./)
       expect(result.notice?.ru).toMatch(/не отправилось/)
       expect(result.notice?.ru).not.toMatch(/не настроена/)
+
+      // Сбой не проглочен молча — он в логе сервера.
+      expect(errors).toHaveBeenCalled()
     } finally {
+      // Тест, который трогает общий `holder`, убирает за собой сам, а не
+      // полагается на `beforeEach` соседа.
       holder.failSend = false
       errors.mockRestore()
     }
