@@ -254,6 +254,12 @@ const CONFIRM_BLOCK = 'Confirm block'
  * `flag`/`Flag` (см. `flag()` выше).
  */
 const RETRACT = 'Retract confirmation'
+/**
+ * Кнопка-иконка копирования ссылки заполнения — у названия лаунжа в шапке.
+ * Текста у неё нет (глиф-цепочка), имя ей даёт `aria-label`, и `getByRole`
+ * находит её именно по нему.
+ */
+const COPY_FILL_LINK = 'Copy fill link'
 
 test('замечание, возврат на правку, исправление и повторная отправка — полный круг', async ({
   page,
@@ -278,18 +284,25 @@ test('замечание, возврат на правку, исправлени
   expect(single.suggestedFilename()).toBe(`${lounge} (IST).xlsx`)
 
   // ── Кнопки разложены по области действия ──────────────────────────────────
-  // Решения по ВСЕЙ анкете («Вернуть на правку», «Переслать ссылку»,
-  // «Принять») — в шапке; в подвале — только решение по открытому блоку.
-  // Раньше все они стояли одним рядом в подвале, и «Принять анкету» выглядела
-  // кнопкой блока, повторяющейся на каждой из 27 страниц (найдено
-  // пользователем). Утверждается состав ОБОИХ мест, а не только наличие
-  // кнопок где-то на странице: иначе тест не отличил бы переезд от второго
-  // ряда тех же кнопок.
+  // Решения по ВСЕЙ анкете («Вернуть на правку», «Принять») — в шапке; в
+  // подвале — только решение по открытому блоку. Раньше все они стояли одним
+  // рядом в подвале, и «Принять анкету» выглядела кнопкой блока,
+  // повторяющейся на каждой из 27 страниц (найдено пользователем).
+  // Утверждается состав ОБОИХ мест, а не только наличие кнопок где-то на
+  // странице: иначе тест не отличил бы переезд от второго ряда тех же кнопок.
+  //
+  // «Переслать ссылку» в ряду решений НЕТ, и счётчик это закрепляет: почтовая
+  // пересылка убрана из интерфейса, её работу делает кнопка копирования у
+  // самого названия лаунжа (жест Jira: цепочка у ключа задачи) — она не
+  // решение по анкете, поэтому живёт в заголовке, а не в ряду решений.
   const head = page.locator('.review-head')
   const foot = page.locator('.review-foot')
-  for (const name of [/Request changes/, 'Resend link', APPROVE]) {
+  for (const name of [/Request changes/, APPROVE]) {
     await expect(head.getByRole('button', { name })).toBeVisible()
   }
+  await expect(head.locator('.review-actions').getByRole('button')).toHaveCount(2)
+  const copyLink = head.locator('h1').getByRole('button', { name: COPY_FILL_LINK })
+  await expect(copyLink).toBeVisible()
   await expect(foot.getByRole('button')).toHaveCount(1)
   await expect(foot.getByRole('button', { name: CONFIRM_BLOCK })).toBeVisible()
 
@@ -320,21 +333,16 @@ test('замечание, возврат на правку, исправлени
   // Блок с открытым замечанием подтвердить нельзя — кнопка выключена.
   await expect(page.getByRole('button', { name: CONFIRM_BLOCK })).toBeDisabled()
 
-  // ── «Переслать ссылку» на анкете, которая ещё на проверке, — недоступно ───
+  // ── Копирование ссылки на анкете, которая ещё на проверке, — недоступно ───
   // Анкета в `submitted` закрыта заполняющему (`EDITABLE_STATUSES`), поэтому
-  // пересылать нечего: ссылка открыла бы экран «форма закрыта», а письмо о
-  // возврате на правку объявило бы возврат, которого не было. Проверяющий
+  // копировать нечего: ссылка открыла бы экран «форма закрыта». Проверяющий
   // узнаёт это ДО нажатия — кнопка выключена и несёт причину, — а не после.
   //
   // Проверяется здесь только эта, клиентская половина гейта: что серверное
-  // действие отказывает само (и при отказе не шлёт письма и не выписывает
-  // токен), проверяет
-  // `src/app/admin/s/[submissionId]/__tests__/resend-fill-link.test.ts` — из
-  // браузера письмо не видно вовсе (консольный почтальон не печатает тело, а
-  // stdout сервера тесту недоступен, см. сценарий входа ниже).
-  const resend = page.getByRole('button', { name: 'Resend link' })
-  await expect(resend).toBeDisabled()
-  await expect(resend).toHaveAttribute('title', /under review/)
+  // действие отказывает само (и при отказе не выписывает токен), проверяет
+  // `src/app/admin/s/[submissionId]/__tests__/fill-link.test.ts`.
+  await expect(copyLink).toBeDisabled()
+  await expect(copyLink).toHaveAttribute('title', /under review/)
 
   // ── Вернуть на правку ─────────────────────────────────────────────────────
   await clickAndAwaitAction(page, page.getByRole('button', { name: /Request changes/ }))
@@ -371,40 +379,56 @@ test('замечание, возврат на правку, исправлени
   // сужен до .review-head сознательно — он утверждает не только «отклик
   // есть», но и «отклик там, где ревьюер сейчас смотрит».
   await expect(head.locator('.review-notice')).toContainText('the operator was NOT emailed')
-  await expect(head.locator('.al-url')).toBeVisible()
-
-  // ── «Переслать ссылку» отдаёт ссылку тем же видом ─────────────────────────
-  // Кнопка включается без перезагрузки: `requestChangesAction` вызывает
-  // `revalidatePath` на этот же адрес, так что ответ действия несёт заново
-  // отрисованную страницу — вместе с новым `resend` из `resendGateFor`.
-  await expect(resend).toBeEnabled()
-  // Дефект, найденный пользователем в бою: это действие выписывало настоящий
-  // токен и рапортовало «Link sent to <адрес>», а письмо печатал консольный
-  // почтальон. Теперь у успеха без почты то же представление, что у панели
-  // «Добавить лаунж» (`FillLinkReveal`, см. registry.spec.ts): видимый URL,
-  // копирование и предупреждение об одноразовости.
-  await resend.click()
-  await expect(head.locator('.review-notice')).toContainText(
-    'Email is not configured on this server, so nothing was sent',
-  )
-  await expect(page.locator('.review-error')).toHaveCount(0)
-  const revealed = head.locator('.al-url')
-  await expect(revealed).toBeVisible()
-  const revealedUrl = await revealed.inputValue()
-  expect(revealedUrl).toMatch(/\/f\/[A-Za-z0-9_-]+/)
-  // Новая ссылка, не прежняя: сырой токен прежней не хранится, показать её
-  // повторно неоткуда — пересылка всегда выписывает следующую.
-  expect(revealedUrl).not.toBe(fillUrl)
+  const returnedReveal = head.locator('.al-url')
+  await expect(returnedReveal).toBeVisible()
+  const returnedUrl = await returnedReveal.inputValue()
+  expect(returnedUrl).toMatch(/\/f\/[A-Za-z0-9_-]+/)
+  // Показ — общий `FillLinkReveal` (тот же, что у панели «Добавить лаунж», см.
+  // registry.spec.ts): видимый URL, копирование и предупреждение об
+  // одноразовости, вторая половина которого честно называет кнопку
+  // копирования источником свежей ссылки.
   await expect(page.getByRole('button', { name: 'Copy link', exact: true })).toBeVisible()
   await expect(page.getByText('the link is not shown again', { exact: false })).toBeVisible()
 
-  // ── Заполняющий видит только отмеченное — по ссылке С ЭКРАНА ──────────────
-  // Заполняющий идёт по ссылке, которую ревьюер только что получил на экран и
+  // ── Кнопка копирования кладёт СВЕЖУЮ ссылку в буфер одним нажатием ────────
+  // Прежняя «Переслать ссылку» без SMTP была ритуалом из двух шагов (нажать →
+  // прочитать «письма не было» → скопировать из показа); её работу делает
+  // кнопка-иконка у названия лаунжа. Включается без перезагрузки:
+  // `requestChangesAction` вызывает `revalidatePath` на этот же адрес, так что
+  // ответ действия несёт заново отрисованную страницу — вместе с новым
+  // `copyLink` из `copyLinkGateFor`.
+  //
+  // Буфер настоящий: Chromium (единственный браузер этого прогона) выдаёт
+  // clipboard-read/clipboard-write через grantPermissions, и тест читает то,
+  // что действительно легло в буфер, а не перехватывает вызов. Ветка отказа
+  // буфера (показ ссылки тем же `FillLinkReveal` с notice «скопируйте сами»)
+  // из headless-прогона надёжно не воспроизводится: после гранта запись не
+  // падает, а подсовывать сломанный `navigator.clipboard` значило бы
+  // проверять собственную подмену, — она остаётся на ручной проверке.
+  await expect(copyLink).toBeEnabled()
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await copyLink.click()
+  // «Скопировано» — у самой кнопки, а не notice под рядом решений; прежний
+  // отклик (ссылка возврата на правку) снят: отклик на экране один —
+  // последнего действия, и держать ссылку, которой нет в буфере, рядом со
+  // свежим «Скопировано» значило бы предлагать скопировать не то.
+  await expect(head.locator('.review-copied')).toBeVisible()
+  await expect(head.locator('.al-url')).toHaveCount(0)
+  await expect(page.locator('.review-error')).toHaveCount(0)
+  const copiedUrl = await page.evaluate(() => navigator.clipboard.readText())
+  expect(copiedUrl).toMatch(/\/f\/[A-Za-z0-9_-]+/)
+  // Свежая ссылка, не прежняя и не сеяная: сырой токен не хранится, каждый
+  // вызов выписывает следующий (прежние живут свой TTL — не отзываются).
+  expect(copiedUrl).not.toBe(fillUrl)
+  expect(copiedUrl).not.toBe(returnedUrl)
+
+  // ── Заполняющий видит только отмеченное — по ссылке ИЗ БУФЕРА ─────────────
+  // Заполняющий идёт по ссылке, которую ревьюер только что скопировал и
   // «вручил» ему, — весь новый путь доказан от кнопки до экрана правок, а не
   // до строки в базе.
   const filler = await context.newPage()
   watched.watch(filler, 'filler')
-  await filler.goto(revealedUrl)
+  await filler.goto(copiedUrl)
 
   await expect(filler.getByRole('heading', { name: 'Changes requested' })).toBeVisible()
   await expect(filler.locator('.fix-card')).toHaveCount(1)
@@ -548,7 +572,7 @@ test('принять анкету можно только когда снято 
   // нечем, и только потом «Подтвердить»/«Принять» отказывали.
   await expect(page.locator('.review-state b')).toHaveText('Approved')
   await expect(page.locator('.review-state')).toContainText('The decision is final')
-  for (const name of [APPROVE, RETRACT, 'Request changes', 'Resend link']) {
+  for (const name of [APPROVE, RETRACT, 'Request changes']) {
     const button = page.getByRole('button', { name })
     await expect(button, name).toBeDisabled()
   }
@@ -556,6 +580,12 @@ test('принять анкету можно только когда снято 
     'title',
     /decision is final/,
   )
+  // Кнопка копирования гаснет по СВОЕМУ гейту, не по статусному решений:
+  // причина — «форма закрыта оператору», без совета вернуть на правку
+  // (из `approved` возврата не существует — тупик, см. `copyLinkGateFor`).
+  const copyLink = page.getByRole('button', { name: COPY_FILL_LINK })
+  await expect(copyLink).toBeDisabled()
+  await expect(copyLink).toHaveAttribute('title', /approved and closed/)
   // И отмечать больше нечего: на принятой анкете замечание сохранилось бы
   // (`raiseFlag` статус не проверяет — осознанно), но передать его оператору
   // нечем, поэтому кнопки «отметить» нет ни на одной строке блока.
