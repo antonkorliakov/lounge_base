@@ -21,7 +21,7 @@ import { reviewStateFor } from '../gates'
  * отказ сообщить нечем).
  *
  * Замокано три модуля и ни одного больше — тот же приём и тот же стенд, что у
- * `resend-fill-link.test.ts` рядом:
+ * `fill-link.test.ts` рядом:
  *  - `@/db/client` — на PGlite с настоящими миграциями, так что `confirmBlock`,
  *    `unconfirmBlock` и `blockProgress` работают по-настоящему;
  *  - `@/access/session` — `requireSession` иначе полез бы в `next/headers` за
