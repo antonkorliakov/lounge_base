@@ -224,7 +224,14 @@ export function TeamScreen(props: {
           </label>
           {inviteError && <p className="se-error">{pick(inviteError)}</p>}
           <div className="se-actions">
-            <button type="button" disabled={inviteBusy} onClick={() => void invite()}>
+            {/* Выключена до заполнения обоих полей — подсказка (правило — в
+                `inviteTeamMember`), и заодно честный гейт гидрации для
+                fill-then-act в e2e (см. `fillEnabling` в review.spec.ts). */}
+            <button
+              type="button"
+              disabled={inviteBusy || inviteEmail.trim() === '' || inviteName.trim() === ''}
+              onClick={() => void invite()}
+            >
               {pick(INVITE_SUBMIT)}
             </button>
             <button
