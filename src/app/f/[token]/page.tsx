@@ -1,8 +1,9 @@
 import { eq } from 'drizzle-orm'
 import { notFound } from 'next/navigation'
 import { db } from '@/db/client'
-import { submissions } from '@/db/schema'
+import { lounges, submissions } from '@/db/schema'
 import { resolveFillToken } from '@/access/tokens'
+import { lockedIdentityKeys } from '@/registry/manage'
 import { openFlags } from '@/review/flags'
 import { loadSubmissionValues } from '@/submissions/values'
 import { listPhotos } from '@/photos/store'
@@ -30,12 +31,28 @@ export default async function FillPage(props: {
   // FixesOnly / FillForm). `resolveFillToken` deliberately only ever hands
   // back a submission id (see its own doc comment), so both are fetched
   // here rather than threaded through the token layer.
+  // Паспорт лаунжа читается тем же запросом: он нужен для расчёта замков
+  // предзаполненных полей блока I — правило (совпадение ответа с непустой
+  // колонкой) живёт в `lockedIdentityKeys` рядом с самим предзаполнением,
+  // а не переписано здесь; клиент получает готовый список ключей и никакого
+  // собственного списка не держит.
   const submissionRows = await db()
-    .select({ status: submissions.status })
+    .select({
+      status: submissions.status,
+      name: lounges.name,
+      provider: lounges.provider,
+      country: lounges.country,
+      city: lounges.city,
+      airport: lounges.airport,
+      iataCode: lounges.iataCode,
+    })
     .from(submissions)
+    .innerJoin(lounges, eq(submissions.loungeId, lounges.id))
     .where(eq(submissions.id, resolved.submissionId))
     .limit(1)
-  const status = submissionRows[0]?.status ?? 'draft'
+  const submissionRow = submissionRows[0]
+  const status = submissionRow?.status ?? 'draft'
+  const lockedKeys = submissionRow ? lockedIdentityKeys(submissionRow, values.fields) : []
 
   // `openFlags`, а не своя копия того же запроса: копия читала `reason` как
   // сырой `text` из базы и отдавала его дальше строкой, минуя `toFlagReason` —
@@ -54,6 +71,7 @@ export default async function FillPage(props: {
         submissionId={resolved.submissionId}
         status={status}
         flags={flags}
+        lockedKeys={lockedKeys}
         initialFields={values.fields}
         initialServices={values.services}
         initialPhotos={uploaded}

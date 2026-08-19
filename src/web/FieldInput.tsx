@@ -89,6 +89,20 @@ export function FieldInput(props: {
    * value (see `useAutosave.ts` / Critical 2 in the whole-branch review).
    */
   error?: string
+  /**
+   * Поле предзаполнено командой при заведении лаунжа и в основном проходе
+   * показывается только для чтения (список считает сервер —
+   * `lockedIdentityKeys`, `src/registry/manage.ts`). Рендерится настоящий
+   * `<input readOnly>`, а не серый текст: значение остаётся видимым,
+   * выделяемым и доступным скринридеру под тем же label, типографика и
+   * 44px-высота — те же правила `.field input`. `readOnly` (не `disabled`):
+   * disabled выпадает из таб-порядка и произносится как «недоступно», а
+   * здесь поле именно ЧИТАЕТСЯ. Событий изменения у readonly-инпута нет,
+   * так что автосохранение для замкнутого поля не срабатывает по построению
+   * — обработчик просто не навешан. Экран правок (`FixesOnly`) этот проп
+   * не передаёт никогда — отмеченный ответ правится всегда.
+   */
+  locked?: boolean
 }): React.JSX.Element {
   const { field, value, onChange, error } = props
   const { pick, t } = useLocale()
@@ -102,6 +116,24 @@ export function FieldInput(props: {
 
   const hint = field.hint && <p className="field-hint">{pick(field.hint)}</p>
   const errorNode = error && <p className="fix-comment">{error}</p>
+
+  if (props.locked) {
+    return (
+      <div className="field">
+        {label}
+        {hint}
+        <input
+          id={field.key}
+          type="text"
+          className="field-locked"
+          value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''}
+          readOnly
+        />
+        <p className="field-hint field-locked-note">{t('form.prefilled')}</p>
+        {errorNode}
+      </div>
+    )
+  }
 
   switch (field.type) {
     case 'select':

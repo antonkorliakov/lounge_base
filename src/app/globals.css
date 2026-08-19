@@ -166,6 +166,14 @@ body {
    `ServiceAvailabilityInput`), как и в первом проходе. */
 .pass2-card input[type='checkbox'] { width: 22px; height: 22px; flex: 0 0 auto; }
 
+/* Замкнутое (предзаполненное командой) поле блока I: тот же инпут, та же
+   типографика и 44px, но приглушённая подложка говорит «читается, не
+   правится» ещё до попытки тапнуть. Селектор через класс, а не [readonly],
+   сознательно: readonly-инпутов других назначений здесь нет, но правило
+   привязано к смыслу «замок», а не к атрибуту. */
+.field input.field-locked { background: #f2f4f7; }
+.field-locked-note { font-style: italic; }
+
 .field-compound { margin-top: 10px; }
 .field-slot { display: inline-flex; align-items: center; gap: 6px; }
 .field-slot input { width: auto; min-width: 4rem; }
@@ -890,6 +898,13 @@ button:disabled { opacity: .4; }
     border-color: #2a2d34;
   }
   .pass1-row { border-color: #2a2d34; }
+  /* Restated AFTER the generic dark `.field input` rule above — same
+     later-rule-wins reasoning as .shell-seg-done: without this line the dark
+     override repaints the locked field the same #1a1c21 as editable ones,
+     and the "read-only" cue disappears exactly where it matters. Slightly
+     darker than the editable surface, mirroring the light theme's direction
+     (quieter than its neighbours). */
+  .field input.field-locked { background: #15171c; }
   /* Restated after the generic dark `button` rule above, same reasoning as
      .shell-primary: the pressed state keeps the accent as-is on dark, and
      this line is where that decision is visible rather than left to the

@@ -35,6 +35,13 @@ export function FillForm(props: {
   status: SubmissionStatus
   /** Незакрытые отметки рецензента (`resolvedAt IS NULL`), если есть. */
   flags: Flag[]
+  /** Поля блока I, предзаполненные при заведении лаунжа и показываемые в
+   *  ОСНОВНОМ проходе только для чтения. Список считает сервер
+   *  (`lockedIdentityKeys`, см. `src/registry/manage.ts`) — здесь нет своей
+   *  копии правила. Экран правок (`FixesOnly`) этих замков сознательно НЕ
+   *  видит: отмеченное ревьюером поле обязано быть исправимым, иначе цикл
+   *  правок не сходится (замок — умолчание UX, не стена). */
+  lockedKeys: string[]
   initialFields: Record<string, unknown>
   initialServices: Record<string, ServiceValueInput>
   initialPhotos: Record<string, string[]>
@@ -56,6 +63,8 @@ export function FillForm(props: {
    * apart.
    */
   const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set())
+
+  const lockedKeys = useMemo(() => new Set(props.lockedKeys), [props.lockedKeys])
 
   function markTouched(key: string): void {
     setTouched((prev) => (prev.has(key) ? prev : new Set(prev).add(key)))
@@ -314,6 +323,10 @@ export function FillForm(props: {
               value={fields[field.key]}
               onChange={(value) => changeField(field.key, value)}
               error={autosave.rejected[field.key]}
+              // Замок — только здесь, в основном проходе. `FixesOnly` ниже
+              // рендерит свой `FieldInput` без этого пропа, и это его
+              // контракт: отмеченный ответ правится всегда.
+              locked={lockedKeys.has(field.key)}
             />
           ))
         }

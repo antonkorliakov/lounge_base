@@ -120,6 +120,34 @@ describe('createLoungeAction: лаунж + анкета + первая ссыл�
     expect(await resolveFillToken(db, token!)).toEqual({
       submissionId: submissionRows[0]!.id,
     })
+
+    // Паспорт лаунжа предзаполнен В АНКЕТЕ той же транзакцией создания —
+    // через настоящий `saveFieldValue`, так что валидация и полнота видят
+    // эти ответы как обычные. I.10 — НОРМАЛИЗОВАННЫЙ код (` ist ` → `IST`):
+    // в ответ уходит то, что легло в колонку, а не сырой ввод. I.3 при
+    // пустом provider отсутствует вовсе (не пустая строка): пустая колонка —
+    // редактируемое поле, см. `lockedIdentityKeys`.
+    const answers = await db.select().from(fieldValues)
+    const byKey = Object.fromEntries(answers.map((row) => [row.fieldKey, row.value]))
+    expect(byKey).toEqual({
+      'I.2': 'Aurora Lounge',
+      'I.7': 'Turkey',
+      'I.8': 'Istanbul',
+      'I.9': 'Istanbul Airport',
+      'I.10': 'IST',
+    })
+  })
+
+  it('заполненный provider предзаполняет I.3', async () => {
+    const db = holder.db!
+
+    const result = await createLoungeAction({ ...INPUT, provider: '  dnata ' })
+    expect(result.ok).toBe(true)
+
+    const answers = await db.select().from(fieldValues)
+    const byKey = Object.fromEntries(answers.map((row) => [row.fieldKey, row.value]))
+    // Тот же trim, что у колонки: в анкету уходит записанное в реестр.
+    expect(byKey['I.3']).toBe('dnata')
   })
 
   it('без сессии (fill-токен) не создаёт ничего', async () => {
@@ -168,8 +196,11 @@ async function seedGraph(db: Db): Promise<{ loungeId: string; urls: string[] }> 
   const [lounge] = await db.select({ id: lounges.id }).from(lounges)
   const [submission] = await db.select({ id: submissions.id }).from(submissions)
 
+  // `I.4`, не `I.2`: паспорт блока I (включая I.2) уже предзаполнен самим
+  // `createLoungeAction`, и второй insert того же ключа упал бы об
+  // `field_values_unique`. Здесь нужен просто «ответ помимо предзаполненных».
   await db.insert(fieldValues).values({
-    submissionId: submission!.id, fieldKey: 'I.2', value: 'Aurora Lounge',
+    submissionId: submission!.id, fieldKey: 'I.4', value: 'https://aurora.example',
   })
   const urls = [
     'https://blob.example/aurora/entrance-1.jpg',

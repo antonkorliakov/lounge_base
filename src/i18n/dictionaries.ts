@@ -79,6 +79,12 @@ export const UI = {
     ru: 'Не все ответы заполнены',
   },
   'form.required': { en: 'Required', ru: 'Обязательно' },
+  // Микроподпись под замкнутым (предзаполненным при заведении лаунжа) полем
+  // блока I — см. `lockedIdentityKeys` и `FieldInput`'s `locked`.
+  'form.prefilled': {
+    en: 'Provided by your team earlier',
+    ru: 'Заполнено вашей командой ранее',
+  },
   'services.pass1Title': {
     en: 'What does the lounge offer?',
     ru: 'Что есть в лаунже?',

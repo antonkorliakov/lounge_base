@@ -3,6 +3,7 @@ import type { Localized } from '@/form-schema'
 import type { Db } from '@/db/types'
 import { lounges, submissions, photos } from '@/db/schema'
 import { issueFillToken, FILL_TOKEN_TTL_DAYS } from '@/access/tokens'
+import { saveFieldValue } from '@/submissions/values'
 
 export type CreateLoungeInput = {
   name: string
@@ -40,16 +41,98 @@ const fail = (en: string, ru: string): { ok: false; error: Localized } => ({
 const IATA_RE = /^[A-Z]{3}$/
 
 /**
- * Завести лаунж из кабинета: строка `lounges` + пустая анкета + первый
- * fill-токен. ТА ЖЕ композиция, что у `scripts/ops.ts lounge` (временного
- * моста до этого экрана), теми же настоящими функциями — но, в отличие от
- * ops.ts, в ОДНОЙ транзакции: три отдельных insert'а, упавшие посередине,
+ * Паспорт лаунжа ↔ анкетные поля блока I: то, что администратор уже набрал в
+ * «Add lounge», оператор не должен набирать второй раз. ОДНА запись
+ * соответствия на оба его употребления — предзаполнение при создании
+ * (`createLounge` ниже) и серверный расчёт «что показать под замком» на
+ * форме заполнения (`lockedIdentityKeys`); рукописная копия списка на
+ * клиенте — ровно тот класс расползания, который эта ветка ловит не первый
+ * раз (`EDITABLE_STATUSES`, `FLAG_REASONS`, …).
+ *
+ * `lockable: false` у названия — решение пользователя: название лаунжа
+ * остаётся редактируемым оператором ВСЕГДА. Отсюда осознанная асимметрия:
+ * принятие анкеты копирует в реестр только классифицирующие поля (III.6.*,
+ * см. `approveSubmission`), так что правка I.2 оператором НЕ меняет
+ * `lounges.name` — строка реестра держит имя администратора, а экран
+ * проверки показывает оба (заголовок — имя реестра, строка I.2 — ответ
+ * оператора), и расхождение видно ревьюеру. Это существующее и принятое
+ * поведение, не побочный эффект предзаполнения.
+ */
+export const IDENTITY_PREFILL = [
+  { column: 'name', fieldKey: 'I.2', lockable: false },
+  { column: 'provider', fieldKey: 'I.3', lockable: true },
+  { column: 'country', fieldKey: 'I.7', lockable: true },
+  { column: 'city', fieldKey: 'I.8', lockable: true },
+  { column: 'airport', fieldKey: 'I.9', lockable: true },
+  { column: 'iataCode', fieldKey: 'I.10', lockable: true },
+] as const satisfies readonly {
+  column: keyof IdentityColumns
+  fieldKey: string
+  lockable: boolean
+}[]
+
+/** Колонки паспорта лаунжа, которые участвуют в предзаполнении, — ровно те,
+ *  что принимает `createLounge` (плюс их nullability по `db/schema.ts`). */
+export type IdentityColumns = {
+  name: string
+  provider: string | null
+  country: string
+  city: string
+  airport: string
+  iataCode: string
+}
+
+/**
+ * Какие поля блока I показывать оператору под замком (только чтение) в
+ * ОСНОВНОМ проходе формы. Правило по каждому полю: колонка паспорта непуста
+ * И сохранённый ответ анкеты дословно (после trim) совпадает с ней. Обе
+ * половины обязательны, и это не перестраховка:
+ *
+ *  - «Колонка непуста» одна НЕ годится: лаунжи, заведённые до этой фичи
+ *    (или ops-скриптом с пустой страной), имеют непустые колонки и НИ ОДНОГО
+ *    предзаполненного ответа — замок на пустом обязательном поле сделал бы
+ *    анкету незаполнимой и неотправляемой (тот самый класс «нужный человек
+ *    не может дотянуться», за который проект уже платил Critical'ом).
+ *  - «Ответ есть» одно не годится тоже: после того как ревьюер отметил
+ *    поле, а оператор на экране правок исправил его (экран правок замки не
+ *    рисует — это его контракт, см. `FixesOnly`), ответ расходится с
+ *    колонкой, и подпись «заполнено вашей командой» стала бы ложью. Совпало
+ *    — замок стоит; разошлось — замок растворяется НАВСЕГДА, и основной
+ *    проход тоже отдаёт поле в правку. Схождение цикла правок гарантировано
+ *    конструкцией, а не запретом.
+ *
+ * Считается НА СЕРВЕРЕ (страница заполнения знает и лаунж, и ответы) и
+ * передаётся клиенту готовым списком ключей.
+ */
+export function lockedIdentityKeys(
+  lounge: IdentityColumns,
+  fields: Record<string, unknown>,
+): string[] {
+  const locked: string[] = []
+  for (const entry of IDENTITY_PREFILL) {
+    if (!entry.lockable) continue
+    const column = lounge[entry.column]
+    if (column === null || column.trim() === '') continue
+    const answer = fields[entry.fieldKey]
+    if (typeof answer !== 'string') continue
+    if (answer.trim() !== column.trim()) continue
+    locked.push(entry.fieldKey)
+  }
+  return locked
+}
+
+/**
+ * Завести лаунж из кабинета: строка `lounges` + анкета с предзаполненным
+ * паспортом (см. `IDENTITY_PREFILL`) + первый fill-токен. Единственная
+ * санкционированная композиция создания: `scripts/ops.ts lounge` теперь
+ * ходит СЮДА, а не повторяет вставки сырыми insert'ами — одна композиция,
+ * одни правила (обязательность страны/города/аэропорта, нормализация IATA,
+ * предзаполнение). Всё в ОДНОЙ транзакции: insert'ы, упавшие посередине,
  * оставили бы лаунж без анкеты — строку реестра, которую нельзя ни открыть,
- * ни заполнить. И в отличие от ops.ts здесь обязательны страна/город/
- * аэропорт: колонки notNull, а пустые строки ops.ts — удобство консольного
- * моста, которое в продукте всплывает пустыми опциями в фильтрах реестра
- * (`filterOptions` отдаёт значения как есть, `''` рисуется пустым пунктом
- * селекта — выбором, который ничего не значит).
+ * ни заполнить. Страна/город/аэропорт обязательны: колонки notNull, а
+ * пустые строки прежнего ops.ts всплывали пустыми опциями в фильтрах
+ * реестра (`filterOptions` отдаёт значения как есть, `''` рисуется пустым
+ * пунктом селекта — выбором, который ничего не значит).
  *
  * Записи в `events` нет — как нет её и у ops.ts: рождение лаунжа видно самой
  * строкой (`createdAt`), историю здесь заводит первая смена статуса.
@@ -95,6 +178,38 @@ export async function createLounge(
       submissionId: submission!.id,
       ttlDays: FILL_TOKEN_TTL_DAYS,
     })
+
+    // Предзаполнение блока I тем, что администратор уже набрал, — через
+    // НАСТОЯЩИЙ `saveFieldValue`, не сырыми insert'ами: валидация и полнота
+    // обязаны видеть эти ответы тем же путём, что и набранные оператором.
+    // Вызов с `tx` — тот же приём, что у `issueFillToken` строкой выше
+    // (тип `Tx` структурно удовлетворяет `Db`); внутренний
+    // `db.transaction` `saveFieldValue` на транзакции даёт SAVEPOINT, а не
+    // вторую транзакцию, так что всё создание остаётся АТОМАРНЫМ: строка
+    // лаунжа существует ⟺ предзаполненные ответы существуют. На этой
+    // эквивалентности стоит `lockedIdentityKeys` — замок без ответа был бы
+    // пустым нередактируемым обязательным полем. Блокировка `submissions`
+    // внутри `assertEditable` берётся на строку, вставленную этой же
+    // транзакцией, — ждать на ней некому.
+    //
+    // Отказ `saveFieldValue` здесь недостижим через валидные входы
+    // (все значения — непустые строки текстовых полей, уже прошедшие
+    // проверки выше), поэтому он не превращается в `fail(...)`, а роняет
+    // транзакцию: вернуть `ok: false` из колбэка — значит ЗАКОММИТИТЬ
+    // наполовину созданный лаунж.
+    const identity: IdentityColumns = { name, provider, country, city, airport, iataCode }
+    for (const entry of IDENTITY_PREFILL) {
+      const value = identity[entry.column]
+      if (value === null || value === '') continue
+      const saved = await saveFieldValue(tx, {
+        submissionId: submission!.id,
+        fieldKey: entry.fieldKey,
+        value,
+      })
+      if (!saved.ok) {
+        throw new Error(`createLounge: prefill ${entry.fieldKey} refused — ${saved.error.en}`)
+      }
+    }
 
     return {
       ok: true,
