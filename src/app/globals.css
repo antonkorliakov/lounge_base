@@ -711,6 +711,81 @@ button:disabled { opacity: .4; }
 .dl-danger { background: #dc2626; color: #fff; border: 0; }
 .dl-danger:disabled { opacity: .5; cursor: default; }
 
+/* ── Скелетоны loading.tsx (реестр, экран проверки, страница пароля) ──
+   Серые пульсирующие плашки в геометрии настоящих экранов; размеры и
+   отступы повторяют .registry / .review-screen / .login, но классы свои
+   (`skl-*`) и разметка без <table> и ролей — e2e не должен уметь совпасть
+   со скелетом (довод в src/app/admin/loading.tsx). Пульс — прозрачностью,
+   а не градиентом-шиммером: одна дешёвая анимация, и её легко выключить
+   целиком для prefers-reduced-motion (ниже) — доступность, а не украшение. */
+.skl {
+  display: block; border-radius: 6px; background: #e7e9ee;
+  animation: skl-pulse 1.4s ease-in-out infinite;
+}
+@keyframes skl-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skl { animation: none; }
+}
+
+/* Реестр: те же 20px/24px, что .registry, тот же ряд шапки (.registry-top),
+   кнопка и чипы фильтров, затем полоса заголовка и 8 строк по 9 колонок —
+   пропорции колонок на глаз повторяют настоящую таблицу (широкое имя
+   лаунжа, узкий хвост удаления). */
+.skl-registry { padding: 20px 24px; }
+.skl-reg-top { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.skl-reg-title { width: 110px; height: 22px; }
+.skl-reg-count { width: 64px; height: 13px; }
+.skl-reg-links { margin-left: auto; display: flex; gap: 10px; }
+.skl-reg-link { width: 48px; height: 13px; }
+.skl-reg-link:last-child { width: 140px; }
+.skl-reg-btn { width: 108px; height: 31px; margin-bottom: 14px; }
+.skl-reg-chips { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.skl-chip { width: 118px; height: 34px; }
+.skl-chip:nth-child(2) { width: 92px; }
+.skl-chip:nth-child(4) { width: 140px; }
+.skl-chip:nth-child(6) { width: 170px; }
+.skl-reg-row {
+  display: grid; gap: 10px; align-items: center;
+  grid-template-columns: 2.4fr 1fr .9fr 1fr 1.5fr 1.2fr .9fr 1.3fr .4fr;
+  padding: 12px 10px; border-bottom: 1px solid #f2f3f5;
+}
+.skl-reg-row .skl { height: 12px; width: 72%; }
+.skl-reg-row .skl:first-child { width: 88%; }
+.skl-reg-head { border-bottom: 2px solid #e4e6ea; }
+.skl-reg-head .skl { height: 10px; width: 60%; }
+
+/* Экран проверки: сетка 200px/1fr (.review-screen), рейка из точки и
+   подписи (.nav-item/.nav-dot), шапка с рядом кнопок (.review-head), строки
+   ключ+значение (.frow: 220px ключа, значение в остаток). */
+.skl-review { display: grid; grid-template-columns: 200px 1fr; min-height: 100dvh; }
+.skl-rev-rail { border-right: 1px solid #e4e6ea; padding: 8px 0; }
+.skl-rev-item { display: flex; gap: 8px; align-items: center; padding: 7px 12px; }
+.skl-rev-dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; }
+.skl-rev-line { height: 11px; flex: 1; }
+.skl-rev-item:nth-child(2n) .skl-rev-line { flex: none; width: 62%; }
+.skl-rev-item:nth-child(3n) .skl-rev-line { flex: none; width: 78%; }
+.skl-rev-pane { padding: 16px 20px 0; }
+.skl-rev-head { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #e4e6ea; }
+.skl-rev-back { width: 84px; height: 12px; margin-bottom: 10px; }
+.skl-rev-title { width: 300px; max-width: 70%; height: 20px; margin-bottom: 9px; }
+.skl-rev-pill { width: 210px; height: 16px; border-radius: 999px; margin-bottom: 12px; }
+.skl-rev-actions { display: flex; gap: 8px; }
+.skl-rev-btn { width: 150px; height: 38px; }
+.skl-rev-frow { display: flex; gap: 12px; align-items: center; padding: 13px 0; border-bottom: 1px solid #f0f1f3; }
+.skl-rev-key { flex: 0 0 220px; height: 12px; width: 220px; }
+.skl-rev-value { height: 12px; flex: 0 1 46%; }
+.skl-rev-frow:nth-child(2n) .skl-rev-key { flex-basis: 170px; }
+.skl-rev-frow:nth-child(2n) .skl-rev-value { flex-basis: 30%; }
+
+/* Страница пароля: узкая колонка .login/.pw — плашка заголовка и две
+   плашки высотой контролов. */
+.skl-pw { max-width: 340px; margin: 12vh auto; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; }
+.skl-pw-title { width: 170px; height: 18px; }
+.skl-pw-field { height: 41px; }
+
 @media (prefers-color-scheme: dark) {
   body { background: #111317; color: #f0f1f3; }
   .shell-top,
@@ -859,4 +934,14 @@ button:disabled { opacity: .4; }
      .login-alt (фон none) уже накрыты общим правилом для button выше. */
   .login-error, .pw-error { color: #fca5a5; }
   .pw-notice { color: #86efac; }
+  /* Скелетоны: плашкам — тёмная поверхность контролов (#1a1c21 на тёмном
+     фоне почти сливается, #22252c — тот же тон, что ховер строк
+     .shell-step), рамкам-разделителям — общий тёмный #2a2d34. Пульс
+     прозрачностью работает на любом фоне, ему пары не нужно. */
+  .skl { background: #22252c; }
+  .skl-reg-row,
+  .skl-reg-head,
+  .skl-rev-rail,
+  .skl-rev-head,
+  .skl-rev-frow { border-color: #2a2d34; }
 }
