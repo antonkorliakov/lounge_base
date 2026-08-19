@@ -2,8 +2,10 @@
  * Заводит лаунж и анкету для локальной проверки и печатает ссылку для
  * заполнения (`http://localhost:3000/f/<token>`).
  *
- * Без флагов сид создаёт пустой черновик — ровно то, что нужно, чтобы
- * проверить отказ при отправке неполной анкеты.
+ * Без флагов сид создаёт черновик, в котором заполнен только предзаполненный
+ * `createLounge` паспорт блока I (см. `IDENTITY_PREFILL`), — ровно то, что
+ * нужно, чтобы проверить отказ при отправке неполной анкеты, и ровно то, как
+ * выглядит только что заведённый из реестра лаунж.
  *
  * С флагом `--complete` анкета дозаполняется полностью: все обязательные
  * плоские поля (`FIELDS`), ответ по каждой позиции услуг (`SERVICE_ITEMS`,
@@ -71,10 +73,15 @@ import {
   SEED_REVIEWER_EMAIL,
 } from './dev-support'
 import { createDb } from '../src/db/client'
-import { lounges, submissions, photos } from '../src/db/schema'
+import { lounges, photos } from '../src/db/schema'
 import { addTeamMember } from '../src/access/team'
 import { issueFillToken } from '../src/access/tokens'
-import { saveFieldValue, saveServiceValue } from '../src/submissions/values'
+import { createLounge } from '../src/registry/manage'
+import {
+  loadSubmissionValues,
+  saveFieldValue,
+  saveServiceValue,
+} from '../src/submissions/values'
 import { submitSubmission } from '../src/submissions/transitions'
 import { raiseFlag, type FlagReason } from '../src/review/flags'
 import { requestChanges } from '../src/review/decide'
@@ -246,7 +253,19 @@ function seedPhotoUrl(name: string, label: string): string {
 }
 
 async function fillComplete(db: Db, submissionId: string): Promise<void> {
+  // Уже отвеченные поля НЕ перезаписываются. Практически это ровно паспорт
+  // блока I, предзаполненный `createLounge` (I.2/I.3/I.7–I.10): затри его
+  // `Test value I.10` — и ответ разойдётся с колонкой лаунжа, замок
+  // растворится (`lockedIdentityKeys` требует совпадения), и e2e перестал бы
+  // видеть замкнутые поля на засеянной анкете вовсе. Пропуск по факту
+  // «ответ уже есть», а не по списку ключей: список пришлось бы помнить
+  // синхронным с `IDENTITY_PREFILL` — класс дефекта, который эта ветка ловит
+  // не первый раз. Оператор предзаполненное тоже не перенабирает — сид
+  // повторяет реальность, а не удобство.
+  const existing = await loadSubmissionValues(db, submissionId)
   for (const field of FIELDS) {
+    const current = existing.fields[field.key]
+    if (typeof current === 'string' && current.trim() !== '') continue
     const value = valueForField(field)
     const result = await saveFieldValue(db, { submissionId, fieldKey: field.key, value })
     if (!result.ok) {
@@ -566,38 +585,44 @@ async function main(): Promise<void> {
     await seedFleet(db, loungeName)
   }
 
-  const [lounge] = await db
-    .insert(lounges)
-    .values({
-      name: loungeName,
-      provider: 'Çelebi',
-      country: 'Turkey',
-      city: 'Istanbul',
-      airport: 'Istanbul Airport',
-      iataCode: 'IST',
-    })
-    .returning()
-
-  const [submission] = await db
-    .insert(submissions)
-    .values({ loungeId: lounge!.id })
-    .returning()
+  // Основной лаунж — через настоящий `createLounge`, ту же композицию, что у
+  // кнопки «Add lounge» (и теперь у `ops.ts lounge`): лаунж + анкета +
+  // токен + предзаполненный паспорт блока I в одной транзакции. Засеянная
+  // анкета из-за этого выглядит как боевая: I.2/I.3/I.7–I.10 уже отвечены, и
+  // e2e видит замки предзаполненных полей на форме заполнения. Прямой insert
+  // остаётся только у `seedFleet` выше: те два лаунжа сознательно БЕЗ анкет
+  // (данные реестра), а `createLounge` анкету заводит всегда.
+  const created = await createLounge(db, {
+    name: loungeName,
+    provider: 'Çelebi',
+    country: 'Turkey',
+    city: 'Istanbul',
+    airport: 'Istanbul Airport',
+    iataCode: 'IST',
+  })
+  if (!created.ok) {
+    throw new Error(`seed-dev: лаунж отклонён — ${created.error.ru}`)
+  }
+  const submissionId = created.submissionId
 
   if (complete) {
-    await fillComplete(db, submission!.id)
+    await fillComplete(db, submissionId)
   }
   if (changesRequested) {
-    await offerFlaggedServiceItem(db, submission!.id)
+    await offerFlaggedServiceItem(db, submissionId)
   }
   if (submitted) {
-    await submit(db, submission!.id)
+    await submit(db, submissionId)
   }
   if (changesRequested) {
-    await flagAndReturn(db, submission!.id)
+    await flagAndReturn(db, submissionId)
   }
 
+  // Свой токен на 90 дней (удобство разработки, см. FILL_TOKEN_TTL_DAYS) —
+  // ПОВЕРХ выданного `createLounge` 30-дневного: токены не отзываются, лишний
+  // короткий безвреден, а печатается длинный.
   const { token } = await issueFillToken(db, {
-    submissionId: submission!.id,
+    submissionId,
     ttlDays: 90,
   })
 

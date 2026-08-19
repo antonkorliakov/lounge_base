@@ -4,7 +4,7 @@
  *
  *   npm run ops -- login   <email>
  *   npm run ops -- invite  <email> [Имя]
- *   npm run ops -- lounge  "<Название>" <IATA> [Страна] [Город] [Аэропорт]
+ *   npm run ops -- lounge  "<Название>" <IATA> <Страна> <Город> <Аэропорт>
  *   npm run ops -- set-password <email>     (пароль — первой строкой stdin)
  *
  * Читает окружение из `.env.production.local` (боевая база), с откатом на
@@ -19,17 +19,21 @@
  * Экраны уже частично есть: `lounge` заменён кнопкой «Add lounge» в реестре, а
  * `invite` и `set-password` — экраном команды `/admin/team`. Обе команды
  * остаются как мост и аварийный путь (упавший вход, единственный участник
- * заперт) — они ходят через те же `addTeamMember`/`setMemberPasswordByEmail`,
- * что и экран, так что правила (нормализация почты, минимальная длина) не
- * могут разойтись. `login` всё ещё единственный способ выдать ссылку входа,
- * пока нет SMTP.
+ * заперт) — они ходят через те же функции, что и экраны: `addTeamMember`/
+ * `setMemberPasswordByEmail` у команды и `createLounge` у лаунжа, так что
+ * правила (нормализация почты и IATA, минимальная длина, обязательность
+ * страны/города/аэропорта, предзаполнение блока I анкеты) не могут
+ * разойтись. Из-за этого страна/город/аэропорт стали ОБЯЗАТЕЛЬНЫМИ и здесь:
+ * пустые строки прежних сырых insert'ов всплывали пустыми опциями в фильтрах
+ * реестра, а анкете не давали предзаполнения. `login` всё ещё единственный
+ * способ выдать ссылку входа, пока нет SMTP.
  */
 import { resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { createDb } from '../src/db/client'
-import { lounges, submissions } from '../src/db/schema'
 import { addTeamMember, requestLogin, setMemberPasswordByEmail } from '../src/access/team'
-import { issueFillToken, FILL_TOKEN_TTL_DAYS } from '../src/access/tokens'
+import { FILL_TOKEN_TTL_DAYS } from '../src/access/tokens'
+import { createLounge } from '../src/registry/manage'
 import { closeDbConnection, loadEnvFile } from './dev-support'
 
 function fail(message: string): never {
@@ -93,31 +97,21 @@ async function main(): Promise<void> {
     await addTeamMember(db, { email, name })
     process.stdout.write(`Добавлен в команду: ${email}\n`)
   } else if (command === 'lounge') {
-    const name = rest[0]
-    const iata = rest[1]
-    if (!name || !iata) {
-      fail('usage: npm run ops -- lounge "<Название>" <IATA> [Страна] [Город] [Аэропорт]')
+    const [name, iata, country, city, airport] = rest
+    if (!name || !iata || !country || !city || !airport) {
+      fail('usage: npm run ops -- lounge "<Название>" <IATA> <Страна> <Город> <Аэропорт>')
     }
-    const [lounge] = await db
-      .insert(lounges)
-      .values({
-        name,
-        iataCode: iata,
-        country: rest[2] ?? '',
-        city: rest[3] ?? '',
-        airport: rest[4] ?? '',
-      })
-      .returning()
-    const [submission] = await db
-      .insert(submissions)
-      .values({ loungeId: lounge!.id })
-      .returning()
-    const { token } = await issueFillToken(db, {
-      submissionId: submission!.id,
-      ttlDays: FILL_TOKEN_TTL_DAYS,
+    // Тот же `createLounge`, что у кнопки «Add lounge»: одна транзакция
+    // (лаунж + анкета + токен + предзаполнение блока I), одни правила.
+    // Provider из консоли не передаётся — как и раньше; при необходимости
+    // он появится в анкете от оператора (I.3 у лаунжа без провайдера
+    // остаётся редактируемым, см. `lockedIdentityKeys`).
+    const result = await createLounge(db, {
+      name, iataCode: iata, provider: null, country, city, airport,
     })
+    if (!result.ok) fail(result.error.ru)
     process.stdout.write(`Лаунж «${name}» заведён. Ссылка заполнения (живёт ${FILL_TOKEN_TTL_DAYS} дней):\n`)
-    process.stdout.write(`${base}/f/${token}\n`)
+    process.stdout.write(`${base}/f/${result.token}\n`)
   } else if (command === 'set-password') {
     const email = rest[0]
     if (!email) fail('usage: npm run ops -- set-password <email>  (пароль — первой строкой stdin)')
