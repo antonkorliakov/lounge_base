@@ -6,16 +6,28 @@
  * удалённом Postgres клик по строке реестра давал видимые секунды без
  * какого-либо отклика.
  *
- * Геометрия — .review-screen: рейка навигации слева (точка + подпись, как
- * .nav-item), справа шапка (назад, заголовок, пилюля состояния, ряд кнопок)
- * и строки полей (ключ + значение, как .frow). Классы только `skl-*` — e2e
- * ждёт `.review-head`, `.nav-item`, `.review-screen`, и скелет не должен
- * уметь совпасть ни с одним селектором тестов (довод в `../../loading.tsx`).
+ * Геометрия — рама .review-screen: шапка ПЕРВЫМ рядом на всю ширину окна
+ * (назад, заголовок, пилюля состояния, ряд кнопок), под ней рейка навигации
+ * (точка + подпись, как .nav-item) и строки полей (ключ + значение, как
+ * .frow). Скелет обязан повторять раму настоящего экрана: рисуй он прежнюю
+ * рейку во всю высоту — подмена скелета страницей была бы скачком макета,
+ * что хуже, чем не показать скелет вовсе. Классы только `skl-*` — e2e ждёт
+ * `.review-head`, `.nav-item`, `.review-screen`, и скелет не должен уметь
+ * совпасть ни с одним селектором тестов (довод в `../../loading.tsx`).
  */
 export default function Loading(): React.JSX.Element {
   return (
     <div className="skl-review" role="status">
       <span className="vh">Loading…</span>
+      <div className="skl-rev-head" aria-hidden="true">
+        <span className="skl skl-rev-back" />
+        <span className="skl skl-rev-title" />
+        <span className="skl skl-rev-pill" />
+        <span className="skl-rev-actions">
+          <span className="skl skl-rev-btn" />
+          <span className="skl skl-rev-btn" />
+        </span>
+      </div>
       <div className="skl-rev-rail" aria-hidden="true">
         {Array.from({ length: 10 }, (_, i) => (
           <span key={i} className="skl-rev-item">
@@ -25,15 +37,6 @@ export default function Loading(): React.JSX.Element {
         ))}
       </div>
       <section className="skl-rev-pane" aria-hidden="true">
-        <div className="skl-rev-head">
-          <span className="skl skl-rev-back" />
-          <span className="skl skl-rev-title" />
-          <span className="skl skl-rev-pill" />
-          <span className="skl-rev-actions">
-            <span className="skl skl-rev-btn" />
-            <span className="skl skl-rev-btn" />
-          </span>
-        </div>
         {Array.from({ length: 6 }, (_, i) => (
           <div key={i} className="skl-rev-frow">
             <span className="skl skl-rev-key" />

@@ -443,7 +443,24 @@ button:disabled { opacity: .4; }
   }
 }
 
-.review-screen { display: grid; grid-template-columns: 200px 1fr; min-height: 100dvh; }
+/* Рама, а не страница: шапка — первый ряд на обе колонки (.review-head ниже),
+   под ней рейка и панель, и прокручиваются ОНИ (overflow-y у каждой), а не
+   окно. height, не min-height: сетка обязана кончаться у нижнего края окна,
+   иначе внутренним скроллпортам нечего прокручивать. Так шапка — статус и
+   решения по анкете — видна из любой строки 58-строчного блока БЕЗ
+   position: sticky и его обязанностей (непрозрачный фон, z-index поверх
+   просвечивающих строк — см. .review-foot, который всё это несёт).
+   minmax(0, 1fr), а не 1fr: авто-минимум грид-ряда равен содержимому, и без
+   нуля длинный блок раздувал бы ряд за край окна вместо прокрутки внутри. */
+.review-screen {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+}
+/* Рейка — во втором ряду: её правая граница начинается ПОД шапкой, а
+   overflow-y теперь честный — высота ряда есть остаток окна, и все 27 блоков
+   достижимы из любой глубины открытого блока, не дожидаясь конца прокрутки. */
 .block-nav { border-right: 1px solid #e4e6ea; padding: 8px 0; overflow-y: auto; }
 .nav-item {
   display: flex; gap: 8px; align-items: center; width: 100%;
@@ -457,12 +474,15 @@ button:disabled { opacity: .4; }
 .nav-dot-untouched { border: 1.5px solid #cbd0d6; }
 
 /* Колонка, а не блок, ради одного свойства: margin-top: auto у .review-foot
-   прижимает подвал к низу панели и на коротком блоке (панель не ниже окна —
-   .review-screen держит min-height: 100dvh), тем же приёмом, что .shell +
-   .shell-foot на форме заполнения. Нижний отступ панели несёт сам подвал
-   (padding-bottom ниже): будь он на панели, прилепленный подвал стоял бы на
-   16px выше низа окна, и в эту щель просвечивали бы прокручиваемые строки. */
-.review-pane { display: flex; flex-direction: column; padding: 16px 20px 0; }
+   прижимает подвал к низу панели и на коротком блоке (панель заполняет свой
+   ряд — 1fr рамы высотой в окно), тем же приёмом, что .shell + .shell-foot
+   на форме заполнения. Панель — собственный скроллпорт (overflow-y):
+   прокручивается она, а не окно, и sticky-подвал липнет к её нижнему краю,
+   который и есть нижний край окна, — механика подвала пережила раму без
+   единой правки. Нижний отступ панели несёт сам подвал (padding-bottom
+   ниже): будь он на панели, прилепленный подвал стоял бы на 16px выше низа
+   окна, и в эту щель просвечивали бы прокручиваемые строки. */
+.review-pane { display: flex; flex-direction: column; overflow-y: auto; padding: 16px 20px 0; }
 /* Подпись анкеты: какой это лаунж и в каком состоянии анкета. Стоит над
    заголовком блока, потому что отвечает на вопросы, которые возникают ДО
    любого решения по блоку, — а экран не отвечал на них вовсе.
@@ -473,8 +493,13 @@ button:disabled { opacity: .4; }
    один из уже принятых на этом экране (тот же зелёный подтверждения, тот же
    красный/янтарный замечаний), а не своя палитра. Текст рядом с пилюлей несёт
    то же объяснение, что и `title` выключенных кнопок (`state.note`), потому
-   что `title` не существует ни на touch-устройстве, ни для скринридера. */
-.review-head { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #e4e6ea; }
+   что `title` не существует ни на touch-устройстве, ни для скринридера.
+
+   На всю ширину окна (grid-column: 1 / -1): нижняя граница шапки идёт от
+   края до края, рейка начинается под ней. Отступы 16px/20px — те же, что
+   были у панели, только теперь свои: из панели шапка выехала (раньше её
+   поджимала рейка, хотя к открытому блоку она не относится ничем). */
+.review-head { grid-column: 1 / -1; padding: 16px 20px 12px; border-bottom: 1px solid #e4e6ea; }
 .review-back { display: inline-block; margin-bottom: 8px; font-size: 13px; color: #2563eb; text-decoration: none; }
 .review-back:hover { text-decoration: underline; }
 .review-head h1 { margin: 0 0 7px; font-size: 19px; }
@@ -757,18 +782,27 @@ button:disabled { opacity: .4; }
 .skl-reg-head { border-bottom: 2px solid #e4e6ea; }
 .skl-reg-head .skl { height: 10px; width: 60%; }
 
-/* Экран проверки: сетка 200px/1fr (.review-screen), рейка из точки и
-   подписи (.nav-item/.nav-dot), шапка с рядом кнопок (.review-head), строки
-   ключ+значение (.frow: 220px ключа, значение в остаток). */
-.skl-review { display: grid; grid-template-columns: 200px 1fr; min-height: 100dvh; }
-.skl-rev-rail { border-right: 1px solid #e4e6ea; padding: 8px 0; }
+/* Экран проверки: рама .review-screen — шапка первым рядом на всю ширину
+   (назад, заголовок, пилюля, ряд кнопок), под ней рейка из точки и подписи
+   (.nav-item/.nav-dot) и строки ключ+значение (.frow: 220px ключа, значение
+   в остаток). overflow: hidden вместо прокруток настоящих панелей: скелету
+   прокручивать нечего, а мелькнувшая полоса прокрутки — это дёрганье в
+   момент подмены настоящим экраном. */
+.skl-review {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+  overflow: hidden;
+}
+.skl-rev-rail { border-right: 1px solid #e4e6ea; padding: 8px 0; overflow: hidden; }
 .skl-rev-item { display: flex; gap: 8px; align-items: center; padding: 7px 12px; }
 .skl-rev-dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; }
 .skl-rev-line { height: 11px; flex: 1; }
 .skl-rev-item:nth-child(2n) .skl-rev-line { flex: none; width: 62%; }
 .skl-rev-item:nth-child(3n) .skl-rev-line { flex: none; width: 78%; }
-.skl-rev-pane { padding: 16px 20px 0; }
-.skl-rev-head { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #e4e6ea; }
+.skl-rev-pane { padding: 16px 20px 0; overflow: hidden; }
+.skl-rev-head { grid-column: 1 / -1; padding: 16px 20px 12px; border-bottom: 1px solid #e4e6ea; }
 .skl-rev-back { width: 84px; height: 12px; margin-bottom: 10px; }
 .skl-rev-title { width: 300px; max-width: 70%; height: 20px; margin-bottom: 9px; }
 .skl-rev-pill { width: 210px; height: 16px; border-radius: 999px; margin-bottom: 12px; }
