@@ -320,6 +320,39 @@ test('лаунж заводится из реестра, ссылка запол
     page.getByRole('heading', { name: 'Lounge Profile & Commercial Details' }),
   ).toBeVisible()
 
+  // ── Паспорт предзаполнен и (кроме названия) под замком ────────────────────
+  // То, что администратор набрал в форме, оператор видит уже отвеченным:
+  // страна/город/аэропорт/IATA — readonly с микроподписью «заполнено вашей
+  // командой» (список замков считает СЕРВЕР по колонкам лаунжа —
+  // `lockedIdentityKeys`), название — обычное редактируемое поле (решение
+  // пользователя), а provider, оставленный при создании пустым, — пустое
+  // редактируемое поле: пустая колонка ничего не замыкает.
+  const fullName = page.getByLabel(/Lounge Full Name/)
+  await expect(fullName).toHaveValue(name)
+  await expect(fullName).toBeEditable()
+
+  const iataField = page.getByLabel(/IATA Code/)
+  await expect(iataField).toHaveValue('IST') // нормализованный, не сырой `ist`
+  await expect(iataField).not.toBeEditable()
+  await expect(page.getByLabel(/Country/)).toHaveValue('Turkey')
+  await expect(page.getByLabel(/Country/)).not.toBeEditable()
+  await expect(page.getByLabel(/City/)).toHaveValue('Istanbul')
+  await expect(page.getByLabel(/Airport\*/)).toHaveValue('Istanbul Airport')
+  await expect(page.locator('.field-locked-note')).toHaveCount(4)
+
+  const provider = page.getByLabel(/Provider/)
+  await expect(provider).toHaveValue('')
+  await expect(provider).toBeEditable()
+
+  // Название действительно правится: автосохранение проходит и переживает
+  // перезагрузку, замки после неё стоят, где стояли.
+  await fullName.fill(`${name} Renamed`)
+  await expect(page.getByText('Saved')).toBeVisible()
+  await page.reload()
+  await expect(page.getByLabel(/Lounge Full Name/)).toHaveValue(`${name} Renamed`)
+  await expect(page.getByLabel(/IATA Code/)).not.toBeEditable()
+  await expect(page.locator('.field-locked-note')).toHaveCount(4)
+
   // ── Удаление: кнопка неброская, ворота — набранное название ──────────────
   await page.goto('/admin')
   await searchFor(page, name)

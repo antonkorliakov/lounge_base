@@ -67,7 +67,12 @@ test('поле сохраняется автоматически, статус �
   await expect(page.getByText('1 / 19')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Lounge Profile & Commercial Details' })).toBeVisible()
 
-  await page.getByLabel(/Lounge Full Name/).fill('Primeclass Lounge')
+  // НЕ 'Primeclass Lounge': это дефолтное имя сида, и с тех пор как
+  // `createLounge` предзаполняет I.2 названием лаунжа, поле уже держит ровно
+  // эту строку — fill() тем же значением не даёт перехода value, React не
+  // зовёт onChange, автосохранению нечего сохранять, и «Saved» не появился бы
+  // по причине, никак не связанной с проверяемым.
+  await page.getByLabel(/Lounge Full Name/).fill('Primeclass Lounge Renamed')
   await expect(page.getByText('Saved')).toBeVisible()
 
   // Переключатель языка меняет подписи и переключается обратно.
