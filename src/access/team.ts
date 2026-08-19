@@ -90,6 +90,158 @@ export async function addTeamMember(
   return { id: member!.id }
 }
 
+/**
+ * Список команды для экрана `/admin/team`. Проекция вычисляет `hasPassword`
+ * булевом В SQL (`password_hash IS NOT NULL`) вместо того, чтобы выбрать хэш
+ * и посмотреть на него в JS: хэш не должен покидать базу даже в серверную
+ * память ради вопроса «есть ли он» — тот же принцип, что у страницы
+ * `/admin/password`, которая отдаёт клиенту только факт, и ни одна строка
+ * этого результата не может утечь в пропсы или лог вместе с хэшем, потому
+ * что хэша в ней просто нет.
+ */
+export async function listTeamMembers(db: Db): Promise<
+  { id: string; email: string; name: string; createdAt: Date; hasPassword: boolean }[]
+> {
+  return db
+    .select({
+      id: teamMembers.id,
+      email: teamMembers.email,
+      name: teamMembers.name,
+      createdAt: teamMembers.createdAt,
+      hasPassword: sql<boolean>`${teamMembers.passwordHash} is not null`,
+    })
+    .from(teamMembers)
+    .orderBy(teamMembers.createdAt)
+}
+
+const UNIQUE_VIOLATION = '23505'
+
+/** Код ошибки Postgres — на верхнем уровне или в `cause`: drizzle оборачивает
+ *  отказ драйвера в `DrizzleQueryError` без своего `code` (то же наблюдение,
+ *  что у `postgresErrorCode` в `scripts/seed-dev.ts`, проверено на этом самом
+ *  отказе). Проверка только верхнего уровня молча принимала бы дубликат за
+ *  неизвестную ошибку и роняла приглашение пятисоткой. */
+function isUniqueViolation(error: unknown): boolean {
+  const top = (error as { code?: unknown } | null)?.code
+  if (top === UNIQUE_VIOLATION) return true
+  return ((error as { cause?: { code?: unknown } } | null)?.cause)?.code === UNIQUE_VIOLATION
+}
+
+const ALREADY_ON_TEAM: Localized = {
+  en: 'This address is already on the team',
+  ru: 'Эта почта уже в команде',
+}
+
+/**
+ * Приглашение с экрана `/admin/team` — обёртка над `addTeamMember`
+ * (единственной санкционированной точкой вставки, см. её комментарий), которая
+ * переводит два отказа в `Localized`-значения вместо исключений:
+ *
+ *  - пустое имя / адрес без «@» — отказ до записи. Правило намеренно
+ *    минимальное (полная валидация адреса — это письмо, которого ещё нет);
+ *    его цель — не дать завести участника, которому физически некуда будет
+ *    выслать ссылку входа, когда почта заработает.
+ *  - дубликат адреса — `23505` от уникального ограничения, а НЕ проверка
+ *    «есть ли уже» перед вставкой: два одновременных приглашения одного
+ *    адреса иначе оба прошли бы проверку и оба вставили (тот же довод, что у
+ *    `ensureReviewer` в `scripts/seed-dev.ts`). Ограничение атомарно;
+ *    проигравший получает честный локализованный отказ, а не пятисотку.
+ *
+ * Работает и для адресов, отличающихся только регистром: `addTeamMember`
+ * нормализует до записи, так что `Foo@x.com` при живом `foo@x.com` — тот же
+ * дубликат.
+ */
+export async function inviteTeamMember(
+  db: Db,
+  input: { email: string; name: string },
+): Promise<{ ok: true; id: string } | { ok: false; error: Localized }> {
+  const email = input.email.trim()
+  const name = input.name.trim()
+  if (email === '' || !email.includes('@')) {
+    return {
+      ok: false,
+      error: { en: 'Enter a valid email address', ru: 'Введите настоящий адрес почты' },
+    }
+  }
+  if (name === '') {
+    return { ok: false, error: { en: 'Enter a name', ru: 'Введите имя' } }
+  }
+
+  try {
+    const { id } = await addTeamMember(db, { email, name })
+    return { ok: true, id }
+  } catch (error) {
+    if (isUniqueViolation(error)) return { ok: false, error: ALREADY_ON_TEAM }
+    throw error
+  }
+}
+
+const SELF_REMOVAL: Localized = {
+  en: 'You cannot remove yourself: you would lock yourself out. Ask a colleague to do it.',
+  ru: 'Нельзя удалить самого себя — вы потеряете доступ. Попросите коллегу.',
+}
+
+const CONFIRM_EMAIL_MISMATCH: Localized = {
+  en: 'The typed email does not match this member',
+  ru: 'Набранная почта не совпадает с почтой участника',
+}
+
+const MEMBER_NOT_FOUND: Localized = {
+  en: 'This member is no longer on the team',
+  ru: 'Этого участника уже нет в команде',
+}
+
+/**
+ * Удаление участника команды. Ворота — почта, набранная руками, и сверяет её
+ * ЭТОТ модуль, а не клиент: выключенная кнопка диалога — подсказка, серверное
+ * действие достижимо по сети напрямую (то же правило, что у `deleteLounge`).
+ * Сверка — после той же нормализации, что при записи (`normalizeEmail`):
+ * регистр и края — опечатки ввода, не другой адрес.
+ *
+ * Себя удалить нельзя (`actorMemberId`) — это защита от самозапирания:
+ * человек, удаливший собственную строку, потерял бы доступ немедленно
+ * (каскад ниже убьёт и его сессии), и вернуть его мог бы только коллега или
+ * консоль. Проверка — по id из ЖИВОЙ сессии, не по данным формы.
+ *
+ * Что уходит вместе со строкой, а что остаётся, — проверено по схеме
+ * (`src/db/schema.ts`) и закреплено тестами:
+ *  - каскадом умирают `sessions` и `login_tokens` (FK `onDelete: 'cascade'`)
+ *    — удалённый участник теряет доступ на следующем же запросе, отдельного
+ *    вызова kill switch'а не нужно;
+ *  - история проверки ПЕРЕЖИВАЕТ удаление: `submissions.reviewerId`,
+ *    `field_flags.createdBy`, `block_reviews.confirmedBy` и `events.actor`
+ *    хранят почту простым текстом без FK — прошлые решения и замечания
+ *    остаются читаемыми, диалог подтверждения говорит это словами.
+ *
+ * Пропавший к моменту удаления участник (второй администратор успел раньше)
+ * — честный отказ «уже нет в команде», а не тихий успех: человек должен
+ * увидеть, что состояние изменилось под ним, тем же способом, каким узнал бы
+ * о любом другом отказе.
+ */
+export async function removeTeamMember(
+  db: Db,
+  input: { memberId: string; confirmEmail: string; actorMemberId: string },
+): Promise<{ ok: true } | { ok: false; error: Localized }> {
+  if (input.memberId === input.actorMemberId) {
+    return { ok: false, error: SELF_REMOVAL }
+  }
+
+  const rows = await db
+    .select({ email: teamMembers.email })
+    .from(teamMembers)
+    .where(eq(teamMembers.id, input.memberId))
+    .limit(1)
+
+  const member = rows[0]
+  if (!member) return { ok: false, error: MEMBER_NOT_FOUND }
+  if (normalizeEmail(input.confirmEmail) !== member.email) {
+    return { ok: false, error: CONFIRM_EMAIL_MISMATCH }
+  }
+
+  await db.delete(teamMembers).where(eq(teamMembers.id, input.memberId))
+  return { ok: true }
+}
+
 export async function requestLogin(
   db: Db,
   email: string,
