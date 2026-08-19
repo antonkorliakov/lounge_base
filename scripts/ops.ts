@@ -124,7 +124,7 @@ async function main(): Promise<void> {
     if (!result.ok) fail(result.error.ru)
     process.stdout.write(`Пароль для ${email} установлен. Вход: ${base}/admin/login\n`)
   } else {
-    fail('команды: login <email> | invite <email> [Имя] | lounge "<Название>" <IATA> [Страна] [Город] [Аэропорт] | set-password <email>')
+    fail('команды: login <email> | invite <email> [Имя] | lounge "<Название>" <IATA> <Страна> <Город> <Аэропорт> | set-password <email>')
   }
 
   await closeDbConnection(db)
