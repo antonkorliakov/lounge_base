@@ -736,6 +736,30 @@ button:disabled { opacity: .4; }
 .dl-danger { background: #dc2626; color: #fff; border: 0; }
 .dl-danger:disabled { opacity: .5; cursor: default; }
 
+/* Экран команды (/admin/team): рама реестра (та же шапка-строка и таблица —
+   .registry-table переиспользуется классом), панели действий — вокабуляр
+   .al-panel/.dl-panel (al-field, se-actions, se-error, dl-warning, dl-danger
+   работают как есть и уже несут свои тёмные пары). Ширина ограничена: пять
+   колонок списка людей на всю ширину монитора — строки-простыни. */
+.team { padding: 20px 24px; max-width: 900px; }
+.team-top { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.team-top h1 { margin: 0; font-size: 20px; }
+.team-back { margin-left: auto; font-size: 13px; }
+.team-you { opacity: .6; font-size: 12px; }
+.team-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tm-btn { min-height: 0; padding: 4px 10px; font-size: 12px; }
+.tm-link { font-size: 12px; }
+.tm-remove { color: #b91c1c; border-color: #fca5a5; }
+.tm-panel {
+  margin-top: 8px; padding: 10px; border: 1px solid #cfd9ea; border-radius: 8px;
+  max-width: 340px; display: flex; flex-direction: column; gap: 6px; font-size: 12px;
+}
+.tm-panel input { padding: 5px 7px; font: inherit; border: 1px solid #d3d6db; border-radius: 5px; }
+.tm-panel-danger { border-color: #fca5a5; }
+.tm-note { margin: 0; font-size: 12px; opacity: .75; }
+.tm-notice { margin: 6px 0 0; color: #15803d; font-size: 12px; }
+.registry-team { font-size: 13px; }
+
 /* ── Скелетоны loading.tsx (реестр, экран проверки, страница пароля) ──
    Серые пульсирующие плашки в геометрии настоящих экранов; размеры и
    отступы повторяют .registry / .review-screen / .login, но классы свои
@@ -819,6 +843,13 @@ button:disabled { opacity: .4; }
 .skl-pw { max-width: 340px; margin: 12vh auto; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; }
 .skl-pw-title { width: 170px; height: 18px; }
 .skl-pw-field { height: 41px; }
+
+/* Экран команды: те же 20px/24px и потолок ширины, что .team, — заголовок,
+   кнопка приглашения и три строки высотой ряда таблицы. */
+.skl-team { padding: 20px 24px; max-width: 900px; display: flex; flex-direction: column; gap: 10px; }
+.skl-team-title { width: 90px; height: 22px; }
+.skl-team-btn { width: 150px; height: 31px; margin-bottom: 4px; }
+.skl-team-row { height: 38px; }
 
 @media (prefers-color-scheme: dark) {
   body { background: #111317; color: #f0f1f3; }
@@ -954,7 +985,7 @@ button:disabled { opacity: .4; }
      тёмно-красный (#b91c1c) и тёмно-янтарный (#92400e) на тёмном фоне тонут —
      светлые тона тех же цветов (доводы .se-error и .frow-photo-dead). */
   .al-panel { border-color: #2a2d34; }
-  .al-field input, .al-url, .dl-confirm input {
+  .al-field input, .al-url, .dl-confirm input, .tm-panel input {
     background: #1a1c21;
     color: #f0f1f3;
     border-color: #2a2d34;
@@ -962,6 +993,14 @@ button:disabled { opacity: .4; }
   .al-once { color: #fcd34d; }
   .dl-panel { border-color: #5b2323; }
   .dl-warning { color: #fca5a5; }
+  /* Экран команды — те же замены и те же доводы, что у панелей реестра выше:
+     рамкам тёмную пару, опасной — тёмно-красную, зелёному уведомлению —
+     светлый тон (.pw-notice). Красная кнопка-текст «Удалить из команды» —
+     светлый тон того же красного (.se-error). */
+  .tm-panel { border-color: #2a2d34; }
+  .tm-panel-danger { border-color: #5b2323; }
+  .tm-notice { color: #86efac; }
+  .tm-remove { color: #fca5a5; border-color: #5b2323; }
   /* Вход и смена пароля: тёмно-красный текст ошибки тонет на тёмном фоне —
      светлый тон того же цвета; насыщенный зелёный уведомления — светлым по
      той же причине (доводы .se-error и .review-state-approved). Контролы и

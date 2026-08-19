@@ -473,6 +473,13 @@ export async function loginWithPassword(
  *
  * Смена пароля гасит счётчик неудач и блокировку: новый пароль означает,
  * что старые неудачные попытки — о пароле, которого больше нет.
+ *
+ * Несуществующий `memberId` — отказ, а не тихий успех: UPDATE по пропавшей
+ * строке трогает 0 строк, и без `.returning` вызывающий (экран команды, где
+ * участника могли удалить параллельно) уверенно сообщил бы «пароль
+ * установлен» про никого. Старым вызывающим это ничего не меняет: у смены
+ * из кабинета участник — это живая сессия, у `setMemberPasswordByEmail` он
+ * только что найден по почте.
  */
 export async function setMemberPassword(
   db: Db,
@@ -490,11 +497,13 @@ export async function setMemberPassword(
   }
 
   const passwordHash = await hashPassword(password)
-  await db
+  const updated = await db
     .update(teamMembers)
     .set({ passwordHash, failedPasswordAttempts: 0, passwordLockedUntil: null })
     .where(eq(teamMembers.id, memberId))
+    .returning({ id: teamMembers.id })
 
+  if (updated.length === 0) return { ok: false, error: MEMBER_NOT_FOUND }
   return { ok: true }
 }
 

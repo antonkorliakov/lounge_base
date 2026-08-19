@@ -75,6 +75,7 @@ const ALL_LOUNGES_XLSX: Localized = {
   ru: 'Excel, все лаунжи, включая непринятые',
 }
 const PASSWORD_LINK: Localized = { en: 'Password', ru: 'Пароль' }
+const TEAM_LINK: Localized = { en: 'Team', ru: 'Команда' }
 
 export function Registry(props: {
   rows: RegistryTableRow[]
@@ -136,6 +137,12 @@ export function Registry(props: {
             <a href="/admin/export?format=xlsx&includeUnapproved=1">{pick(ALL_LOUNGES_XLSX)}</a>
           )}
         </div>
+        {/* Единственный вход на /admin/team — рядом с «Password», а не возле
+            «Add lounge»: обе ссылки про команду и доступ, кнопка — про данные
+            реестра. Тот же довод «страница без ссылки — мёртвая». */}
+        <a className="registry-team" href="/admin/team">
+          {pick(TEAM_LINK)}
+        </a>
         {/* Единственный вход на /admin/password: страница без ссылки на неё —
             мёртвая. В той же строке шапки, но не среди выгрузок — это про
             аккаунт, не про данные. */}

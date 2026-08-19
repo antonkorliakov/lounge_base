@@ -105,6 +105,22 @@ describe('inviteTeamMember', () => {
   })
 })
 
+describe('setMemberPassword по id', () => {
+  it('несуществующий участник — отказ, а не тихий успех', async () => {
+    const db = await createTestDb()
+
+    const result = await setMemberPassword(
+      db,
+      '00000000-0000-0000-0000-000000000000',
+      'password-123',
+    )
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.error.ru).toContain('уже нет в команде')
+  })
+})
+
 describe('removeTeamMember', () => {
   it('удаляет участника после сверки почты; его сессии и токены умирают каскадом', async () => {
     const db = await createTestDb()
