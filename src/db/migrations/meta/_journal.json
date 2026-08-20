@@ -43,6 +43,13 @@
       "when": 1787221227641,
       "tag": "0005_fuzzy_patch",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787230714824,
+      "tag": "0006_tranquil_whirlwind",
+      "breakpoints": true
     }
   ]
 }

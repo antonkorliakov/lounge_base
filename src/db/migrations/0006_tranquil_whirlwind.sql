@@ -1,0 +1,1 @@
+ALTER TABLE "airport_directory" ADD COLUMN "prominent" boolean DEFAULT false NOT NULL;

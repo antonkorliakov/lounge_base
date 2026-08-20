@@ -28,8 +28,8 @@ import {
  */
 
 const DIRECTORY = [
-  { iata: 'IST', airport: 'Istanbul Airport', city: 'Istanbul', country: 'Turkey' },
-  { iata: 'ESB', airport: 'Esenboga International', city: 'Ankara', country: 'Turkey' },
+  { iata: 'IST', airport: 'Istanbul Airport', city: 'Istanbul', country: 'Turkey', prominent: true },
+  { iata: 'ESB', airport: 'Esenboga International', city: 'Ankara', country: 'Turkey', prominent: false },
 ]
 
 const INPUT = {

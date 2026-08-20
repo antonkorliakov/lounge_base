@@ -8,7 +8,7 @@ import {
   lookupAirport,
   parseAirportsTsv,
   importAirports,
-  type DirectoryRow,
+  type DirectoryImportRow,
 } from '../directory'
 
 /**
@@ -21,12 +21,12 @@ import {
  * файл гоняет сам скрипт перед e2e (см. `e2e/directory.spec.ts`).
  */
 
-const HEADER = 'iata\tairport\tcity\tcountry'
+const HEADER = 'iata\tairport\tcity\tcountry\tprominent'
 
-const ROWS: DirectoryRow[] = [
-  { iata: 'IST', airport: 'Istanbul Airport', city: 'Istanbul', country: 'Turkey' },
-  { iata: 'ESB', airport: 'Esenboga International', city: 'Ankara', country: 'Turkey' },
-  { iata: 'DXB', airport: 'Dubai', city: 'Dubai', country: 'United Arab Emirates' },
+const ROWS: DirectoryImportRow[] = [
+  { iata: 'IST', airport: 'Istanbul Airport', city: 'Istanbul', country: 'Turkey', prominent: true },
+  { iata: 'ESB', airport: 'Esenboga International', city: 'Ankara', country: 'Turkey', prominent: false },
+  { iata: 'DXB', airport: 'Dubai', city: 'Dubai', country: 'United Arab Emirates', prominent: true },
 ]
 
 async function allRows(db: Db) {
@@ -34,20 +34,25 @@ async function allRows(db: Db) {
 }
 
 describe('parseAirportsTsv', () => {
-  it('разбирает заголовок и строки, нормализуя код', () => {
-    const text = `${HEADER}\nist\tIstanbul Airport\tIstanbul\tTurkey\nESB\tEsenboga International\tAnkara\tTurkey\n`
+  it('разбирает заголовок и строки, нормализуя код и признак', () => {
+    const text = `${HEADER}\nist\tIstanbul Airport\tIstanbul\tTurkey\ttrue\nESB\tEsenboga International\tAnkara\tTurkey\tfalse\n`
     expect(parseAirportsTsv(text)).toEqual([
-      { iata: 'IST', airport: 'Istanbul Airport', city: 'Istanbul', country: 'Turkey' },
-      { iata: 'ESB', airport: 'Esenboga International', city: 'Ankara', country: 'Turkey' },
+      { iata: 'IST', airport: 'Istanbul Airport', city: 'Istanbul', country: 'Turkey', prominent: true },
+      { iata: 'ESB', airport: 'Esenboga International', city: 'Ankara', country: 'Turkey', prominent: false },
     ])
   })
 
   it.each([
-    ['чужой заголовок', 'code\tname\tcity\tcountry\nIST\ta\tb\tc'],
-    ['не четыре колонки', `${HEADER}\nIST\tIstanbul Airport\tIstanbul`],
-    ['негодный код', `${HEADER}\nISTX\ta\tb\tc`],
-    ['пустая колонка', `${HEADER}\nIST\t\tIstanbul\tTurkey`],
-    ['дубль кода', `${HEADER}\nIST\ta\tb\tc\nist\td\te\tf`],
+    ['чужой заголовок', 'code\tname\tcity\tcountry\tprominent\nIST\ta\tb\tc\ttrue'],
+    // Старый 4-колоночный формат — тоже чужой заголовок: файл и код ходят
+    // парой, импорт старого файла молча обнулил бы prominent у всех строк.
+    ['старый 4-колоночный формат', 'iata\tairport\tcity\tcountry\nIST\ta\tb\tc'],
+    ['не пять колонок в строке', `${HEADER}\nIST\tIstanbul Airport\tIstanbul\tTurkey`],
+    ['негодный код', `${HEADER}\nISTX\ta\tb\tc\ttrue`],
+    ['пустая колонка', `${HEADER}\nIST\t\tIstanbul\tTurkey\ttrue`],
+    ['prominent не true/false', `${HEADER}\nIST\ta\tb\tc\tyes`],
+    ['prominent пуст', `${HEADER}\nIST\ta\tb\tc\t`],
+    ['дубль кода', `${HEADER}\nIST\ta\tb\tc\ttrue\nist\td\te\tf\tfalse`],
   ])('громко падает: %s', (_label, text) => {
     expect(() => parseAirportsTsv(text)).toThrow()
   })
@@ -68,15 +73,17 @@ describe('importAirports: идемпотентный upsert', () => {
     const db = await createTestDb()
     await importAirports(db, ROWS)
 
-    // ESB переименован, DXB из файла исчез, SAW появился.
+    // ESB переименован и стал prominent, DXB из файла исчез, SAW появился.
     await importAirports(db, [
-      { iata: 'ESB', airport: 'Esenboga', city: 'Ankara', country: 'Turkey' },
-      { iata: 'SAW', airport: 'Sabiha Gokcen', city: 'Istanbul', country: 'Turkey' },
+      { iata: 'ESB', airport: 'Esenboga', city: 'Ankara', country: 'Turkey', prominent: true },
+      { iata: 'SAW', airport: 'Sabiha Gokcen', city: 'Istanbul', country: 'Turkey', prominent: true },
     ])
 
     const rows = await allRows(db)
     expect(rows.map((row) => row.iata)).toEqual(['DXB', 'ESB', 'IST', 'SAW'])
     expect(rows.find((row) => row.iata === 'ESB')?.airport).toBe('Esenboga')
+    // Upsert правит и признак: false из первого импорта не переживает второй.
+    expect(rows.find((row) => row.iata === 'ESB')?.prominent).toBe(true)
     // Исчезнувшая строка осталась: удаление из справочника — явный шаг,
     // не побочный эффект импорта (см. комментарий importAirports).
     expect(rows.find((row) => row.iata === 'DXB')?.city).toBe('Dubai')

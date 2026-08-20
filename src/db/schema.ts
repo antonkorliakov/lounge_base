@@ -71,6 +71,12 @@ export const airportDirectory = pgTable('airport_directory', {
   airport: text('airport').notNull(),
   city: text('city').notNull(),
   country: text('country').notNull(),
+  // Сигнал РАНЖИРОВАНИЯ поиска, не фильтр: ~600 крупных аэропортов из флага
+  // «Exist Product» источника стоят внутри своего яруса выше остальных
+  // (см. searchAirports), но малоизвестные строки из выдачи не исчезают.
+  // default(false) — только для миграции существующих строк: живые значения
+  // приходят из 5-й колонки TSV при каждом импорте.
+  prominent: boolean('prominent').notNull().default(false),
 })
 
 export const submissions = pgTable(
