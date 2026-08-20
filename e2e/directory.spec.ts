@@ -9,8 +9,9 @@ import { SEED_REVIEWER_EMAIL } from '../scripts/dev-support'
  * формы заполнения.
  *
  * ОЖИДАНИЕ ОКРУЖЕНИЯ, записанное словами: локальная docker-база
- * (`.env.local`) должна быть МИГРИРОВАНА до `0005` (`npm run db:migrate`) —
- * таблицу `airport_directory` создаёт миграция, не скрипт. Сам же справочник
+ * (`.env.local`) должна быть МИГРИРОВАНА до `0006` (`npm run db:migrate`) —
+ * таблицу `airport_directory` создаёт миграция 0005, колонку `prominent`
+ * добавляет 0006, скрипт импорта схему не чинит. Сам же справочник
  * наполняет `beforeAll` ниже НАСТОЯЩИМ `npm run db:import-airports` — это и
  * есть e2e самого скрипта (идемпотентность позволяет гонять его на каждый
  * прогон; юнит-половина — `src/registry/__tests__/directory.test.ts`).
@@ -171,9 +172,10 @@ test('поиск аэропорта: istan — Стамбул впереди, в
   await search.fill('zzxq')
   await expect(page.getByText('nothing found')).toBeVisible()
 
-  // «istan»: у IST запрос — префикс ИМЕНИ аэропорта (Istanbul Airport, ярус
-  // имени), у SAW — лишь префикс ГОРОДА Istanbul (ярус города ниже), поэтому
-  // IST первым, SAW вторым — порядок закреплён и юнитом
+  // «istan»: у IST запрос — префикс ИМЕНИ аэропорта (Istanbul Airport,
+  // ярус 2 нынешней шкалы с «городом целиком»; точного города «istan» нет,
+  // так что ярус 1 пуст), у SAW — лишь префикс ГОРОДА Istanbul (ярус 3),
+  // поэтому IST первым, SAW вторым — порядок закреплён и юнитом
   // (directory-search.test.ts). Дальше десятки стран на *istan (Pakistan,
   // Kazakhstan…) — их подстрочный ярус не влезает в 8 строк, и список честно
   // говорит «уточните».
@@ -213,6 +215,48 @@ test('поиск аэропорта: istan — Стамбул впереди, в
   await expect(row).toContainText('SAW')
   await expect(row).toContainText('Istanbul')
   await expect(row).toContainText('Turkey')
+})
+
+test('поиск аэропорта: london — Хитроу и Гатвик в списке, выбор Хитроу заполняет четвёрку полей', async ({
+  page,
+  watched,
+}) => {
+  await openRegistry(page, watched)
+
+  await page.getByRole('button', { name: 'Add lounge' }).click()
+  const search = page.getByRole('combobox', { name: 'Find airport' })
+
+  // Жалоба, с которой началась ветка: «london» не показывал Heathrow/Gatwick —
+  // в их ИМЕНАХ «london» нет (Heathrow, Gatwick; город London), и восьмёрку
+  // съедали имя-совпадения: вокзалы и Лондоны Канады/США. Теперь ярус «город
+  // целиком» + prominent: четвёрка крупных LGW/LHR/LTN/STN по алфавиту, ниже —
+  // не-prominent тёзки города; полный порядок закреплён юнитом на реальном
+  // TSV (directory-search.test.ts), здесь — видимость главного.
+  await search.fill('london')
+  const options = page.getByRole('option')
+  await expect(options.first()).toHaveText('LGW — Gatwick · London, United Kingdom')
+  await expect(options.nth(1)).toHaveText('LHR — Heathrow · London, United Kingdom')
+  // Совпадений 23 — список честно предлагает уточнить, никого не пряча молча.
+  await expect(page.getByText('refine your search')).toBeVisible()
+
+  // Выбор Хитроу клавиатурой: активен первый (LGW), ↓ — LHR, Enter — выбор.
+  await search.press('ArrowDown')
+  await search.press('Enter')
+  await expect(search).toHaveValue('LHR — Heathrow')
+
+  // Четвёрка полей заполнена тем же механизмом полного кода, что при ручном
+  // наборе, производные — под замком справочника.
+  await expect(page.getByLabel('IATA code*', { exact: true })).toHaveValue('LHR')
+  await expect(page.getByText('from directory: LHR')).toBeVisible()
+  const airport = page.getByLabel('Airport*', { exact: true })
+  const city = page.getByLabel('City*', { exact: true })
+  const country = page.getByLabel('Country*', { exact: true })
+  await expect(airport).toHaveValue('Heathrow')
+  await expect(city).toHaveValue('London')
+  await expect(country).toHaveValue('United Kingdom')
+  await expect(airport).not.toBeEditable()
+  await expect(city).not.toBeEditable()
+  await expect(country).not.toBeEditable()
 })
 
 test('неизвестный код: честный промах, тройка заполняется руками и сохраняется как есть', async ({
