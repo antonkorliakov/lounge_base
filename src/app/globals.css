@@ -754,7 +754,11 @@ button:disabled { opacity: .4; }
   margin: 2px 0 0; padding: 4px; list-style: none;
   background: #fff; border: 1px solid #c9ced6; border-radius: 6px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, .12);
-  max-height: 320px; overflow-y: auto;
+  /* 8 пунктов по 44px + служебная строка «уточните» должны быть видны БЕЗ
+     внутреннего скролла (замечено в браузере: при 320px намёк тонул за
+     прокруткой и переставал работать намёком); скролл остаётся страховкой
+     для переносов длинных названий в узкой панели правки. */
+  max-height: 460px; overflow-y: auto;
 }
 .al-search-option {
   min-height: 44px; display: flex; align-items: center;
