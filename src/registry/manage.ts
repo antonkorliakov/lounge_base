@@ -41,6 +41,21 @@ const fail = (en: string, ru: string): { ok: false; error: Localized } => ({
 const IATA_RE = /^[A-Z]{3}$/
 
 /**
+ * Единственная запись правила IATA в исполнимом виде: trim/uppercase, затем
+ * проверка «ровно три латинские буквы»; не прошло — `null`, и что с этим
+ * делать, решает вызывающий. Обоих вызывающих ДВА, и оба обязаны ходить
+ * сюда, а не носить свою копию регэкспа: `createLounge` ниже (null —
+ * отказ создать лаунж) и `passportFieldsFrom` (`review/decide.ts`; null —
+ * колонка `iataCode` пропускается при синхронизации паспорта на принятии,
+ * само принятие не блокируется). Разъехаться правило теперь может только
+ * вместе с этой функцией.
+ */
+export function normalizeIata(raw: string): string | null {
+  const code = raw.trim().toUpperCase()
+  return IATA_RE.test(code) ? code : null
+}
+
+/**
  * Паспорт лаунжа ↔ анкетные поля блока I: то, что администратор уже набрал в
  * «Add lounge», оператор не должен набирать второй раз. ОДНА запись
  * соответствия на оба его употребления — предзаполнение при создании
@@ -50,13 +65,19 @@ const IATA_RE = /^[A-Z]{3}$/
  * раз (`EDITABLE_STATUSES`, `FLAG_REASONS`, …).
  *
  * `lockable: false` у названия — решение пользователя: название лаунжа
- * остаётся редактируемым оператором ВСЕГДА. Отсюда осознанная асимметрия:
- * принятие анкеты копирует в реестр только классифицирующие поля (III.6.*,
- * см. `approveSubmission`), так что правка I.2 оператором НЕ меняет
- * `lounges.name` — строка реестра держит имя администратора, а экран
- * проверки показывает оба (заголовок — имя реестра, строка I.2 — ответ
- * оператора), и расхождение видно ревьюеру. Это существующее и принятое
- * поведение, не побочный эффект предзаполнения.
+ * остаётся редактируемым оператором ВСЕГДА. Отсюда осознанная асимметрия,
+ * и с синхронизацией паспорта на принятии она стала РЕЗЧЕ, а не исчезла:
+ * `approveSubmission` теперь копирует в реестр, кроме классифицирующих
+ * полей (III.6.*), ещё и принятые ответы паспорта — страну/город/аэропорт/
+ * IATA (I.7–I.10, см. `passportFieldsFrom` в `review/decide.ts`), — но
+ * НЕ название: правка I.2 оператором по-прежнему НЕ меняет `lounges.name`.
+ * Строка реестра держит имя администратора, а экран проверки показывает оба
+ * (заголовок — имя реестра, строка I.2 — ответ оператора), и расхождение
+ * видно ревьюеру. Это существующее и принятое поведение, не побочный эффект
+ * предзаполнения; на нём стоит и заголовок экрана проверки. `provider`
+ * (I.3) в синхронизацию тоже не входит — не по принципиальному решению, как
+ * имя, а потому, что согласованный разрыв касался четырёх полей, которыми
+ * фильтруют реестр и выгрузку; колонка остаётся творением создания лаунжа.
  */
 export const IDENTITY_PREFILL = [
   { column: 'name', fieldKey: 'I.2', lockable: false },
@@ -152,7 +173,7 @@ export async function createLounge(
   input: CreateLoungeInput,
 ): Promise<CreateLoungeResult> {
   const name = input.name.trim()
-  const iataCode = input.iataCode.trim().toUpperCase()
+  const iataCode = normalizeIata(input.iataCode)
   const country = input.country.trim()
   const city = input.city.trim()
   const airport = input.airport.trim()
@@ -161,7 +182,7 @@ export async function createLounge(
   const provider = input.provider?.trim() || null
 
   if (name === '') return fail('Name is required', 'Название обязательно')
-  if (!IATA_RE.test(iataCode)) {
+  if (iataCode === null) {
     return fail('IATA code must be 3 letters', 'Код IATA — три латинские буквы')
   }
   if (country === '') return fail('Country is required', 'Страна обязательна')

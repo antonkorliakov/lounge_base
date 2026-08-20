@@ -4,6 +4,8 @@ import { submissions, lounges, events } from '@/db/schema'
 import type { SubmissionStatus } from '@/db/schema'
 import type { TransitionResult } from '@/submissions/transitions'
 import { loadSubmissionValues } from '@/submissions/values'
+import { IDENTITY_PREFILL, normalizeIata } from '@/registry/manage'
+import type { IdentityColumns } from '@/registry/manage'
 import { openFlags } from './flags'
 import { blockProgress, REVIEW_STATUSES } from './blocks'
 
@@ -73,6 +75,85 @@ export function classifyingFieldsFrom(
     zone: stringArrayOf(values['III.6.6']),
     airsideLandside: optionOf(values['III.6.4']),
   }
+}
+
+/**
+ * Колонки паспорта, которые принятие синхронизирует из принятых ответов, —
+ * `Partial`, а не «все или ничего»: ответ, не прошедший свой guard, выпадает
+ * ИЗ НАБОРА (колонка остаётся прежней), не превращаясь ни в затирание
+ * колонки, ни в отказ принять анкету — политика описана у
+ * `passportFieldsFrom` ниже.
+ */
+export type PassportFields = Partial<
+  Pick<IdentityColumns, 'country' | 'city' | 'airport' | 'iataCode'>
+>
+
+/**
+ * Та же строгость, что у `optionOf`/`stringArrayOf` выше: форма проверяется,
+ * а не утверждается кастом. I.7–I.10 — обязательные текстовые поля
+ * (`type: text`, `required` в `form-schema/fields.ts`), и полнота анкеты —
+ * ворота ОТПРАВКИ, так что на принятии они всегда присутствуют и непусты; но
+ * эта функция, как и соседние, чужих гарантий отсюда не видит и на веру их
+ * не берёт. Trim — тот же, каким `lockedIdentityKeys` сравнивает ответ с
+ * колонкой (см. `passportFieldsFrom` про то, зачем им совпадать).
+ */
+function textOf(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed === '' ? null : trimmed
+}
+
+/**
+ * Паспорт лаунжа из принятых ответов блока I — вторая половина разрыва,
+ * который закрывался в несколько заходов: реестр и его фильтры обслуживают
+ * колонки `lounges`, а исправление, ради которого ревьюер возвращал анкету
+ * (неверный IATA, опечатка в городе), до этой функции оставалось жить только
+ * в ответах — принятая анкета говорила одно, реестр продолжал отдавать
+ * другое. Копируются четыре поля, которыми фильтруются реестр и выгрузка:
+ * страна (I.7), город (I.8), аэропорт (I.9), IATA (I.10).
+ *
+ * Соответствие колонка↔поле НЕ переписано здесь второй раз — оно берётся из
+ * `IDENTITY_PREFILL` (`registry/manage.ts`), той же единственной записи, по
+ * которой работают предзаполнение при создании и замки формы заполнения.
+ * Два имени исключаются сравнением литералов, и по РАЗНЫМ причинам:
+ *  - `name` (I.2) — осознанная асимметрия, решение пользователя: имя реестра
+ *    командное, заголовок экрана проверки на нём стоит, правка I.2
+ *    оператором его не меняет (см. комментарий `IDENTITY_PREFILL` — он
+ *    расширен этой синхронизацией, а не опровергнут ею).
+ *  - `provider` (I.3) — просто вне согласованного разрыва: он не из четырёх
+ *    фильтрующих полей, и колонка остаётся творением создания лаунжа.
+ *
+ * Политика при непрошедшем guard'е — ПРОПУСТИТЬ колонку, не блокировать
+ * принятие: анкета прошла свои настоящие ворота (27 блоков подтверждены,
+ * замечаний нет), и отказ принять её из-за формы одного ответа дал бы класс
+ * «нужный человек не может дотянуться», за который проект уже платил.
+ * Недостижимо через валидные входы (см. `textOf`), но недостижимость — не
+ * договор, и «колонка тихо осталась прежней» здесь честнее падения.
+ *
+ * IATA — через `normalizeIata`, ТУ ЖЕ функцию, что и при создании лаунжа:
+ * одно правило в одном доме; ответ, не похожий на код (не три буквы после
+ * trim/uppercase), пропускает колонку по той же политике.
+ *
+ * Приятное следствие trim'а тем же способом, что у `lockedIdentityKeys`:
+ * после принятия ответ и колонка снова дословно совпадают, так что у
+ * СЛЕДУЮЩЕЙ анкеты этого лаунжа предзаполненные поля I.7–I.10 опять стоят
+ * под замком — цикл правок растворяет замок не навсегда, а до принятия
+ * исправления.
+ */
+export function passportFieldsFrom(
+  values: Record<string, unknown>,
+): PassportFields {
+  const passport: PassportFields = {}
+  for (const entry of IDENTITY_PREFILL) {
+    const column = entry.column
+    if (column === 'name' || column === 'provider') continue
+    const answer = textOf(values[entry.fieldKey])
+    if (answer === null) continue
+    const value = column === 'iataCode' ? normalizeIata(answer) : answer
+    if (value === null) continue
+    passport[column] = value
+  }
+  return passport
 }
 
 /**
@@ -159,8 +240,20 @@ export async function requestChanges(
  * already-confirmed block, or another reviewer's tab can still be mid-review.
  *
  * Writes three tables in one transaction, in this order: `submissions`
- * (locked first via `lockSubmission`), then `lounges`, then `events`. This
- * cannot deadlock against `raiseFlag`, `confirmBlock`, or
+ * (locked first via `lockSubmission`), then `lounges`, then `events`. The
+ * `lounges` UPDATE is a single statement carrying BOTH copy-back sets — the
+ * classifying fields (`classifyingFieldsFrom`) and the passport fields
+ * (`passportFieldsFrom`, I.7–I.10; the name deliberately not among them —
+ * see `IDENTITY_PREFILL` in `registry/manage.ts`). One statement is pinned
+ * by test (`decide.test.ts` counts `.update(lounges)` occurrences in this
+ * file): a second, separate UPDATE would leave the same column values behind
+ * but step outside this transaction and its lock, and no value assertion
+ * would notice. It remains a BLIND write — every value comes from
+ * `field_values`, nothing is read from `lounges` — which is exactly why the
+ * family-2 guard (`loungeLockViolationsIn`) keeps passing it without any
+ * exemption, and why the deadlock argument below is unchanged:
+ *
+ * This cannot deadlock against `raiseFlag`, `confirmBlock`, or
  * `saveFieldValue`/`saveServiceValue` (via `assertEditable`):
  *
  *  1. Every one of those, plus `submitSubmission` and this module's own
@@ -223,6 +316,7 @@ export async function approveSubmission(
 
     const values = await loadSubmissionValues(tx, input.submissionId)
     const classifying = classifyingFieldsFrom(values.fields)
+    const passport = passportFieldsFrom(values.fields)
 
     const now = new Date()
     await tx
@@ -230,14 +324,21 @@ export async function approveSubmission(
       .set({ status: 'approved', reviewerId: input.reviewer, decidedAt: now, statusChangedAt: now })
       .where(eq(submissions.id, input.submissionId))
 
-    await tx.update(lounges).set(classifying).where(eq(lounges.id, locked.loungeId))
+    await tx
+      .update(lounges)
+      .set({ ...classifying, ...passport })
+      .where(eq(lounges.id, locked.loungeId))
 
     await tx.insert(events).values({
       loungeId: locked.loungeId,
       submissionId: input.submissionId,
       actor: input.reviewer,
       action: 'approved',
-      payload: { classifying },
+      // `passport` — рядом с `classifying`: журнал записывает всё, что это
+      // принятие внесло в строку реестра, а не половину. `asStatusChange`
+      // (`registry/status.ts`) отбирает события по `action`, не по форме
+      // payload, так что лишний ключ историю статусов не путает.
+      payload: { classifying, passport },
     })
 
     return { ok: true, status: 'approved' }

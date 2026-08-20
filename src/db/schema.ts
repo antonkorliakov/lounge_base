@@ -22,6 +22,12 @@ export const lounges = pgTable(
   'lounges',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    // Паспорт лаунжа. Задаётся при создании (`createLounge`); четыре
+    // фильтрующих колонки (country/city/airport/iataCode) при принятии
+    // анкеты синхронизируются из принятых ответов I.7–I.10
+    // (`approveSubmission` → `passportFieldsFrom`). `name` — НЕ
+    // синхронизируется, осознанно (см. `IDENTITY_PREFILL`); `provider` —
+    // вне согласованной синхронизации.
     name: text('name').notNull(),
     provider: text('provider'),
     country: text('country').notNull(),

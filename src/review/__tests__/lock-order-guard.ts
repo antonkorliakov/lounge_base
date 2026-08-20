@@ -173,11 +173,14 @@
  * reason.
  *
  * **`approveSubmission` writes `lounges` and does NOT lock it — correctly.**
- * It is a blind write: `tx.update(lounges).set(classifying)` where
- * `classifying` comes from `field_values`, not from `lounges`. It never issues
- * a `.from(lounges)` at all, so it reads nothing it then overwrites, and the
- * columns it sets (`terminal`/`terminalType`/`zone`/`airsideLandside`) are
- * disjoint from the ones `setOperationalStatus` sets. The row lock its own
+ * It is a blind write: `tx.update(lounges).set({ ...classifying, ...passport })`
+ * where both halves come from `field_values`, not from `lounges`. It never
+ * issues a `.from(lounges)` at all, so it reads nothing it then overwrites,
+ * and the columns it sets (`terminal`/`terminalType`/`zone`/
+ * `airsideLandside`, plus — since the passport sync — `country`/`city`/
+ * `airport`/`iataCode`) are still all disjoint from the ones
+ * `setOperationalStatus` sets (`operationalStatus`/`statusUntil`/
+ * `statusComment`). The row lock its own
  * `UPDATE` takes is all the serialization it needs, and `loungeLockViolationsIn`
  * passes it for exactly that reason rather than by exemption — there is no
  * exemption mechanism here, deliberately (see above), and this is the test of
