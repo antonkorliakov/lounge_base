@@ -287,13 +287,18 @@ test('лаунж заводится из реестра, ссылка запол
   const name = `Created-${Math.random().toString(36).slice(2, 10)}`
   await openRegistry(page, watched)
 
-  // ── Создание: форма из шести полей, provider оставлен пустым ─────────────
+  // ── Создание: имя + код, тройку производных выводит справочник ───────────
+  // Справочник аэропортов (см. e2e/directory.spec.ts — он же гоняет импорт)
+  // знает IST: после полного кода аэропорт/город/страна заполняются сами и
+  // закрываются на чтение — руками их больше не набирают. Provider пуст.
   await page.getByRole('button', { name: 'Add lounge' }).click()
   await page.getByLabel('Name*', { exact: true }).fill(name)
   await page.getByLabel('IATA code*', { exact: true }).fill('ist') // нормализуется в IST
-  await page.getByLabel('Country*', { exact: true }).fill('Turkey')
-  await page.getByLabel('City*', { exact: true }).fill('Istanbul')
-  await page.getByLabel('Airport*', { exact: true }).fill('Istanbul Airport')
+  await expect(page.getByText('from directory: IST')).toBeVisible()
+  await expect(page.getByLabel('Country*', { exact: true })).toHaveValue('Turkey')
+  await expect(page.getByLabel('City*', { exact: true })).toHaveValue('Istanbul')
+  await expect(page.getByLabel('Airport*', { exact: true })).toHaveValue('Istanbul Airport')
+  await expect(page.getByLabel('City*', { exact: true })).not.toBeEditable()
   await page.getByRole('button', { name: 'Create', exact: true }).click()
 
   // Ссылка заполнения показана для ручного копирования (почта не отправляется
@@ -389,12 +394,12 @@ test('паспорт лаунжа правится из реестра, непо
   await openRegistry(page, watched)
 
   // ── Лаунж настоящим путём «Add lounge»: предзаполнение + первая ссылка ────
+  // Тройка производных — из справочника по коду (см. первый тест создания).
   await page.getByRole('button', { name: 'Add lounge' }).click()
   await page.getByLabel('Name*', { exact: true }).fill(name)
   await page.getByLabel('IATA code*', { exact: true }).fill('IST')
-  await page.getByLabel('Country*', { exact: true }).fill('Turkey')
-  await page.getByLabel('City*', { exact: true }).fill('Istanbul')
-  await page.getByLabel('Airport*', { exact: true }).fill('Istanbul Airport')
+  await expect(page.getByText('from directory: IST')).toBeVisible()
+  await expect(page.getByLabel('City*', { exact: true })).toHaveValue('Istanbul')
   await page.getByRole('button', { name: 'Create', exact: true }).click()
   const fillUrl = await page.locator('.al-url').inputValue()
   expect(fillUrl).toMatch(/\/f\/.+/)
@@ -404,11 +409,16 @@ test('паспорт лаунжа правится из реестра, непо
   const row = rowFor(page, name)
   await expect(row).toContainText('IST')
 
-  // ── Правка: панель предзаполнена текущими значениями ─────────────────────
+  // ── Правка: панель предзаполнена, производные правятся СМЕНОЙ КОДА ────────
+  // Код лаунжа (IST) в справочнике, поэтому панель открывается с тройкой
+  // read-only: город больше не правят руками — меняют код, и тройка выводится
+  // из справочника заново (esb → Ankara / Esenboga International).
   await row.getByRole('button', { name: `Edit passport: ${name}` }).click()
   await expect(row.getByLabel('City*', { exact: true })).toHaveValue('Istanbul')
-  await row.getByLabel('City*', { exact: true }).fill('Ankara')
+  await expect(row.getByLabel('City*', { exact: true })).not.toBeEditable()
   await row.getByLabel('IATA code*', { exact: true }).fill('esb') // нормализуется в ESB
+  await expect(row.getByText('from directory: ESB')).toBeVisible()
+  await expect(row.getByLabel('City*', { exact: true })).toHaveValue('Ankara')
   await row.getByRole('button', { name: 'Save', exact: true }).click()
 
   // Успех виден строкой БЕЗ перезагрузки (revalidatePath после result.ok) —
