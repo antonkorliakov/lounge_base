@@ -35,9 +35,12 @@ async function clickNext(page: Page, times = 1): Promise<void> {
   }
 }
 
-// Field-block screens before the two services passes — see buildSteps() in
-// src/web/FormShell.tsx: one screen per `fields`-kind entry in BLOCKS.
-const FIELD_STEP_COUNT = 15
+// Field screens before the two services passes — see buildSteps() and
+// MERGED_FIELD_GROUPS in src/web/FormShell.tsx: the 15 `fields`-kind BLOCKS
+// entries now render as 5 steps (I / Contacts / Operating Schedule /
+// Access & Policies / Location & Facility) — merging is presentation only,
+// each block keeps its own section heading inside its step.
+const FIELD_STEP_COUNT = 5
 
 /**
  * One button of a binary item's availability toggle pair, addressed the way
@@ -64,7 +67,7 @@ test('поле сохраняется автоматически, статус �
   const url = seed()
   await page.goto(url)
 
-  await expect(page.getByText('1 / 19')).toBeVisible()
+  await expect(page.getByText('1 / 9')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Lounge Profile & Commercial Details' })).toBeVisible()
 
   // НЕ 'Primeclass Lounge': это дефолтное имя сида, и с тех пор как
@@ -84,6 +87,57 @@ test('поле сохраняется автоматически, статус �
   await page.getByRole('button', { name: 'EN', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Lounge Profile & Commercial Details' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Next', exact: true })).toBeVisible()
+})
+
+/**
+ * Слитый шаг (MERGED_FIELD_GROUPS в FormShell.tsx): один экран несёт
+ * несколько блоков схемы, и каждый блок остаётся виден под СВОИМ названием —
+ * заголовком секции, дословно тем же текстом, которым ревьюер подтверждает
+ * блок и ставит замечания. Проверяется на контактном шаге, всеми четырьмя
+ * секциями и полем из КАЖДОГО блока: секция без своих полей была бы
+ * декорацией. Плюс сам навигатор: 9 пунктов, слитые шаги — под своими
+ * именами, и прыжок по имени открывает слитый шаг с его секциями.
+ */
+test('слитый шаг «Contacts»: секции всех четырёх блоков с их полями, навигатор перечисляет 9 шагов', async ({ page }) => {
+  const url = seed()
+  await page.goto(url)
+
+  await clickNext(page) // I → Contacts
+  await expect(page.getByText('2 / 9')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Contacts', level: 1 })).toBeVisible()
+
+  // Секции — по одной на блок группы, в порядке BLOCKS, подписи блоков дословно.
+  await expect(page.locator('.step-section-title')).toHaveText([
+    'Primary Operational Contact',
+    'Shift / Duty Contact',
+    'Finance Contact',
+    'Lounge Direct Contacts',
+  ])
+
+  // Поле из каждого из четырёх блоков — секции держат свои поля.
+  await expect(page.getByLabel(/Lounge Operations Manager Name/)).toBeVisible()
+  await expect(page.getByLabel(/Shift Mobile \/ Duty Phone Number/)).toBeVisible()
+  await expect(page.getByLabel(/Finance SPOC- Name/)).toBeVisible()
+  await expect(page.getByLabel(/Fax Number/)).toBeVisible()
+
+  // Навигатор: ровно 9 шагов, слитые — под своими именами из словаря.
+  await page.getByRole('button', { name: 'Contacts', exact: true }).click()
+  const nav = page.getByRole('navigation', { name: 'Form steps' })
+  await expect(nav.getByRole('listitem')).toHaveCount(9)
+  await expect(nav.getByRole('button', { name: 'Access & Policies' })).toBeVisible()
+
+  // Прыжок по имени из списка открывает слитый шаг с его секциями.
+  await nav.getByRole('button', { name: 'Location & Facility' }).click()
+  await expect(page.getByRole('heading', { name: 'Location & Facility', level: 1 })).toBeVisible()
+  await expect(page.getByText('5 / 9')).toBeVisible()
+  await expect(page.locator('.step-section-title')).toHaveText([
+    'Lounge Location',
+    'Terminal & Zone Information',
+    'Multi-Terminal Access',
+    'Capacity Information',
+    'Lounge Signage',
+    'Lounge Validity',
+  ])
 })
 
 test('два прохода по услугам: детали спрашиваются только по отмеченной позиции', async ({ page }) => {
@@ -145,8 +199,9 @@ test('выбор в первом проходе по услугам сохран
 })
 
 /**
- * Один чип multi_select-поля зон (III.6.6, экран 11 «Terminal & Zone
- * Information»), адресованный так же, как кнопки пары наличия выше: группа
+ * Один чип multi_select-поля зон (III.6.6, секция «Terminal & Zone
+ * Information» слитого шага «Location & Facility»), адресованный так же, как
+ * кнопки пары наличия выше: группа
  * названа подписью поля (`role="group"` + `aria-label` в `FieldInput`), чип —
  * кнопка с вариантом списка `zone`. До чипов здесь стояли чекбоксы, и никакой
  * e2e их не трогал вовсе — поле жило только на юнит-стороне контракта; ответ
@@ -163,7 +218,7 @@ test('чипы multi_select: членство переключается, сох
   const url = seed()
   await page.goto(url)
 
-  await clickNext(page, 10) // I, II.1–4, III.1–5 → III.6
+  await clickNext(page, 4) // I, Contacts, III.1, Access & Policies → Location & Facility
   await expect(page.getByRole('heading', { name: 'Terminal & Zone Information' })).toBeVisible()
 
   // Ловушка b, применённая к этому полю: заголовок поля НЕ label (см.
@@ -183,7 +238,7 @@ test('чипы multi_select: членство переключается, сох
   await expect(page.getByText('Saved')).toBeVisible()
 
   await page.reload()
-  await clickNext(page, 10)
+  await clickNext(page, 4)
   await expect(zoneChip(page, 'Departure')).toHaveAttribute('aria-pressed', 'true')
   await expect(zoneChip(page, 'Transit')).toHaveAttribute('aria-pressed', 'true')
   await expect(zoneChip(page, 'Arrival')).toHaveAttribute('aria-pressed', 'false')
@@ -196,7 +251,7 @@ test('чипы multi_select: членство переключается, сох
   await expect(page.getByText('Saved')).toBeVisible()
 
   await page.reload()
-  await clickNext(page, 10)
+  await clickNext(page, 4)
   await expect(zoneChip(page, 'Transit')).toHaveAttribute('aria-pressed', 'false')
   await expect(zoneChip(page, 'Departure')).toHaveAttribute('aria-pressed', 'true')
 })
@@ -268,7 +323,7 @@ test('неполная анкета не отправляется и сообщ�
   const url = seed()
   await page.goto(url)
 
-  await clickNext(page, FIELD_STEP_COUNT + 3) // 15 блоков полей + 2 прохода услуг + фото = экран отправки
+  await clickNext(page, FIELD_STEP_COUNT + 3) // 5 шагов полей + 2 прохода услуг + фото = экран отправки
   await page.getByRole('button', { name: 'Submit for review', exact: true }).click()
 
   // Default locale is English — before this fix, `src/app/f/[token]/
@@ -300,7 +355,7 @@ test('отказ при загрузке фото виден рядом со с�
   const url = seed()
   await page.goto(url)
 
-  await clickNext(page, FIELD_STEP_COUNT + 2) // 15 блоков полей + 2 прохода услуг = экран фото
+  await clickNext(page, FIELD_STEP_COUNT + 2) // 5 шагов полей + 2 прохода услуг = экран фото
   await expect(page.getByRole('heading', { name: 'Photos', exact: true })).toBeVisible()
 
   // `/api/photos` checks token, size, MIME, and slot BEFORE it ever touches
@@ -466,8 +521,9 @@ test('III.3.2: повторный выбор «allowed» не стирает в�
   const url = seed()
   await page.goto(url)
 
-  // Блок III.3 «Children Policy» — 8-й экран плоских полей (после I, II.1–4, III.1–2).
-  await clickNext(page, 7)
+  // Блок III.3 «Children Policy» — секция слитого шага «Access & Policies»,
+  // 4-го экрана (после I, Contacts, III.1); заголовок секции — подпись блока.
+  await clickNext(page, 3)
   await expect(page.getByRole('heading', { name: 'Children Policy' })).toBeVisible()
 
   const select = page.getByLabel(/Unaccompanied Children Policy/)
