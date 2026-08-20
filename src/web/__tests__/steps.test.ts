@@ -1,13 +1,48 @@
 import { describe, it, expect } from 'vitest'
-import { buildSteps, stepTitle } from '../FormShell'
+import { buildSteps, stepTitle, MERGED_FIELD_GROUPS } from '../FormShell'
 import { BLOCKS, blockOf } from '@/form-schema'
 import { UI } from '@/i18n/dictionaries'
 
 describe('шаги формы', () => {
-  it('начинается с блоков плоской части в порядке формы', () => {
+  it('начинается с шагов полей, и вместе они несут все fields-блоки в порядке формы', () => {
     const steps = buildSteps()
     const fieldBlocks = BLOCKS.filter((b) => b.kind === 'fields').map((b) => b.key)
-    expect(steps.slice(0, fieldBlocks.length).map((s) => s.blockKey)).toEqual(fieldBlocks)
+    const fieldSteps = steps.filter((s) => s.kind === 'fields')
+    expect(steps.slice(0, fieldSteps.length)).toEqual(fieldSteps)
+    expect(fieldSteps.flatMap((s) => s.blockKeys)).toEqual(fieldBlocks)
+  })
+
+  /**
+   * Разбиение fields-блоков по шагам — закреплено буквально, как и сам
+   * список MERGED_FIELD_GROUPS: слияние — презентация, единица проверки
+   * остаётся блоком (block_reviews в продовой БД, поблочные подтверждения и
+   * замечания), и этот тест — то место, которое НОВЫЙ fields-блок обязан
+   * сломать громко. Вместе с проверкой полноты выше он не оставляет блоку
+   * пути проскочить тихо: появиться 28-м блоком и не попасть сюда нельзя
+   * (полнота выше сойдётся, а это равенство — нет), выпасть из группы — тоже
+   * (не сойдутся оба). Автор нового блока решает его дом здесь сам, а не
+   * получает молча лишний экран.
+   */
+  it('разбиение блоков по шагам — ровно задуманное: I / контакты / график / доступ / место', () => {
+    const fieldSteps = buildSteps().filter((s) => s.kind === 'fields')
+    expect(fieldSteps.map((s) => s.blockKeys)).toEqual([
+      ['I'],
+      ['II.1', 'II.2', 'II.3', 'II.4'],
+      ['III.1'],
+      ['III.2', 'III.3', 'III.4'],
+      ['III.5', 'III.6', 'III.7', 'III.8', 'IV', 'V'],
+    ])
+  })
+
+  it('каждый ключ в MERGED_FIELD_GROUPS — существующий fields-блок, и ни один не назван дважды', () => {
+    const seen = new Set<string>()
+    for (const group of MERGED_FIELD_GROUPS) {
+      for (const key of group.blocks) {
+        expect(blockOf(key)?.kind, `${group.key} → ${key}`).toBe('fields')
+        expect(seen.has(key), `${key} назван дважды`).toBe(false)
+        seen.add(key)
+      }
+    }
   })
 
   it('услуги идут двумя проходами, отбор раньше деталей', () => {
@@ -35,7 +70,7 @@ describe('шаги формы', () => {
   })
 })
 
-// Навигатор перечисляет все 19 шагов по именам из stepTitle — те же имена
+// Навигатор перечисляет все 9 шагов по именам из stepTitle — те же имена
 // стоят в заголовке шелла. Пункт без имени или два пункта с одним именем
 // делают список бесполезным, поэтому оба свойства закреплены здесь, на
 // уровне данных, а не браузера.
@@ -56,12 +91,20 @@ describe('имена шагов (stepTitle)', () => {
     }
   })
 
-  it('шаг с блоком схемы носит подпись самого блока, а не копию', () => {
+  it('шаг с ОДНИМ блоком схемы носит подпись самого блока, а не копию', () => {
     for (const step of buildSteps()) {
-      if (!step.blockKey) continue
+      if (step.blockKeys.length !== 1) continue
       // Тот же объект, не равный текст: имя существует в одном экземпляре.
-      expect(stepTitle(step), step.key).toBe(blockOf(step.blockKey)!.label)
+      expect(stepTitle(step), step.key).toBe(blockOf(step.blockKeys[0]!)!.label)
     }
+  })
+
+  it('слитый шаг носит своё имя из словаря — тот же объект, что в MERGED_FIELD_GROUPS', () => {
+    const steps = buildSteps()
+    const titleOf = (key: string) => stepTitle(steps.find((s) => s.key === key)!)
+    expect(titleOf('fields:contacts')).toBe(UI['form.stepContacts'])
+    expect(titleOf('fields:access')).toBe(UI['form.stepAccess'])
+    expect(titleOf('fields:location')).toBe(UI['form.stepLocation'])
   })
 
   it('проходы по услугам и итоговый шаг берут имена из словаря', () => {

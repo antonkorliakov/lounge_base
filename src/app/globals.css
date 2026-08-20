@@ -57,7 +57,7 @@ body {
 .shell-status { margin-left: auto; font-size: 13px; opacity: .7; }
 .shell-body { padding: 16px 16px 28px; }
 
-/* The thin progress strip, now drawn as 19 discrete segments (one per step,
+/* The thin progress strip, now drawn as 9 discrete segments (one per step,
    filled up to the current one) so it reads as steps, not a percentage.
    Still aria-hidden and non-interactive — a 4px-tall sliver can't be an
    honest 44px tap target; the interactive way to a step is the list under
@@ -87,8 +87,8 @@ body {
 }
 .shell-title-chevron { font-size: 12px; opacity: .55; }
 /* The panel overlays the form (absolute, not in flow — opening it must not
-   shove the fields down) and scrolls internally: 19 × 44px does not fit a
-   phone viewport. Opaque background in both schemes — form content sits
+   shove the fields down) and scrolls internally: 9 × 44px can still outgrow
+   a short phone viewport. Opaque background in both schemes — form content sits
    right underneath. */
 .shell-steps {
   position: absolute;
@@ -130,6 +130,20 @@ body {
   font-size: 12px;
   opacity: .55;
   font-variant-numeric: tabular-nums;
+}
+
+/* Секция блока схемы внутри слитого шага (см. MERGED_FIELD_GROUPS в
+   FormShell.tsx). Заголовок — уровнем ниже заголовка шелла (h1, 18px) и
+   заметно крупнее подписей полей (16px bold): 17px + линия-отбивка, чтобы
+   на длинном экране из нескольких блоков граница «кончился один блок,
+   начался другой» читалась при прокрутке, а не только по тексту. У
+   одноблочного шага заголовка секции нет — его имя уже стоит в шелле. */
+.step-section + .step-section { margin-top: 28px; }
+.step-section-title {
+  font-size: 17px;
+  margin: 0 0 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e4e6ea;
 }
 
 .field { margin-bottom: 20px; }
@@ -362,7 +376,7 @@ button:disabled { opacity: .4; }
    desktop window has. No second breakpoint — nothing in this form gets
    better at 1200px than at 720; the column is the fix, not a fluid scale.
 
-   680px, one width for every step: 15 of the form's 19 steps are field
+   680px, one width for every step: 5 of the form's 9 steps are field
    blocks of single-line inputs under bold labels, and those read best when
    the line the eye returns across is short (~650px of content — 680 minus
    the shell's 16px paddings). Pass-2 cards and the photo step could afford
@@ -913,6 +927,9 @@ button:disabled { opacity: .4; }
     border-color: #2a2d34;
   }
   .pass1-row { border-color: #2a2d34; }
+  /* Отбивка секции слитого шага — та же линия, что у остальных разделителей
+     тёмной темы. */
+  .step-section-title { border-color: #2a2d34; }
   /* Restated AFTER the generic dark `.field input` rule above — same
      later-rule-wins reasoning as .shell-seg-done: without this line the dark
      override repaints the locked field the same #1a1c21 as editable ones,

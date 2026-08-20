@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   FIELDS,
+  blockOf,
   fieldByKey,
   photoSlotByKey,
   serviceItemByKey,
@@ -29,7 +30,7 @@ export function FillForm(props: {
   token: string
   submissionId: string
   /** Статус анкеты на момент открытия ссылки — решает, что показывать: весь
-   *  19-шаговый проход, экран правок по отмеченным полям (см. FixesOnly), или
+   *  9-шаговый проход, экран правок по отмеченным полям (см. FixesOnly), или
    *  (для submitted/approved) закрытый экран только для просмотра статуса —
    *  форма закрыта заполняющему, см. design spec и `EDITABLE_STATUSES` выше. */
   status: SubmissionStatus
@@ -298,7 +299,7 @@ export function FillForm(props: {
           />
           {submitErrorNode()}
         </main>
-        {/* Та же закреплённая панель, что у 19-шагового прохода (см.
+        {/* Та же закреплённая панель, что у 9-шагового прохода (см.
             `.shell-foot`): у этого экрана нет шагов, поэтому в ней стоит
             только отправка — но стоит она там же и выглядит так же, где бы
             заполняющий ни был по списку правок. Один вид нижней панели на обе
@@ -316,19 +317,38 @@ export function FillForm(props: {
     <FormShell status={statusText} onSubmit={submit}>
       {(step) => {
         if (step.kind === 'fields') {
-          return FIELDS.filter((f) => f.block === step.blockKey).map((field) => (
-            <FieldInput
-              key={field.key}
-              field={field}
-              value={fields[field.key]}
-              onChange={(value) => changeField(field.key, value)}
-              error={autosave.rejected[field.key]}
-              // Замок — только здесь, в основном проходе. `FixesOnly` ниже
-              // рендерит свой `FieldInput` без этого пропа, и это его
-              // контракт: отмеченный ответ правится всегда.
-              locked={lockedKeys.has(field.key)}
-            />
-          ))
+          // Шаг может нести несколько блоков схемы (слитый шаг — см.
+          // MERGED_FIELD_GROUPS в FormShell.tsx). Слияние — презентация:
+          // каждый блок внутри шага остаётся собой и подписан СВОИМ label —
+          // теми же словами, которыми ревьюер подтверждает блок и ставит
+          // замечания, — так что «Children Policy» из замечания находится на
+          // экране дословно. Одноблочный шаг секцию не подписывает: его имя
+          // уже стоит заголовком шелла, и второй heading с тем же accessible
+          // name был бы дублем — тот же принцип, по которому проходы услуг
+          // отдали свои <h2> шеллу (см. ServicesPass1).
+          return step.blockKeys.map((blockKey) => {
+            const block = blockOf(blockKey)
+            return (
+              <section key={blockKey} className="step-section">
+                {step.blockKeys.length > 1 && (
+                  <h2 className="step-section-title">{block ? pick(block.label) : blockKey}</h2>
+                )}
+                {FIELDS.filter((f) => f.block === blockKey).map((field) => (
+                  <FieldInput
+                    key={field.key}
+                    field={field}
+                    value={fields[field.key]}
+                    onChange={(value) => changeField(field.key, value)}
+                    error={autosave.rejected[field.key]}
+                    // Замок — только здесь, в основном проходе. `FixesOnly`
+                    // ниже рендерит свой `FieldInput` без этого пропа, и это
+                    // его контракт: отмеченный ответ правится всегда.
+                    locked={lockedKeys.has(field.key)}
+                  />
+                ))}
+              </section>
+            )
+          })
         }
 
         if (step.kind === 'services1') {

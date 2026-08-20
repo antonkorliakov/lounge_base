@@ -10,43 +10,99 @@ export type StepKind = 'fields' | 'services1' | 'services2' | 'photos' | 'review
 export type Step = {
   key: string
   kind: StepKind
-  blockKey: string | null
+  /** Блоки схемы, которые рендерит этот шаг, в порядке показа: у шага полей
+   *  их один или несколько (слитый шаг — см. MERGED_FIELD_GROUPS), у шага
+   *  фото — ровно `['photos']`, у проходов услуг и итогового экрана — ни
+   *  одного. Одноблочный шаг — просто список из одного элемента, а не
+   *  отдельный случай. */
+  blockKeys: string[]
 }
 
 /**
- * Порядок прохождения формы. Услуги идут двумя проходами: сначала отбор
- * всех 58 позиций одним списком, потом детали только по отмеченным.
+ * Слитые шаги — ПРЕЗЕНТАЦИЯ, не структура. Единица проверки остаётся блоком:
+ * `block_reviews` в продовой БД ключуется по ключу блока, ревьюер
+ * подтверждает поблочно, одобрение считает 27 подтверждений, замечания
+ * раскладываются по `blockKeyOf` — ничего из этого слияние не трогает. Здесь
+ * решается только, сколько экранов листает заполняющий: четыре контактных
+ * блока — одна анкета «кто на связи», три блока правил — один экран правил,
+ * шесть блоков про место — один экран про место.
+ *
+ * Список — буквальный перечень ключей блоков, в одном месте. Его полнота
+ * закреплена тестом (`steps.test.ts`): каждый fields-блок из BLOCKS обязан
+ * попасть ровно в один шаг, поэтому новый блок схемы ломает тест громко, и
+ * автор сам решает, в какой шаг блок попадает, — а не тихо получает 28-й
+ * экран или, хуже, блок без экрана.
+ *
+ * Имя слитого шага — своё (`form.step*` в словаре): подпись одного из блоков
+ * не может называть экран, где этих блоков несколько. Подписи самих блоков
+ * никуда не деваются — они стоят заголовками секций внутри шага (см.
+ * рендер полей в `FillForm`), так что язык ревьюера («Children Policy» в
+ * замечании) остаётся дословно виден и заполняющему.
+ */
+export const MERGED_FIELD_GROUPS: readonly {
+  key: string
+  title: Localized
+  blocks: readonly string[]
+}[] = [
+  { key: 'contacts', title: UI['form.stepContacts'], blocks: ['II.1', 'II.2', 'II.3', 'II.4'] },
+  { key: 'access', title: UI['form.stepAccess'], blocks: ['III.2', 'III.3', 'III.4'] },
+  {
+    key: 'location',
+    title: UI['form.stepLocation'],
+    blocks: ['III.5', 'III.6', 'III.7', 'III.8', 'IV', 'V'],
+  },
+]
+
+/**
+ * Порядок прохождения формы. Блоки полей идут в порядке BLOCKS, слитые
+ * группы занимают место своего первого блока. Услуги идут двумя проходами:
+ * сначала отбор всех 58 позиций одним списком, потом детали только по
+ * отмеченным.
  */
 export function buildSteps(): Step[] {
-  const fieldSteps: Step[] = BLOCKS.filter((b) => b.kind === 'fields').map((b) => ({
-    key: `fields:${b.key}`,
-    kind: 'fields',
-    blockKey: b.key,
-  }))
+  const groupOfBlock = new Map<string, (typeof MERGED_FIELD_GROUPS)[number]>()
+  for (const group of MERGED_FIELD_GROUPS) {
+    for (const blockKey of group.blocks) groupOfBlock.set(blockKey, group)
+  }
+
+  const fieldSteps: Step[] = []
+  const emitted = new Set<string>()
+  for (const block of BLOCKS) {
+    if (block.kind !== 'fields') continue
+    const group = groupOfBlock.get(block.key)
+    if (!group) {
+      fieldSteps.push({ key: `fields:${block.key}`, kind: 'fields', blockKeys: [block.key] })
+    } else if (!emitted.has(group.key)) {
+      emitted.add(group.key)
+      fieldSteps.push({ key: `fields:${group.key}`, kind: 'fields', blockKeys: [...group.blocks] })
+    }
+  }
 
   return [
     ...fieldSteps,
-    { key: 'services:pass1', kind: 'services1', blockKey: null },
-    { key: 'services:pass2', kind: 'services2', blockKey: null },
-    { key: 'photos', kind: 'photos', blockKey: 'photos' },
-    { key: 'review', kind: 'review', blockKey: null },
+    { key: 'services:pass1', kind: 'services1', blockKeys: [] },
+    { key: 'services:pass2', kind: 'services2', blockKeys: [] },
+    { key: 'photos', kind: 'photos', blockKeys: ['photos'] },
+    { key: 'review', kind: 'review', blockKeys: [] },
   ]
 }
 
 /**
  * Имя шага — для заголовка шелла и для навигатора, из ОДНОГО места, чтобы
  * пункт списка не мог называться иначе, чем экран, который он открывает.
- * Ни одной новой копии названий: шаги с блоком берут подпись самого блока
- * (как `.shell-title` делал и раньше), проходы по услугам — те же ключи
- * словаря, что их экраны использовали в собственных <h2> (теперь снятых —
- * см. `ServicesPass1`/`ServicesPass2`: заголовок переехал сюда, а не
- * удвоился). Единственное действительно новое имя — у итогового шага
- * (`form.review`): у него имени не было вовсе, а безымянным в списке из 19
- * пунктов быть нельзя никому.
+ * Ни одной новой копии названий: шаг с ОДНИМ блоком берёт подпись самого
+ * блока (как `.shell-title` делал и раньше), слитый шаг — своё имя из
+ * MERGED_FIELD_GROUPS (тот же объект словаря, не копия текста), проходы по
+ * услугам — те же ключи словаря, что их экраны использовали в собственных
+ * <h2> (теперь снятых — см. `ServicesPass1`/`ServicesPass2`: заголовок
+ * переехал сюда, а не удвоился). Итоговый шаг — `form.review`: у него имени
+ * не было вовсе, а безымянным в списке из 9 пунктов быть нельзя никому.
  */
 export function stepTitle(step: Step): Localized {
-  if (step.blockKey) {
-    const block = blockOf(step.blockKey)
+  const group = MERGED_FIELD_GROUPS.find((g) => step.key === `fields:${g.key}`)
+  if (group) return group.title
+  if (step.blockKeys.length === 1) {
+    const block = blockOf(step.blockKeys[0]!)
     if (block) return block.label
   }
   if (step.kind === 'services1') return UI['services.pass1Title']
@@ -124,7 +180,7 @@ export function FormShell(props: {
             {locale === 'en' ? 'RU' : 'EN'}
           </button>
         </div>
-        {/* Ход по форме — 19 сегментов вместо сплошной полосы, чтобы полоса
+        {/* Ход по форме — 9 сегментов вместо сплошной полосы, чтобы полоса
             читалась как шаги, а не как процент. По-прежнему aria-hidden и
             НЕ кликается: сегмент 34×4px не может быть честной тап-целью
             (44px-правило этого файла стилей); интерактивный путь к шагам —
@@ -165,9 +221,10 @@ export function FormShell(props: {
                       type="button"
                       className={i === index ? 'shell-step shell-step-here' : 'shell-step'}
                       aria-current={i === index ? 'step' : undefined}
-                      // Панель длиннее своего окна прокрутки (19 × 44px);
-                      // при открытии текущий шаг должен быть в кадре, иначе
-                      // с 17-го шага список выглядит открытым «не там».
+                      // Панель может быть длиннее своего окна прокрутки
+                      // (9 × 44px на коротком вьюпорте); при открытии текущий
+                      // шаг должен быть в кадре, иначе с последних шагов
+                      // список выглядит открытым «не там».
                       ref={i === index ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
                       onClick={() => goTo(i)}
                     >

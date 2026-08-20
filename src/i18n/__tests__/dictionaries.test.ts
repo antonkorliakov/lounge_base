@@ -19,6 +19,9 @@ describe('словари интерфейса', () => {
       'form.next', 'form.back', 'form.saved', 'form.savingOffline',
       'form.submit', 'form.submitted', 'services.pass1Title',
       'services.pass2Title', 'photos.upload', 'fixes.title',
+      // Имена слитых шагов (MERGED_FIELD_GROUPS в FormShell.tsx): шаг из
+      // нескольких блоков не может носить подпись одного из них.
+      'form.stepContacts', 'form.stepAccess', 'form.stepLocation',
     ]) {
       expect(UI, key).toHaveProperty(key)
     }
