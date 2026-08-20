@@ -1,9 +1,10 @@
-import { eq } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { Localized } from '@/form-schema'
 import type { Db } from '@/db/types'
-import { lounges, submissions, photos } from '@/db/schema'
+import { lounges, submissions, photos, fieldValues, events } from '@/db/schema'
 import { issueFillToken, FILL_TOKEN_TTL_DAYS } from '@/access/tokens'
 import { saveFieldValue } from '@/submissions/values'
+import { EDITABLE_STATUSES } from '@/submissions/editable'
 
 export type CreateLoungeInput = {
   name: string
@@ -143,6 +144,39 @@ export function lockedIdentityKeys(
 }
 
 /**
+ * Единственная запись правил валидности паспорта в исполнимом виде —
+ * извлечена из `createLounge`, когда паспорт стал редактируемым
+ * (`updateLoungePassport` ниже): «те же проверки, что при создании» иначе
+ * были бы вторым рукописным списком, который расползается с первым при
+ * первом же новом правиле. Нормализация — часть валидации, а не отдельный
+ * шаг: наружу уходит уже готовый `IdentityColumns` (trim, IATA через
+ * `normalizeIata`, пустой provider — `null`, см. комментарии внутри), и оба
+ * вызывающих пишут в колонки ровно его.
+ */
+function validateIdentity(
+  input: CreateLoungeInput,
+): { ok: true; identity: IdentityColumns } | { ok: false; error: Localized } {
+  const name = input.name.trim()
+  const iataCode = normalizeIata(input.iataCode)
+  const country = input.country.trim()
+  const city = input.city.trim()
+  const airport = input.airport.trim()
+  // Пустой provider — это «не указан» (колонка nullable), а не пустая строка,
+  // которая в строке реестра рисовалась бы лишним разделителем row-sub.
+  const provider = input.provider?.trim() || null
+
+  if (name === '') return fail('Name is required', 'Название обязательно')
+  if (iataCode === null) {
+    return fail('IATA code must be 3 letters', 'Код IATA — три латинские буквы')
+  }
+  if (country === '') return fail('Country is required', 'Страна обязательна')
+  if (city === '') return fail('City is required', 'Город обязателен')
+  if (airport === '') return fail('Airport is required', 'Аэропорт обязателен')
+
+  return { ok: true, identity: { name, provider, country, city, airport, iataCode } }
+}
+
+/**
  * Завести лаунж из кабинета: строка `lounges` + анкета с предзаполненным
  * паспортом (см. `IDENTITY_PREFILL`) + первый fill-токен. Единственная
  * санкционированная композиция создания: `scripts/ops.ts lounge` теперь
@@ -172,27 +206,16 @@ export async function createLounge(
   db: Db,
   input: CreateLoungeInput,
 ): Promise<CreateLoungeResult> {
-  const name = input.name.trim()
-  const iataCode = normalizeIata(input.iataCode)
-  const country = input.country.trim()
-  const city = input.city.trim()
-  const airport = input.airport.trim()
-  // Пустой provider — это «не указан» (колонка nullable), а не пустая строка,
-  // которая в строке реестра рисовалась бы лишним разделителем row-sub.
-  const provider = input.provider?.trim() || null
-
-  if (name === '') return fail('Name is required', 'Название обязательно')
-  if (iataCode === null) {
-    return fail('IATA code must be 3 letters', 'Код IATA — три латинские буквы')
-  }
-  if (country === '') return fail('Country is required', 'Страна обязательна')
-  if (city === '') return fail('City is required', 'Город обязателен')
-  if (airport === '') return fail('Airport is required', 'Аэропорт обязателен')
+  // Валидация и нормализация — общие с редактированием паспорта
+  // (`validateIdentity` выше): одно правило, один дом.
+  const validated = validateIdentity(input)
+  if (!validated.ok) return validated
+  const identity = validated.identity
 
   return db.transaction(async (tx) => {
     const [lounge] = await tx
       .insert(lounges)
-      .values({ name, iataCode, provider, country, city, airport })
+      .values(identity)
       .returning({ id: lounges.id })
     const [submission] = await tx
       .insert(submissions)
@@ -221,7 +244,6 @@ export async function createLounge(
     // проверки выше), поэтому он не превращается в `fail(...)`, а роняет
     // транзакцию: вернуть `ok: false` из колбэка — значит ЗАКОММИТИТЬ
     // наполовину созданный лаунж.
-    const identity: IdentityColumns = { name, provider, country, city, airport, iataCode }
     for (const entry of IDENTITY_PREFILL) {
       const value = identity[entry.column]
       if (value === null || value === '') continue
@@ -242,6 +264,285 @@ export async function createLounge(
       token,
       expiresAt,
     }
+  })
+}
+
+export type UpdateLoungePassportInput = CreateLoungeInput & {
+  loungeId: string
+  actor: string
+}
+
+export type UpdatePassportResult = { ok: true } | { ok: false; error: Localized }
+
+/** Событие правки паспорта — одна константа на запись и на чтение
+ *  (`passportHistory` отбирает по ней же), тот же приём, что
+ *  `OPERATIONAL_STATUS_EVENT` в `registry/status.ts`. */
+export const PASSPORT_EDIT_EVENT = 'passport_edited'
+
+/**
+ * Приписать значение колонки в частичный патч. Отдельная генерик-функция,
+ * а не строка в цикле, потому что TypeScript не сужает коррелированную пару
+ * «ключ + значение по этому ключу» внутри цикла по union ключей: без неё
+ * присваивание требует каста, а каст здесь прятал бы ровно ту ошибку
+ * (значение не той колонки), которую типы должны ловить.
+ */
+function assignColumn<K extends keyof IdentityColumns>(
+  patch: Partial<IdentityColumns>,
+  source: IdentityColumns,
+  key: K,
+): void {
+  patch[key] = source[key]
+}
+
+/**
+ * Правка паспорта лаунжа из кабинета — единственный честный путь исправить
+ * опечатку в названии/городе/IATA БЕЗ цикла «оператор заполнил → ревьюер
+ * отметил → оператор исправил → принятие» (тот работает только у анкеты,
+ * дошедшей до `submitted`, и чужими руками). Валидация — та же, что при
+ * создании, через общий `validateIdentity`: правил два набора быть не может.
+ *
+ * ОДНА ТРАНЗАКЦИЯ, `FOR UPDATE` НА СТРОКЕ `lounges` ПЕРВЫМ ОПЕРАТОРОМ — это
+ * read-then-write формы guard'а семьи 2 (`loungeLockViolationsIn`): и патч
+ * колонок, и синхронизация ответов ниже ВЫВОДЯТСЯ из прочитанных старых
+ * значений, и без блокировки две одновременные правки прочитали бы один и
+ * тот же `current`, записали бы два события с одинаковым `from`, а
+ * синхронизация сравнивала бы ответы с уже несуществующим «старым» —
+ * ровно та потеря цепочки, ради которой guard существует.
+ *
+ * СИНХРОНИЗАЦИЯ ОТВЕТОВ (правило согласовано с пользователем): у анкет в
+ * редактируемых статусах (`EDITABLE_STATUSES` — draft/changes_requested)
+ * ответ предзаполненного поля, который оператор НЕ ТРОГАЛ (дословно, после
+ * trim, равен СТАРОМУ значению колонки — то же сравнение, каким
+ * `lockedIdentityKeys` решает «замкнуто ли»), переписывается новым значением;
+ * тронутый оператором — не трогается никогда; `submitted`/`approved` анкеты
+ * не трогаются вовсе. Название (I.2) участвует наравне с остальными: оно
+ * предзаполняется, и непочатое обязано следовать за паспортом. Замки формы
+ * из этого ВЫВОДЯТСЯ, а не назначаются: синхронизированный ответ снова
+ * дословно равен колонке — замок стоит с новым значением; разошедшийся уже
+ * был отперт и остаётся отперт. Два края, решённые здесь и закреплённые
+ * тестами:
+ *  - ОТСУТСТВУЮЩИЙ ответ — не «непочатое предзаполнение», а «предзаполнения
+ *    не было» (лаунж старше фичи, пустой provider при создании): выдумывать
+ *    оператору ответ, которого он не видел, синхронизация не вправе — поле
+ *    остаётся без ответа и без замка, как было.
+ *  - Колонка, ставшая ПУСТОЙ (только provider — остальные обязательны):
+ *    записать «ничего» в обязательное текстовое поле `saveFieldValue` не
+ *    даст (`This field is required`), поэтому ответ остаётся старым и,
+ *    разойдясь с колонкой, отпирается — оператор снова хозяин поля.
+ *
+ * Запись ответов — через НАСТОЯЩИЙ `saveFieldValue`, тем же приёмом, что
+ * предзаполнение в `createLounge` (вызов с `tx` даёт SAVEPOINT, не вторую
+ * транзакцию; его `assertEditable` берёт `FOR UPDATE` на строку
+ * `submissions`, которую эта транзакция УЖЕ держит — см. блокировку ниже, —
+ * так что ждать некому). Его отказ здесь недостижим через валидные входы
+ * (строки анкет заперты этой же транзакцией, значения — непустые строки
+ * настоящих текстовых полей, см. анти-вакуум в `prefill-lock.test.ts`),
+ * поэтому не превращается в `fail(...)`, а роняет транзакцию целиком:
+ * `ok: false` из колбэка закоммитил бы патч колонок без синхронизации.
+ *
+ * Редактируемые анкеты запираются (`FOR UPDATE` на их строках `submissions`)
+ * ДО записи ответов: статус-переходы (`submitSubmission`, `requestChanges`,
+ * `approveSubmission`) берут ту же строку первым оператором, так что между
+ * «прочитали статус» и «записали ответ» анкета не может уехать в
+ * `submitted` — предикат перепроверяется при захвате (READ COMMITTED,
+ * EvalPlanQual: строка, сменившая статус между снимком и блокировкой, из
+ * выборки выпадает).
+ *
+ * Про порядок блокировок, честно: эта транзакция берёт `lounges`, ПОТОМ
+ * строки `submissions` — а `approveSubmission` наоборот (лочит `submissions`,
+ * потом его слепой UPDATE берёт лок строки `lounges`). Противоположный
+ * порядок — это форма цикла, но собраться ему почти не из чего: принятие
+ * держит строку АНКЕТЫ В СТАТУСЕ `submitted`, а эта транзакция ждёт только
+ * строки, которые её же снимок видел draft/changes_requested, — то есть окно
+ * требует, чтобы между нашим снимком и захватом успели закоммититься
+ * отправка анкеты И начаться её принятие, дошедшее до записи `lounges`.
+ * Если это всё же случится, Postgres разорвёт цикл сам (deadlock detector,
+ * ~1s): одна из транзакций упадёт и откатится ЦЕЛИКОМ — атомарность обеих
+ * сторон не страдает, цена — ошибка «попробуйте ещё раз» у одного из двух
+ * людей, одновременно правивших один лаунж. Устранить окно совсем можно
+ * только развернув здесь порядок на «submissions раньше lounges», но это
+ * подарило бы тот же цикл `deleteLounge` (он лочит `lounges`, а его каскадный
+ * DELETE берёт строки `submissions` — L→S); общего порядка, устраивающего
+ * всех трёх писателей, у этих таблиц нет, и выбран порядок, при котором
+ * гонка требует самой длинной цепочки совпадений.
+ *
+ * Правка без изменений (все шесть значений совпали) — успех БЕЗ записи и без
+ * события: «изменено: ничего» в истории было бы шумом, а не фактом.
+ */
+export async function updateLoungePassport(
+  db: Db,
+  input: UpdateLoungePassportInput,
+): Promise<UpdatePassportResult> {
+  // Валидация до всякого обращения к базе — как у `setOperationalStatus`:
+  // отказ по неверному вводу не нуждается ни в чтении, ни в блокировке.
+  const validated = validateIdentity(input)
+  if (!validated.ok) return validated
+  const next = validated.identity
+
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({
+        name: lounges.name,
+        provider: lounges.provider,
+        country: lounges.country,
+        city: lounges.city,
+        airport: lounges.airport,
+        iataCode: lounges.iataCode,
+      })
+      .from(lounges)
+      .where(eq(lounges.id, input.loungeId))
+      .for('update')
+      .limit(1)
+
+    const current = rows[0]
+    if (!current) return fail('Lounge not found', 'Лаунж не найден')
+
+    const changed = IDENTITY_PREFILL.map((entry) => entry.column).filter(
+      (column) => current[column] !== next[column],
+    )
+    if (changed.length === 0) return { ok: true }
+
+    const patch: Partial<IdentityColumns> = {}
+    for (const column of changed) assignColumn(patch, next, column)
+    await tx.update(lounges).set(patch).where(eq(lounges.id, input.loungeId))
+
+    // Кандидаты синхронизации: изменённые колонки, у которых есть и СТАРОЕ
+    // значение (ответу было с чем совпадать), и НОВОЕ непустое (обязательному
+    // текстовому полю есть что записать) — оба края разобраны в комментарии
+    // функции.
+    const syncable = IDENTITY_PREFILL.filter(
+      (entry) =>
+        changed.includes(entry.column) &&
+        current[entry.column] !== null &&
+        next[entry.column] !== null,
+    )
+
+    if (syncable.length > 0) {
+      const editable = await tx
+        .select({ id: submissions.id })
+        .from(submissions)
+        .where(
+          and(
+            eq(submissions.loungeId, input.loungeId),
+            inArray(submissions.status, [...EDITABLE_STATUSES]),
+          ),
+        )
+        .for('update')
+
+      if (editable.length > 0) {
+        const answers = await tx
+          .select({
+            submissionId: fieldValues.submissionId,
+            fieldKey: fieldValues.fieldKey,
+            value: fieldValues.value,
+          })
+          .from(fieldValues)
+          .where(
+            and(
+              inArray(fieldValues.submissionId, editable.map((row) => row.id)),
+              inArray(fieldValues.fieldKey, syncable.map((entry) => entry.fieldKey)),
+            ),
+          )
+
+        for (const answer of answers) {
+          const entry = syncable.find((item) => item.fieldKey === answer.fieldKey)!
+          const previous = current[entry.column]!
+          if (typeof answer.value !== 'string') continue
+          if (answer.value.trim() !== previous.trim()) continue
+
+          const saved = await saveFieldValue(tx, {
+            submissionId: answer.submissionId,
+            fieldKey: answer.fieldKey,
+            value: next[entry.column],
+          })
+          if (!saved.ok) {
+            throw new Error(
+              `updateLoungePassport: sync ${answer.fieldKey} refused — ${saved.error.en}`,
+            )
+          }
+        }
+      }
+    }
+
+    await tx.insert(events).values({
+      loungeId: input.loungeId,
+      actor: input.actor,
+      action: PASSPORT_EDIT_EVENT,
+      payload: {
+        changed: Object.fromEntries(
+          changed.map((column) => [column, { from: current[column], to: next[column] }]),
+        ),
+      },
+    })
+
+    return { ok: true }
+  })
+}
+
+export type PassportEdit = {
+  actor: string
+  at: Date
+  changes: { column: keyof IdentityColumns; from: string | null; to: string | null }[]
+}
+
+const IDENTITY_COLUMN_SET: ReadonlySet<string> = new Set(
+  IDENTITY_PREFILL.map((entry) => entry.column),
+)
+
+const isNullableString = (value: unknown): value is string | null =>
+  value === null || typeof value === 'string'
+
+/**
+ * Разбор payload события правки — защитный, по образцу `asStatusChange`
+ * (`registry/status.ts`): `jsonb` ничего не обещает, и запись миграцией или
+ * руками не должна превращаться в объект с `undefined` внутри. Ключи не из
+ * `IDENTITY_PREFILL` и пары не из nullable-строк отбрасываются по одной;
+ * событие, у которого не осталось ни одной разбираемой пары, выпадает целиком.
+ */
+function asPassportChanges(payload: unknown): PassportEdit['changes'] | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const changed = (payload as Record<string, unknown>)['changed']
+  if (typeof changed !== 'object' || changed === null) return null
+
+  const changes: PassportEdit['changes'] = []
+  for (const [column, value] of Object.entries(changed)) {
+    if (!IDENTITY_COLUMN_SET.has(column)) continue
+    if (typeof value !== 'object' || value === null) continue
+    const pair = value as Record<string, unknown>
+    if (!isNullableString(pair['from']) || !isNullableString(pair['to'])) continue
+    changes.push({
+      column: column as keyof IdentityColumns,
+      from: pair['from'],
+      to: pair['to'],
+    })
+  }
+  return changes.length > 0 ? changes : null
+}
+
+/**
+ * История правок паспорта, старые записи первыми — читатель события
+ * `PASSPORT_EDIT_EVENT` (событие без читателя — write-only класс дефекта I2,
+ * см. историю `statusHistory`). В историю СМЕН СТАТУСА (`statusHistory`) эти
+ * события осознанно НЕ включены: та отбирает по своему `action` и разбирает
+ * payload в форму «from-статус → to-статус», в которую правка колонок не
+ * укладывается — `asStatusChange` молча выронил бы такие записи, а
+ * расширение его формы ради второго смысла сделало бы обе истории хуже.
+ * Раздельные события — раздельные читатели; показывает эту историю
+ * раскрывашка панели правки паспорта (`EditPassport`).
+ */
+export async function passportHistory(
+  db: Db,
+  loungeId: string,
+): Promise<PassportEdit[]> {
+  const rows = await db
+    .select({ actor: events.actor, payload: events.payload, at: events.at })
+    .from(events)
+    .where(and(eq(events.loungeId, loungeId), eq(events.action, PASSPORT_EDIT_EVENT)))
+    .orderBy(asc(events.at))
+
+  return rows.flatMap((row) => {
+    const changes = asPassportChanges(row.payload)
+    return changes ? [{ actor: row.actor, at: row.at, changes }] : []
   })
 }
 
