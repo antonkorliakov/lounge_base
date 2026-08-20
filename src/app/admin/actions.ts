@@ -5,7 +5,13 @@ import { del } from '@vercel/blob'
 import { db } from '@/db/client'
 import { requireSession } from '@/access/session'
 import { setOperationalStatus, statusHistory } from '@/registry/status'
-import { createLounge, deleteLounge, type CreateLoungeInput } from '@/registry/manage'
+import {
+  createLounge,
+  deleteLounge,
+  updateLoungePassport,
+  passportHistory,
+  type CreateLoungeInput,
+} from '@/registry/manage'
 import type { Localized } from '@/form-schema'
 import type { OperationalStatus } from '@/db/schema'
 import type { ActionResult } from './s/[submissionId]/actions'
@@ -130,6 +136,62 @@ export async function createLoungeAction(
   revalidatePath('/admin')
   const base = process.env.APP_URL ?? 'http://localhost:3000'
   return { ok: true, fillUrl: `${base}/f/${result.token}` }
+}
+
+/**
+ * Править паспорт лаунжа из реестра. Общий `ActionResult` (успех данных не
+ * несёт), `requireSession()` первым оператором, `revalidatePath` только после
+ * успеха — все три решения и их доводы те же, что у `setStatusAction` выше.
+ * Валидация и вся семантика (какие ответы анкет следуют за колонками) — внутри
+ * `updateLoungePassport`: правило одно и живёт в `registry/manage.ts`.
+ */
+export async function updatePassportAction(
+  loungeId: string,
+  input: CreateLoungeInput,
+): Promise<ActionResult> {
+  const session = await requireSession()
+
+  const result = await updateLoungePassport(db(), {
+    ...input,
+    loungeId,
+    actor: session.email,
+  })
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath('/admin')
+  return { ok: true }
+}
+
+/**
+ * Запись истории правок паспорта — в готовом для показа виде, тот же контракт,
+ * что у `StatusHistoryEntry`: `at` — ISO-строкой (клиенту нужен день), колонки
+ * остаются машинными именами, подписи к ним у клиента уже есть (те же шесть
+ * полей, которыми рисуется форма правки, — см. `EditPassport`).
+ */
+export type PassportHistoryEntry = {
+  actor: string
+  at: string
+  changes: { column: string; from: string | null; to: string | null }[]
+}
+
+/**
+ * История правок паспорта — для раскрывашки в панели правки. Читается ПО
+ * ЗАПРОСУ (клик), не в строках реестра, и требует сессии — те же доводы, что
+ * у `statusHistoryAction` выше. Отдельное действие, а не расширение того:
+ * события разной формы читаются разными читателями (см. `passportHistory`
+ * в `registry/manage.ts` — почему правки паспорта не в `statusHistory`).
+ */
+export async function passportHistoryAction(
+  loungeId: string,
+): Promise<PassportHistoryEntry[]> {
+  await requireSession()
+
+  const edits = await passportHistory(db(), loungeId)
+  return edits.map((edit) => ({
+    actor: edit.actor,
+    at: edit.at.toISOString(),
+    changes: edit.changes,
+  }))
 }
 
 /**

@@ -730,10 +730,25 @@ button:disabled { opacity: .4; }
    не растягивался на весь экран ради URL в ~60 знаков. */
 .link-reveal { display: flex; flex-direction: column; gap: 8px; max-width: 560px; font-size: 13px; }
 /* Удаление лаунжа: неброский «×» в конце строки (редкая операция — красная
-   кнопка на каждой строке кричала бы попусту) и диалог с набором названия. */
-.dl-cell { text-align: right; }
-.dl-open { min-height: 0; border: none; background: none; font: inherit; font-size: 15px; line-height: 1; opacity: .35; cursor: pointer; padding: 2px 6px; }
-.dl-open:hover, .dl-open:focus-visible { opacity: .85; }
+   кнопка на каждой строке кричала бы попусту) и диалог с набором названия.
+   Тот же неброский стиль — у «✎» правки паспорта (`EditPassport`): второй
+   контрол той же ячейки, те же доводы, одно правило на оба. */
+.dl-cell { text-align: right; white-space: nowrap; }
+/* Оба контейнера — inline-block: «✎» и «×» стоят В СТРОЧКУ, а раскрытая
+   панель любого из них растёт под ними, не ломая соседа. Панелям —
+   white-space обратно: nowrap ячейки склеил бы их тексты в простыню. */
+.dl, .ep { display: inline-block; vertical-align: top; }
+.dl-panel, .ep-panel { white-space: normal; }
+.dl-open, .ep-open { min-height: 0; border: none; background: none; font: inherit; font-size: 15px; line-height: 1; opacity: .35; cursor: pointer; padding: 2px 6px; }
+.dl-open:hover, .dl-open:focus-visible, .ep-open:hover, .ep-open:focus-visible { opacity: .85; }
+/* Панель правки паспорта — вокабуляр .al-panel (al-title/al-field работают
+   как есть), но в ячейке строки и уже: таблица не должна распахиваться. */
+.ep-panel {
+  margin-top: 6px; padding: 10px; border: 1px solid #cfd9ea; border-radius: 8px;
+  width: 250px; text-align: left; font-size: 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.ep-note { margin: 0; font-size: 11px; opacity: .7; }
 .dl-panel {
   margin-top: 6px; padding: 10px; border: 1px solid #fca5a5; border-radius: 8px;
   width: 250px; text-align: left; font-size: 12px;
@@ -1006,6 +1021,9 @@ button:disabled { opacity: .4; }
     border-color: #2a2d34;
   }
   .al-once { color: #fcd34d; }
+  /* Панель правки паспорта — нейтральная рамка на тёмную, как .al-panel;
+     её инпуты уже накрыты правилом .al-field input выше. */
+  .ep-panel { border-color: #2a2d34; }
   .dl-panel { border-color: #5b2323; }
   .dl-warning { color: #fca5a5; }
   /* Экран команды — те же замены и те же доводы, что у панелей реестра выше:

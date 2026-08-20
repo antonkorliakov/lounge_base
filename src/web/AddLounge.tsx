@@ -18,8 +18,11 @@ const CREATED: Localized = {
 
 /** Поля формы = обязательные колонки `lounges` + provider. Страна/город/
  *  аэропорт обязательны, в отличие от консольного ops.ts, — см. `createLounge`
- *  (пустые строки всплывали бы пустыми пунктами в фильтрах реестра). */
-const FIELDS: { key: FieldKey; label: Localized; required: boolean }[] = [
+ *  (пустые строки всплывали бы пустыми пунктами в фильтрах реестра).
+ *  Экспортируется: `EditPassport` рисует ТЕ ЖЕ шесть полей с теми же
+ *  подписями — второй рукописный список разъезжался бы с первым (класс
+ *  расползания, который эта ветка ловит не первый раз). */
+export const PASSPORT_FIELDS: { key: PassportFieldKey; label: Localized; required: boolean }[] = [
   { key: 'name', label: { en: 'Name*', ru: 'Название*' }, required: true },
   { key: 'iataCode', label: { en: 'IATA code*', ru: 'Код IATA*' }, required: true },
   { key: 'provider', label: { en: 'Provider', ru: 'Провайдер' }, required: false },
@@ -27,9 +30,10 @@ const FIELDS: { key: FieldKey; label: Localized; required: boolean }[] = [
   { key: 'city', label: { en: 'City*', ru: 'Город*' }, required: true },
   { key: 'airport', label: { en: 'Airport*', ru: 'Аэропорт*' }, required: true },
 ]
-type FieldKey = 'name' | 'iataCode' | 'provider' | 'country' | 'city' | 'airport'
+export type PassportFieldKey =
+  | 'name' | 'iataCode' | 'provider' | 'country' | 'city' | 'airport'
 
-const EMPTY: Record<FieldKey, string> = {
+const EMPTY: Record<PassportFieldKey, string> = {
   name: '', iataCode: '', provider: '', country: '', city: '', airport: '',
 }
 
@@ -47,7 +51,7 @@ const EMPTY: Record<FieldKey, string> = {
 export function AddLounge(): React.JSX.Element {
   const { pick } = useLocale()
   const [open, setOpen] = useState(false)
-  const [values, setValues] = useState<Record<FieldKey, string>>(EMPTY)
+  const [values, setValues] = useState<Record<PassportFieldKey, string>>(EMPTY)
   const [error, setError] = useState<Localized | null>(null)
   const [busy, setBusy] = useState(false)
   const [fillUrl, setFillUrl] = useState<string | null>(null)
@@ -91,7 +95,7 @@ export function AddLounge(): React.JSX.Element {
       {fillUrl === null ? (
         <>
           <p className="al-title">{pick(TITLE)}</p>
-          {FIELDS.map((field) => (
+          {PASSPORT_FIELDS.map((field) => (
             <label key={field.key} className="al-field">
               {pick(field.label)}
               <input

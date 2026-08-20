@@ -49,7 +49,8 @@ vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 
 vi.mock('@vercel/blob', () => ({ del: blob.del }))
 
-const { createLoungeAction, deleteLoungeAction } = await import('../actions')
+const { createLoungeAction, deleteLoungeAction, updatePassportAction, passportHistoryAction } =
+  await import('../actions')
 
 const INPUT = {
   name: 'Aurora Lounge',
@@ -184,6 +185,59 @@ describe('createLoungeAction: лаунж + анкета + первая ссыл�
     }
     expect(await db.select().from(lounges)).toEqual([])
     expect(await db.select().from(fillTokens)).toEqual([])
+  })
+})
+
+describe('updatePassportAction: правка паспорта из реестра', () => {
+  it('меняет колонки, пишет событие с почтой сессии, история читается действием', async () => {
+    const db = holder.db!
+    await createLoungeAction(INPUT)
+    const [lounge] = await db.select({ id: lounges.id }).from(lounges)
+
+    const result = await updatePassportAction(lounge!.id, { ...INPUT, city: 'Ankara' })
+    expect(result).toEqual({ ok: true })
+
+    const [row] = await db.select().from(lounges)
+    expect(row).toMatchObject({ city: 'Ankara', iataCode: 'IST' })
+
+    // Актор события — почта сессии (`requireSession`), другого имени у
+    // администратора в системе нет; история отдаётся готовой к показу.
+    const history = await passportHistoryAction(lounge!.id)
+    expect(history).toHaveLength(1)
+    expect(history[0]).toMatchObject({
+      actor: 'reviewer@easyto.travel',
+      changes: [{ column: 'city', from: 'Istanbul', to: 'Ankara' }],
+    })
+  })
+
+  it('отказ — значением с полным Localized, колонки целы', async () => {
+    const db = holder.db!
+    await createLoungeAction(INPUT)
+    const [lounge] = await db.select({ id: lounges.id }).from(lounges)
+
+    const result = await updatePassportAction(lounge!.id, { ...INPUT, iataCode: 'ISTX' })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.error.en).not.toBe('')
+    expect(result.error.ru).not.toBe('')
+
+    const [row] = await db.select().from(lounges)
+    expect(row).toMatchObject({ city: 'Istanbul', iataCode: 'IST' })
+  })
+
+  it('без сессии (fill-токен) не меняет ничего — ни правка, ни чтение истории', async () => {
+    const db = holder.db!
+    await createLoungeAction(INPUT)
+    const [lounge] = await db.select({ id: lounges.id }).from(lounges)
+
+    holder.noSession = true
+    await expect(updatePassportAction(lounge!.id, { ...INPUT, city: 'Ankara' }))
+      .rejects.toThrow(/no session/)
+    await expect(passportHistoryAction(lounge!.id)).rejects.toThrow(/no session/)
+
+    holder.noSession = false
+    const [row] = await db.select().from(lounges)
+    expect(row).toMatchObject({ city: 'Istanbul' })
   })
 })
 

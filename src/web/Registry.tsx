@@ -11,6 +11,7 @@ import { RegistryFiltersBar, type FilterOptions, type SubmissionStateOption } fr
 import { StatusEditor, type OperationalStatusMeta } from './StatusEditor'
 import { AddLounge } from './AddLounge'
 import { DeleteLounge } from './DeleteLounge'
+import { EditPassport } from './EditPassport'
 
 /**
  * Строка таблицы реестра — уже посчитанная сервером, а не сырой
@@ -62,10 +63,11 @@ const HEADERS: { key: string; label: Localized }[] = [
   // имени у ревьюера в системе нет.
   { key: 'reviewer', label: { en: 'Reviewer', ru: 'Ревьюер' } },
 ]
-// Колонка удаления — без текстового заголовка (в ней один неброский контрол,
-// см. `DeleteLounge`), но НЕ без имени: у скринридера пустой заголовок — это
-// колонка-загадка. Подпись — visually-hidden текстом, не aria-label на th.
-const DELETE_HEADER: Localized = { en: 'Delete', ru: 'Удаление' }
+// Колонка действий строки (правка паспорта и удаление) — без текстового
+// заголовка (в ней два неброских контрола, см. `EditPassport`/`DeleteLounge`),
+// но НЕ без имени: у скринридера пустой заголовок — это колонка-загадка.
+// Подпись — visually-hidden текстом, не aria-label на th.
+const ROW_ACTIONS_HEADER: Localized = { en: 'Actions', ru: 'Действия' }
 const UNAPPROVED_XLSX: Localized = {
   en: 'Excel, incl. unapproved',
   ru: 'Excel, включая непринятые',
@@ -170,7 +172,7 @@ export function Registry(props: {
               <th key={header.key}>{pick(header.label)}</th>
             ))}
             <th>
-              <span className="vh">{pick(DELETE_HEADER)}</span>
+              <span className="vh">{pick(ROW_ACTIONS_HEADER)}</span>
             </th>
           </tr>
         </thead>
@@ -231,9 +233,23 @@ export function Registry(props: {
               {/* «—», как у остальных пустых ячеек этой таблицы: анкету ещё
                   никто не проверял — обычное состояние, а не ошибка. */}
               <td>{row.reviewerId ?? '—'}</td>
-              {/* Удаление — в конце строки, неброско: операция редкая, и её
-                  контрол не должен спорить за внимание с данными строки. */}
+              {/* Действия строки — в конце, неброско: операции редкие, и их
+                  контролы не должны спорить за внимание с данными строки.
+                  Правка паспорта — ЗДЕСЬ, а не на экране проверки: у паспорта
+                  один дом (строка реестра, которая его и показывает), экран
+                  проверки ссылается обратно на реестр. */}
               <td className="dl-cell">
+                <EditPassport
+                  loungeId={row.loungeId}
+                  current={{
+                    name: row.name,
+                    provider: row.provider,
+                    country: row.country,
+                    city: row.city,
+                    airport: row.airport,
+                    iataCode: row.iataCode,
+                  }}
+                />
                 <DeleteLounge loungeId={row.loungeId} name={row.name} />
               </td>
             </tr>
