@@ -592,12 +592,14 @@ async function main(): Promise<void> {
   // e2e видит замки предзаполненных полей на форме заполнения. Прямой insert
   // остаётся только у `seedFleet` выше: те два лаунжа сознательно БЕЗ анкет
   // (данные реестра), а `createLounge` анкету заводит всегда.
+  // Страна/город/аэропорт больше не передаются: `createLounge` выводит их из
+  // кода IATA справочником аэропортов — а значит, сид ТРЕБУЕТ импортированного
+  // справочника (`npm run db:import-airports`; e2e полагаются на него и так,
+  // см. e2e/directory.spec.ts). На пустом справочнике отказ честный и называет
+  // лекарство.
   const created = await createLounge(db, {
     name: loungeName,
     provider: 'Çelebi',
-    country: 'Turkey',
-    city: 'Istanbul',
-    airport: 'Istanbul Airport',
     iataCode: 'IST',
   })
   if (!created.ok) {

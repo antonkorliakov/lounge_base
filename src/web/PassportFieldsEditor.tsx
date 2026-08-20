@@ -38,9 +38,12 @@ export type PassportFieldKey =
 const DERIVED_KEYS: ReadonlySet<PassportFieldKey> = new Set(['airport', 'city', 'country'])
 
 const FROM_DIRECTORY: Localized = { en: 'from directory:', ru: 'из справочника:' }
+// Промах справочника — не приглашение набрать тройку руками (этот путь
+// удалён), а объяснение отказа: сервер (`resolveIdentity`) неизвестный код
+// не примет, и кнопка родителя выключена, пока справочник не ответил кодом.
 const NOT_FOUND: Localized = {
-  en: 'code not found in the directory — fill in manually',
-  ru: 'код не найден в справочнике — заполните вручную',
+  en: 'code not found in the airport directory — a lounge can only be created for an airport from the directory; new airports are added by updating the directory',
+  ru: 'код не найден в справочнике аэропортов — лаунж можно завести только для аэропорта из справочника; новый аэропорт добавляется обновлением справочника',
 }
 const FIND_AIRPORT: Localized = { en: 'Find airport', ru: 'Найти аэропорт' }
 const NOTHING_FOUND: Localized = { en: 'nothing found', ru: 'ничего не найдено' }
@@ -69,7 +72,8 @@ const pickedLabel = (row: DirectoryRow): string => `${row.iata} — ${row.airpor
  * (`onPick` → onPatch({ iataCode })), а заполнение и замок производных
  * полей делает ТОТ ЖЕ эффект полного кода, что и при ручном наборе, —
  * одно правило заполнения, а не второе. Поэтому же ручной набор кода и
- * промах справочника («заполните вручную») этим полем не затронуты.
+ * промах справочника (объяснение отказа, см. NOT_FOUND) этим полем не
+ * затронуты.
  *
  * Доступность — родной ARIA-комбобокс без библиотеки: role="combobox" с
  * aria-expanded/aria-activedescendant на инпуте, listbox с option'ами,
@@ -207,22 +211,37 @@ function AirportSearch(props: { onPick: (row: DirectoryRow) => void }): React.JS
 }
 
 /**
- * Шесть полей паспорта с подсказкой справочника аэропортов — общее ТЕЛО форм
+ * Шесть полей паспорта с выводом из справочника аэропортов — общее ТЕЛО форм
  * «Add lounge» и «Править паспорт» (состояние, действия и кнопки остаются у
  * родителей: у них разные действия и разные результаты).
+ *
+ * Аэропорт/город/страна — ЧИСТЫЙ ПОКАЗ, не ввод: ручной путь удалён вместе с
+ * этими полями в контракте действия (`CreateLoungeInput` в
+ * `registry/manage.ts` их больше не принимает). Рисуются они прежними
+ * визуальными боксами — теми же `<input>` в `<label>` (это сохраняет подписи,
+ * доступные имена и раскладку формы), но НАВСЕГДА `readOnly`, без onChange и
+ * с `tabIndex={-1}`: поле, в которое нельзя ввести, не должно быть
+ * остановкой Tab, а значения из него никогда не уходят в действие — родители
+ * шлют только имя/провайдер/код.
  *
  * Как работает справочник: как только набранный код становится ПОЛНЫМ
  * (нормализуется `normalizeIata` — та же единственная запись правила, что на
  * сервере), спрашивается `lookupIataAction`. Триггер — полнота кода, а не
  * blur и не таймер: три буквы — дискретное событие, второй запрос по тому же
  * коду не случается (guard по `lookup.code`), а честность «что будет
- * сохранено» не должна ждать ухода фокуса. Найден — тройка производных полей
- * заполняется значениями справочника и становится read-only с подписью
- * «из справочника: IST»; не найден — честное «код не найден в справочнике —
- * заполните вручную», и тройка остаётся редактируемой (справочник — не
- * истина в последней инстанции). Это ПОДСКАЗКА: сервер при сохранении
- * выводит тройку из справочника заново (`resolveIdentity` в
- * `registry/manage.ts`) — клиентский обход read-only ничего не даёт.
+ * сохранено» не должна ждать ухода фокуса. Найден — тройка показывает
+ * значения справочника с подписью «из справочника: IST»; не найден — подпись
+ * объясняет ОТКАЗ (`NOT_FOUND` — то же правило, что скажет сервер), тройка
+ * продолжает показывать прежние значения (у правки паспорта это текущие
+ * колонки строки — стирать с экрана правду базы не за что), а Create/Save
+ * родителя выключены через `onResolved` ниже. Это подсказка поверх ворот:
+ * сервер выводит тройку из справочника заново и неизвестный код НЕ примет
+ * (`resolveIdentity`) — клиентский обход ничего не даёт.
+ *
+ * `onResolved` — клиентская половина ворот для кнопок родителей: true ⟺
+ * набранный код полон И найден справочником. Сообщается эффектом (ответ
+ * справочника асинхронный), false при каждом недорешённом состоянии — код
+ * неполон, запрос в пути, промах.
  *
  * `onPatch` — частичный патч через функциональный setState родителя, а не
  * полный снимок значений: ответ справочника приходит асинхронно, и патч,
@@ -230,21 +249,22 @@ function AirportSearch(props: { onPick: (row: DirectoryRow) => void }): React.JS
  * за время полёта запроса.
  *
  * Найденные значения ПИШУТСЯ в состояние родителя (а не только рисуются):
- * то, что уйдёт в действие, обязано быть тем, что на экране. Ответ на
+ * показ обязан переживать перерисовку родителя, а правка паспорта — начинать
+ * с текущих колонок строки. В действие они всё равно не уходят. Ответ на
  * УСТАРЕВШИЙ код (код сменили за время запроса) отбрасывается cleanup'ом
- * эффекта; пока код неполон, тройка остаётся редактируемой с последними
- * значениями — стирать набранное руками у неполного кода не за что.
+ * эффекта.
  */
 export function PassportFieldsEditor(props: {
   values: Record<PassportFieldKey, string>
   onPatch: (patch: Partial<Record<PassportFieldKey, string>>) => void
+  onResolved: (resolved: boolean) => void
 }): React.JSX.Element {
   const { pick } = useLocale()
   // Ответ справочника на последний ПОЛНЫЙ код: found === null — кода нет.
   const [lookup, setLookup] = useState<{ code: string; found: DirectoryEntry | null } | null>(null)
 
   const code = normalizeIata(props.values.iataCode)
-  const { onPatch } = props
+  const { onPatch, onResolved } = props
 
   useEffect(() => {
     if (code === null) return
@@ -268,10 +288,14 @@ export function PassportFieldsEditor(props: {
   const answered = lookup !== null && lookup.code === code
   const derived = answered && lookup.found !== null
 
+  useEffect(() => {
+    onResolved(derived)
+  }, [derived, onResolved])
+
   return (
     <>
       {PASSPORT_FIELDS.map((field) => {
-        const isDerived = derived && DERIVED_KEYS.has(field.key)
+        const isDerived = DERIVED_KEYS.has(field.key)
         return (
           <Fragment key={field.key}>
             {/* Поиск — НАД полем кода (четвёрка ниже сохраняет свой порядок):
@@ -285,8 +309,9 @@ export function PassportFieldsEditor(props: {
               <input
                 value={props.values[field.key]}
                 readOnly={isDerived}
+                tabIndex={isDerived ? -1 : undefined}
                 className={isDerived ? 'al-derived' : undefined}
-                onChange={(e) => onPatch({ [field.key]: e.target.value })}
+                onChange={isDerived ? undefined : (e) => onPatch({ [field.key]: e.target.value })}
               />
             </label>
             {/* Подпись — СОСЕДОМ label, не внутри него: текст внутри label

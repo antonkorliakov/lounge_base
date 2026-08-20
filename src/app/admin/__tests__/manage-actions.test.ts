@@ -6,6 +6,7 @@ import {
   lounges, submissions, fieldValues, photos, fillTokens, events,
 } from '@/db/schema'
 import { resolveFillToken } from '@/access/tokens'
+import { importAirports } from '@/registry/directory'
 
 /**
  * Действия управления реестром (`../actions.ts`): завести лаунж с первой
@@ -14,6 +15,10 @@ import { resolveFillToken } from '@/access/tokens'
  * `@vercel/blob`: чистка блобов удалённых снимков — внешний вызов, которого
  * в тестовом стенде быть не должно, а есть ли он и с чем — как раз предмет
  * проверки.
+ *
+ * Стенд сеет справочник аэропортов (IST/ESB): паспорт создаётся ТОЛЬКО из
+ * него (`resolveIdentity`), клиент тройку аэропорт/город/страна не присылает
+ * вовсе — контракт `CreateLoungeInput` её больше не содержит.
  *
  * Отказы проверяются ПОСЛЕДСТВИЕМ, а не только возвратом: после отказа база
  * перечитывается — создание не записало ничего, удаление ничего не стёрло.
@@ -52,13 +57,15 @@ vi.mock('@vercel/blob', () => ({ del: blob.del }))
 const { createLoungeAction, deleteLoungeAction, updatePassportAction, passportHistoryAction } =
   await import('../actions')
 
+const DIRECTORY = [
+  { iata: 'IST', airport: 'Istanbul Airport', city: 'Istanbul', country: 'Turkey', prominent: true },
+  { iata: 'ESB', airport: 'Esenboga International', city: 'Ankara', country: 'Turkey', prominent: false },
+]
+
 const INPUT = {
   name: 'Aurora Lounge',
   iataCode: 'IST',
   provider: null,
-  country: 'Turkey',
-  city: 'Istanbul',
-  airport: 'Istanbul Airport',
 }
 
 async function allRows(db: Db) {
@@ -74,6 +81,7 @@ async function allRows(db: Db) {
 
 beforeEach(async () => {
   holder.db = await createTestDb()
+  await importAirports(holder.db, DIRECTORY)
   holder.noSession = false
   blob.del.mockReset()
   blob.del.mockResolvedValue(undefined)
@@ -100,6 +108,8 @@ describe('createLoungeAction: лаунж + анкета + первая ссыл�
       iataCode: 'IST',
       // Пустой provider — null (колонка nullable), не пустая строка.
       provider: null,
+      // Тройка — из СПРАВОЧНИКА по коду: клиент её не присылал (и не может —
+      // контракт действия этих полей не содержит).
       country: 'Turkey',
       city: 'Istanbul',
       airport: 'Istanbul Airport',
@@ -166,15 +176,13 @@ describe('createLoungeAction: лаунж + анкета + первая ссыл�
   it('неверный ввод отклоняется значением с полным Localized, ничего не записав', async () => {
     const db = holder.db!
 
-    // IATA не из трёх букв — и обязательность страны/города/аэропорта:
-    // решение «обязательны в форме, а не пустые строки как в ops.ts»
-    // закреплено здесь, а не только в комментарии `createLounge`.
+    // IATA не из трёх букв, пустое имя — и код, которого нет в справочнике:
+    // ручного пути для тройки больше не существует (прежние отказы «страна/
+    // город/аэропорт обязательны» ушли вместе с самими полями контракта).
     const refused = [
       await createLoungeAction({ ...INPUT, iataCode: 'ISTX' }),
       await createLoungeAction({ ...INPUT, name: '   ' }),
-      await createLoungeAction({ ...INPUT, country: '' }),
-      await createLoungeAction({ ...INPUT, city: ' ' }),
-      await createLoungeAction({ ...INPUT, airport: '' }),
+      await createLoungeAction({ ...INPUT, iataCode: 'QQQ' }),
     ]
 
     for (const result of refused) {
@@ -194,19 +202,26 @@ describe('updatePassportAction: правка паспорта из реестр�
     await createLoungeAction(INPUT)
     const [lounge] = await db.select({ id: lounges.id }).from(lounges)
 
-    const result = await updatePassportAction(lounge!.id, { ...INPUT, city: 'Ankara' })
+    // Город правится СМЕНОЙ КОДА: тройка выводится из справочника заново.
+    const result = await updatePassportAction(lounge!.id, { ...INPUT, iataCode: 'ESB' })
     expect(result).toEqual({ ok: true })
 
     const [row] = await db.select().from(lounges)
-    expect(row).toMatchObject({ city: 'Ankara', iataCode: 'IST' })
+    expect(row).toMatchObject({ city: 'Ankara', iataCode: 'ESB' })
 
     // Актор события — почта сессии (`requireSession`), другого имени у
     // администратора в системе нет; история отдаётся готовой к показу.
+    // Изменились три колонки (страна Turkey совпала): порядок — как в
+    // IDENTITY_PREFILL.
     const history = await passportHistoryAction(lounge!.id)
     expect(history).toHaveLength(1)
     expect(history[0]).toMatchObject({
       actor: 'reviewer@easyto.travel',
-      changes: [{ column: 'city', from: 'Istanbul', to: 'Ankara' }],
+      changes: [
+        { column: 'city', from: 'Istanbul', to: 'Ankara' },
+        { column: 'airport', from: 'Istanbul Airport', to: 'Esenboga International' },
+        { column: 'iataCode', from: 'IST', to: 'ESB' },
+      ],
     })
   })
 
@@ -231,7 +246,7 @@ describe('updatePassportAction: правка паспорта из реестр�
     const [lounge] = await db.select({ id: lounges.id }).from(lounges)
 
     holder.noSession = true
-    await expect(updatePassportAction(lounge!.id, { ...INPUT, city: 'Ankara' }))
+    await expect(updatePassportAction(lounge!.id, { ...INPUT, iataCode: 'ESB' }))
       .rejects.toThrow(/no session/)
     await expect(passportHistoryAction(lounge!.id)).rejects.toThrow(/no session/)
 

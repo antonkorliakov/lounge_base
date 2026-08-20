@@ -74,6 +74,12 @@ export function EditPassport(props: {
   )
   const [error, setError] = useState<Localized | null>(null)
   const [busy, setBusy] = useState(false)
+  // Код найден справочником — единственное состояние, в котором сервер
+  // примет правку (`resolveIdentity`); до него Save выключен. У лаунжа,
+  // заведённого до ворот справочника с ручной тройкой, панель откроется с
+  // невыключаемым отказом — правка такого паспорта требует кода из
+  // справочника (осознанная цена, см. `resolveIdentity`).
+  const [resolved, setResolved] = useState(false)
   // `undefined` — ещё не запрашивали; `null` — запрос в пути (StatusEditor).
   const [history, setHistory] = useState<PassportHistoryEntry[] | null | undefined>(undefined)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -95,6 +101,9 @@ export function EditPassport(props: {
     // принятие анкеты), и форма обязана начинать с того, что видно в строке.
     setValues(toFormValues(props.current))
     setError(null)
+    // Заново ждём ответа справочника на код открытой панели: прошлое
+    // открытие могло оставить true (редактор при закрытии размонтирован).
+    setResolved(false)
     setOpen(true)
   }
 
@@ -117,13 +126,12 @@ export function EditPassport(props: {
     setBusy(true)
     setError(null)
     try {
+      // Аэропорт/город/страна НЕ отправляются: контракт действия их не
+      // принимает (`CreateLoungeInput`) — сервер выводит их из кода сам.
       const result = await updatePassportAction(props.loungeId, {
         name: values.name,
         iataCode: values.iataCode,
         provider: values.provider === '' ? null : values.provider,
-        country: values.country,
-        city: values.city,
-        airport: values.airport,
       })
       if (result.ok) {
         // Кэш истории сбрасывается: только что могла появиться новая запись,
@@ -152,11 +160,11 @@ export function EditPassport(props: {
       {open && (
         <div className="ep-panel">
           <p className="al-title">{pick(TITLE)}</p>
-          <PassportFieldsEditor values={values} onPatch={patch} />
+          <PassportFieldsEditor values={values} onPatch={patch} onResolved={setResolved} />
           <p className="ep-note">{pick(SYNC_NOTE)}</p>
           {error && <p className="se-error">{pick(error)}</p>}
           <div className="se-actions">
-            <button type="button" disabled={busy} onClick={() => void save()}>
+            <button type="button" disabled={busy || !resolved} onClick={() => void save()}>
               {pick(SAVE)}
             </button>
             <button type="button" disabled={busy} onClick={close}>

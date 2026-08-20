@@ -42,6 +42,10 @@ export function AddLounge(): React.JSX.Element {
   const [error, setError] = useState<Localized | null>(null)
   const [busy, setBusy] = useState(false)
   const [fillUrl, setFillUrl] = useState<string | null>(null)
+  // Код найден справочником — единственное состояние, в котором сервер
+  // примет создание (`resolveIdentity`); до него Create выключен. Это
+  // подсказка: ворота — серверный отказ, достижимый по сети напрямую.
+  const [resolved, setResolved] = useState(false)
 
   // Стабильная ссылка обязательна: `PassportFieldsEditor` держит её в deps
   // эффекта справочника (см. его комментарий про устаревшие ответы).
@@ -54,19 +58,20 @@ export function AddLounge(): React.JSX.Element {
     setValues(EMPTY)
     setError(null)
     setFillUrl(null)
+    // Следующее открытие начинает с пустого кода — и с выключенного Create.
+    setResolved(false)
   }
 
   async function create(): Promise<void> {
     setBusy(true)
     setError(null)
     try {
+      // Аэропорт/город/страна НЕ отправляются: контракт действия их не
+      // принимает (`CreateLoungeInput`) — сервер выводит их из кода сам.
       const result = await createLoungeAction({
         name: values.name,
         iataCode: values.iataCode,
         provider: values.provider === '' ? null : values.provider,
-        country: values.country,
-        city: values.city,
-        airport: values.airport,
       })
       if (result.ok) setFillUrl(result.fillUrl)
       else setError(result.error)
@@ -88,10 +93,10 @@ export function AddLounge(): React.JSX.Element {
       {fillUrl === null ? (
         <>
           <p className="al-title">{pick(TITLE)}</p>
-          <PassportFieldsEditor values={values} onPatch={patch} />
+          <PassportFieldsEditor values={values} onPatch={patch} onResolved={setResolved} />
           {error && <p className="se-error">{pick(error)}</p>}
           <div className="se-actions">
-            <button type="button" disabled={busy} onClick={() => void create()}>
+            <button type="button" disabled={busy || !resolved} onClick={() => void create()}>
               {pick(CREATE)}
             </button>
             <button type="button" disabled={busy} onClick={close}>

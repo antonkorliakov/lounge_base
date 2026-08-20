@@ -5,6 +5,7 @@ import type { Db } from '@/db/types'
 import { lounges, submissions, fieldValues, events } from '@/db/schema'
 import type { SubmissionStatus } from '@/db/schema'
 import { saveFieldValue, loadSubmissionValues } from '@/submissions/values'
+import { importAirports } from '../directory'
 import {
   createLounge,
   updateLoungePassport,
@@ -28,15 +29,34 @@ import {
  * проде. Статусы анкеты для матрицы ставятся прямым UPDATE (как в
  * `flags.test.ts`): жизненный цикл целиком гоняет `resubmit.test.ts`, здесь
  * предмет — реакция синхронизации на СТАТУС, а не путь к нему.
+ *
+ * Справочник аэропортов сеется в каждый стенд (IST/ESB): тройка аэропорт/
+ * город/страна выводится ТОЛЬКО из него (`resolveIdentity`), контракт ввода
+ * её не содержит — «сменить город» в этих тестах значит «сменить код».
  */
+
+const DIRECTORY = [
+  { iata: 'IST', airport: 'Istanbul Airport', city: 'Istanbul', country: 'Turkey', prominent: true },
+  { iata: 'ESB', airport: 'Esenboga International', city: 'Ankara', country: 'Turkey', prominent: false },
+]
 
 const INPUT = {
   name: 'Aurora Lounge',
   iataCode: 'IST',
   provider: 'dnata',
+}
+
+/** Тройка, которую справочник выводит из IST, — ожидание для сверок строк. */
+const IST_DERIVED = {
   country: 'Turkey',
   city: 'Istanbul',
   airport: 'Istanbul Airport',
+}
+
+async function seededDb(): Promise<Db> {
+  const db = await createTestDb()
+  await importAirports(db, DIRECTORY)
+  return db
 }
 
 async function seed(
@@ -90,16 +110,17 @@ async function passportEvents(db: Db) {
 
 describe('updateLoungePassport: валидация — те же правила, что при создании', () => {
   it('каждый неверный ввод — отказ значением с обеими локалями, ничего не записано', async () => {
-    const db = await createTestDb()
+    const db = await seededDb()
     const { loungeId } = await seed(db)
     const before = await loungeRow(db, loungeId)
 
+    // Негодный код, пустое имя — и код, которого нет в справочнике: прежние
+    // отказы «страна/город/аэропорт обязательны» ушли вместе с полями
+    // контракта, их место занял отказ ворот справочника.
     const refused = [
       await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', iataCode: 'ISTX' }),
       await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', name: '   ' }),
-      await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', country: '' }),
-      await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', city: ' ' }),
-      await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', airport: '' }),
+      await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', iataCode: 'QQQ' }),
     ]
 
     for (const result of refused) {
@@ -113,12 +134,12 @@ describe('updateLoungePassport: валидация — те же правила,
   })
 
   it('несуществующий лаунж — отказ значением, не падение', async () => {
-    const db = await createTestDb()
+    const db = await seededDb()
     const result = await updateLoungePassport(db, {
       ...INPUT,
       loungeId: '00000000-0000-0000-0000-000000000000',
       actor: 'r1',
-      city: 'Ankara',
+      iataCode: 'ESB',
     })
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('unreachable')
@@ -129,26 +150,30 @@ describe('updateLoungePassport: валидация — те же правила,
 
 describe('updateLoungePassport: колонки и событие', () => {
   it('меняет ровно изменённые колонки, IATA нормализуется, событие несёт old→new', async () => {
-    const db = await createTestDb()
+    const db = await seededDb()
     const { loungeId } = await seed(db)
 
     const result = await updateLoungePassport(db, {
       ...INPUT,
       loungeId,
       actor: 'reviewer@easyto.travel',
-      city: '  Ankara ', // trim — часть валидации, в колонку уходит чистое
       iataCode: ' esb ', // нормализация — та же, что при создании
     })
     expect(result).toEqual({ ok: true })
 
+    // Тройка последовала за кодом ЦЕЛИКОМ из справочника (страна совпала и
+    // не изменилась) — руками её больше не задают.
     expect(await loungeRow(db, loungeId)).toEqual({
       ...INPUT,
+      ...IST_DERIVED,
       city: 'Ankara',
+      airport: 'Esenboga International',
       iataCode: 'ESB',
     })
 
     // Событие — одно, на лаунже, и payload перечисляет ТОЛЬКО изменённое:
-    // журнал записывает, что правка внесла, а не весь паспорт целиком.
+    // журнал записывает, что правка внесла, а не весь паспорт целиком
+    // (country в payload нет — Turkey совпала).
     const recorded = await passportEvents(db)
     expect(recorded).toHaveLength(1)
     expect(recorded[0]).toEqual({
@@ -157,6 +182,7 @@ describe('updateLoungePassport: колонки и событие', () => {
       payload: {
         changed: {
           city: { from: 'Istanbul', to: 'Ankara' },
+          airport: { from: 'Istanbul Airport', to: 'Esenboga International' },
           iataCode: { from: 'IST', to: 'ESB' },
         },
       },
@@ -164,7 +190,7 @@ describe('updateLoungePassport: колонки и событие', () => {
   })
 
   it('правка без изменений — успех без записи и без события', async () => {
-    const db = await createTestDb()
+    const db = await seededDb()
     const { loungeId, submissionId } = await seed(db)
     const answersBefore = await answersOf(db, submissionId)
 
@@ -178,11 +204,12 @@ describe('updateLoungePassport: колонки и событие', () => {
 
 describe('updateLoungePassport: синхронизация ответов редактируемых анкет', () => {
   it('черновик, ответ не тронут: ответ следует за колонкой, замок стоит с новым значением', async () => {
-    const db = await createTestDb()
+    const db = await seededDb()
     const { loungeId, submissionId } = await seed(db, 'draft')
 
+    // Город меняется сменой кода: IST → ESB выводит Ankara из справочника.
     const result = await updateLoungePassport(db, {
-      ...INPUT, loungeId, actor: 'r1', city: 'Ankara',
+      ...INPUT, loungeId, actor: 'r1', iataCode: 'ESB',
     })
     expect(result).toEqual({ ok: true })
 
@@ -193,30 +220,30 @@ describe('updateLoungePassport: синхронизация ответов ред
   })
 
   it('changes_requested — тоже редактируемый статус: непочатый ответ следует за колонкой', async () => {
-    const db = await createTestDb()
+    const db = await seededDb()
     const { loungeId, submissionId } = await seed(db, 'changes_requested')
 
-    await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', airport: 'Esenboga' })
+    await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', iataCode: 'ESB' })
 
-    expect((await answersOf(db, submissionId))['I.9']).toBe('Esenboga')
+    expect((await answersOf(db, submissionId))['I.9']).toBe('Esenboga International')
     expect(await lockedNow(db, loungeId, submissionId)).toContain('I.9')
   })
 
   it('ответ, разошедшийся лишь пробелами, — всё ещё непочатый (сравнение после trim)', async () => {
-    const db = await createTestDb()
+    const db = await seededDb()
     const { loungeId, submissionId } = await seed(db, 'draft')
     const saved = await saveFieldValue(db, {
       submissionId, fieldKey: 'I.8', value: '  Istanbul  ',
     })
     expect(saved.ok).toBe(true)
 
-    await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', city: 'Ankara' })
+    await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', iataCode: 'ESB' })
 
     expect((await answersOf(db, submissionId))['I.8']).toBe('Ankara')
   })
 
   it('тронутый оператором ответ не переписывается — и остаётся отпертым', async () => {
-    const db = await createTestDb()
+    const db = await seededDb()
     const { loungeId, submissionId } = await seed(db, 'draft')
     // Оператор увёл ответ от колонки (экран правок замки не рисует).
     const saved = await saveFieldValue(db, {
@@ -225,7 +252,7 @@ describe('updateLoungePassport: синхронизация ответов ред
     expect(saved.ok).toBe(true)
 
     const result = await updateLoungePassport(db, {
-      ...INPUT, loungeId, actor: 'r1', city: 'Ankara',
+      ...INPUT, loungeId, actor: 'r1', iataCode: 'ESB',
     })
     expect(result).toEqual({ ok: true })
 
@@ -238,11 +265,11 @@ describe('updateLoungePassport: синхронизация ответов ред
   it.each(['submitted', 'approved'] as const)(
     '%s-анкета не трогается: колонка меняется, ответ остаётся прежним',
     async (status) => {
-      const db = await createTestDb()
+      const db = await seededDb()
       const { loungeId, submissionId } = await seed(db, status)
 
       const result = await updateLoungePassport(db, {
-        ...INPUT, loungeId, actor: 'r1', city: 'Ankara',
+        ...INPUT, loungeId, actor: 'r1', iataCode: 'ESB',
       })
       expect(result).toEqual({ ok: true })
 
@@ -252,7 +279,7 @@ describe('updateLoungePassport: синхронизация ответов ред
   )
 
   it('название (I.2) участвует наравне: непочатое следует, тронутое — нет', async () => {
-    const db = await createTestDb()
+    const db = await seededDb()
     const untouched = await seed(db, 'draft')
     await updateLoungePassport(db, {
       ...INPUT, loungeId: untouched.loungeId, actor: 'r1', name: 'Aurora Premium Lounge',
@@ -274,7 +301,7 @@ describe('updateLoungePassport: синхронизация ответов ред
   })
 
   it('provider, очищенный до null: ответ I.3 остаётся и отпирается (пустая колонка не запирает)', async () => {
-    const db = await createTestDb()
+    const db = await seededDb()
     const { loungeId, submissionId } = await seed(db, 'draft')
     expect(await lockedNow(db, loungeId, submissionId)).toContain('I.3')
 
@@ -291,7 +318,7 @@ describe('updateLoungePassport: синхронизация ответов ред
   })
 
   it('отсутствующий ответ не выдумывается: provider null→значение не рождает I.3', async () => {
-    const db = await createTestDb()
+    const db = await seededDb()
     const created = await createLounge(db, { ...INPUT, provider: null })
     if (!created.ok) throw new Error('seed failed')
 
@@ -308,7 +335,7 @@ describe('updateLoungePassport: синхронизация ответов ред
   })
 
   it('лаунж без предзаполнения (старый): колонки правятся, ответы не появляются', async () => {
-    const db = await createTestDb()
+    const db = await seededDb()
     // Популяция 2 из prefill-lock.test.ts: строка реестра есть, ответов нет.
     const [lounge] = await db
       .insert(lounges)
@@ -320,7 +347,7 @@ describe('updateLoungePassport: синхронизация ответов ред
       .returning({ id: submissions.id })
 
     const result = await updateLoungePassport(db, {
-      ...INPUT, name: 'Legacy', provider: null, loungeId: lounge!.id, actor: 'r1', city: 'Ankara',
+      ...INPUT, name: 'Legacy', provider: null, loungeId: lounge!.id, actor: 'r1', iataCode: 'ESB',
     })
     expect(result).toEqual({ ok: true })
 
@@ -332,28 +359,32 @@ describe('updateLoungePassport: синхронизация ответов ред
 
 describe('passportHistory: читатель события passport_edited', () => {
   it('правки читаются старыми вперёд, каждая — со своим списком old→new', async () => {
-    const db = await createTestDb()
+    const db = await seededDb()
     const { loungeId } = await seed(db)
 
-    await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', city: 'Ankara' })
-    await updateLoungePassport(db, {
-      ...INPUT, loungeId, actor: 'r2', city: 'Ankara', iataCode: 'ESB',
-    })
+    // Тройка ходит только вместе с кодом, поэтому обе правки — смены кода:
+    // туда (r1) и обратно (r2), каждая тянет город/аэропорт за собой.
+    await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', iataCode: 'ESB' })
+    await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r2', iataCode: 'IST' })
 
     const history = await passportHistory(db, loungeId)
     expect(history).toHaveLength(2)
     expect(history[0]?.actor).toBe('r1')
     expect(history[0]?.changes).toEqual([
       { column: 'city', from: 'Istanbul', to: 'Ankara' },
+      { column: 'airport', from: 'Istanbul Airport', to: 'Esenboga International' },
+      { column: 'iataCode', from: 'IST', to: 'ESB' },
     ])
     expect(history[1]?.actor).toBe('r2')
     expect(history[1]?.changes).toEqual([
-      { column: 'iataCode', from: 'IST', to: 'ESB' },
+      { column: 'city', from: 'Ankara', to: 'Istanbul' },
+      { column: 'airport', from: 'Esenboga International', to: 'Istanbul Airport' },
+      { column: 'iataCode', from: 'ESB', to: 'IST' },
     ])
   })
 
   it('чужие события лаунжа и записи с неразбираемым payload в историю не попадают', async () => {
-    const db = await createTestDb()
+    const db = await seededDb()
     const { loungeId } = await seed(db)
 
     // Чужое событие с payload, ПОХОЖИМ по-настоящему (см. довод в
@@ -371,7 +402,7 @@ describe('passportHistory: читатель события passport_edited', () 
       action: PASSPORT_EDIT_EVENT,
       payload: 'edited by migration',
     })
-    await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r2', city: 'Ankara' })
+    await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r2', iataCode: 'ESB' })
 
     const history = await passportHistory(db, loungeId)
     expect(history).toHaveLength(1)
@@ -387,11 +418,11 @@ describe('updateLoungePassport: пересечение с принятием (pa
     // где не вмешивался оператор. Здесь закрепляется составная траектория:
     // правка → ответ последовал → правка ОБРАТНО → ответ последовал обратно
     // (сравнение шло уже с новым значением, а не с первоначальным).
-    const db = await createTestDb()
+    const db = await seededDb()
     const { loungeId, submissionId } = await seed(db, 'draft')
 
-    await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', city: 'Ankara' })
-    await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', city: 'Istanbul' })
+    await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', iataCode: 'ESB' })
+    await updateLoungePassport(db, { ...INPUT, loungeId, actor: 'r1', iataCode: 'IST' })
 
     expect((await answersOf(db, submissionId))['I.8']).toBe('Istanbul')
     expect(await lockedNow(db, loungeId, submissionId)).toContain('I.8')
