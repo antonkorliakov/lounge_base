@@ -12,7 +12,12 @@ import {
   passportHistory,
   type CreateLoungeInput,
 } from '@/registry/manage'
-import { lookupAirport, type DirectoryEntry } from '@/registry/directory'
+import {
+  lookupAirport,
+  searchAirports,
+  type DirectoryEntry,
+  type AirportSearchResult,
+} from '@/registry/directory'
 import type { Localized } from '@/form-schema'
 import type { OperationalStatus } from '@/db/schema'
 import type { ActionResult } from './s/[submissionId]/actions'
@@ -117,6 +122,21 @@ export async function lookupIataAction(
 ): Promise<{ found: DirectoryEntry | null }> {
   await requireSession()
   return { found: await lookupAirport(db(), iata) }
+}
+
+/**
+ * Поиск по справочнику для комбобокса «Найти аэропорт» тех же форм паспорта.
+ * Вся семантика (ярусы, ворота 2 знаков, limit+1) — в `searchAirports`
+ * (`registry/directory.ts`): правило одно и живёт там, действие — только
+ * сессионные ворота. `requireSession()` первым оператором — те же доводы,
+ * что у `lookupIataAction` строкой выше. Ничего не пишет; выбор из списка
+ * лишь ставит код в поле, а заполнение тройки идёт тем же `lookupIataAction`.
+ */
+export async function searchAirportsAction(
+  query: string,
+): Promise<AirportSearchResult> {
+  await requireSession()
+  return searchAirports(db(), query)
 }
 
 /**

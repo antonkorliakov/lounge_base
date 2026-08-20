@@ -743,6 +743,28 @@ button:disabled { opacity: .4; }
    это справка о происхождении значений, не ошибка (ошибки — .se-error). */
 .al-field input.al-derived { background: #f2f4f7; }
 .al-directory-note { font-size: 11px; opacity: .7; margin-top: -4px; }
+/* Комбобокс «Найти аэропорт» над полем кода: список — абсолютным слоем под
+   инпутом (панель формы не должна прыгать высотой на каждый ответ поиска),
+   пункты не ниже 44px — досягаемость пальцем; служебные строки («ничего не
+   найдено», «уточните запрос») приглушены как .al-directory-note — это
+   справка, не ошибка. */
+.al-search { position: relative; }
+.al-search-list {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 20;
+  margin: 2px 0 0; padding: 4px; list-style: none;
+  background: #fff; border: 1px solid #c9ced6; border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .12);
+  max-height: 320px; overflow-y: auto;
+}
+.al-search-option {
+  min-height: 44px; display: flex; align-items: center;
+  padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;
+}
+.al-search-option:hover, .al-search-option.al-search-active { background: #eef2f8; }
+.al-search-note {
+  min-height: 44px; display: flex; align-items: center;
+  padding: 5px 8px; font-size: 12px; opacity: .65;
+}
 .al-once { margin: 0; font-size: 12px; color: #92400e; }
 /* Одноразовая ссылка заполнения (`FillLinkReveal`) — общая для панели
    «Добавить лаунж» и экрана проверки. Только раскладка, без цветов, поэтому
@@ -1048,6 +1070,15 @@ button:disabled { opacity: .4; }
      тон, что у .field-locked: read-only «из справочника» обязано отличаться
      от соседей и в тёмной теме. */
   .al-field input.al-derived { background: #15171c; }
+  /* Список поиска аэропорта — тёмная поверхность контролов и общая тёмная
+     рамка; активному/наведённому пункту — тон ховера строк (#22252c),
+     на #1a1c21 он различим. Тень на тёмном фоне почти не видна — плотнее. */
+  .al-search-list {
+    background: #1a1c21;
+    border-color: #2a2d34;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .5);
+  }
+  .al-search-option:hover, .al-search-option.al-search-active { background: #22252c; }
   .al-once { color: #fcd34d; }
   /* Панель правки паспорта — нейтральная рамка на тёмную, как .al-panel;
      её инпуты уже накрыты правилом .al-field input выше. */
