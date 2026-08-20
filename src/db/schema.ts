@@ -55,6 +55,24 @@ export const lounges = pgTable(
   ],
 )
 
+/**
+ * Справочник аэропортов IATA — источник истины для «аэропорт/город/страна
+ * ВЫВОДЯТСЯ из кода IATA». Заполняется из `src/db/reference/airports.tsv`
+ * скриптом `npm run db:import-airports` (идемпотентный upsert), читается
+ * `lookupAirport` (`src/registry/directory.ts`). Ключ — сам код: три латинские
+ * буквы в верхнем регистре (нормализация — `normalizeIata`, единственная
+ * запись правила), и по нему же ходят все выборки. НИКАКОЙ связи по FK с
+ * `lounges` намеренно: справочник — подсказка и серверные ворота при записи
+ * паспорта, а не ограничение целостности — лаунж с кодом вне справочника
+ * легален (справочник не истина в последней инстанции, ручной ввод остаётся).
+ */
+export const airportDirectory = pgTable('airport_directory', {
+  iata: text('iata').primaryKey(),
+  airport: text('airport').notNull(),
+  city: text('city').notNull(),
+  country: text('country').notNull(),
+})
+
 export const submissions = pgTable(
   'submissions',
   {

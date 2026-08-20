@@ -16,6 +16,7 @@
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:import-airports": "tsx scripts/import-airports.ts",
     "e2e": "playwright test",
     "seed": "tsx scripts/seed-dev.ts",
     "ops": "tsx scripts/ops.ts"

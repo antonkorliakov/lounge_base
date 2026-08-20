@@ -5,6 +5,8 @@ import { lounges, submissions, photos, fieldValues, events } from '@/db/schema'
 import { issueFillToken, FILL_TOKEN_TTL_DAYS } from '@/access/tokens'
 import { saveFieldValue } from '@/submissions/values'
 import { EDITABLE_STATUSES } from '@/submissions/editable'
+import { normalizeIata } from './iata'
+import { lookupAirport } from './directory'
 
 export type CreateLoungeInput = {
   name: string
@@ -30,31 +32,11 @@ const fail = (en: string, ru: string): { ok: false; error: Localized } => ({
   error: { en, ru },
 })
 
-/**
- * Три латинские буквы, после trim/uppercase. Правила «как выглядит IATA-код»
- * до этого модуля в системе НЕ БЫЛО нигде (проверено: `db/schema.ts` даёт
- * только `text` c индексом, анкетное поле I.10 — свободный текст, поиск
- * реестра — `ilike` без нормализации), так что это не вторая запись чужого
- * правила, а первая запись своего: сиды и боевые данные трёхбуквенные
- * (IST, DXB), и код аэропорта по стандарту IATA — ровно три буквы.
- * Нормализация до валидации: `ist` — опечатка регистра, а не другой код.
- */
-const IATA_RE = /^[A-Z]{3}$/
-
-/**
- * Единственная запись правила IATA в исполнимом виде: trim/uppercase, затем
- * проверка «ровно три латинские буквы»; не прошло — `null`, и что с этим
- * делать, решает вызывающий. Обоих вызывающих ДВА, и оба обязаны ходить
- * сюда, а не носить свою копию регэкспа: `createLounge` ниже (null —
- * отказ создать лаунж) и `passportFieldsFrom` (`review/decide.ts`; null —
- * колонка `iataCode` пропускается при синхронизации паспорта на принятии,
- * само принятие не блокируется). Разъехаться правило теперь может только
- * вместе с этой функцией.
- */
-export function normalizeIata(raw: string): string | null {
-  const code = raw.trim().toUpperCase()
-  return IATA_RE.test(code) ? code : null
-}
+// Правило «как выглядит код IATA» жило здесь с рождения, а с появлением
+// справочника аэропортов переехало в листовой `registry/iata.ts` (клиентские
+// формы кабинета не могут импортировать этот модуль — см. довод там).
+// Ре-экспорт сохраняет прежние серверные импорты правдой: правило одно.
+export { normalizeIata }
 
 /**
  * Паспорт лаунжа ↔ анкетные поля блока I: то, что администратор уже набрал в
@@ -151,7 +133,10 @@ export function lockedIdentityKeys(
  * первом же новом правиле. Нормализация — часть валидации, а не отдельный
  * шаг: наружу уходит уже готовый `IdentityColumns` (trim, IATA через
  * `normalizeIata`, пустой provider — `null`, см. комментарии внутри), и оба
- * вызывающих пишут в колонки ровно его.
+ * вызывающих пишут в колонки ровно его. Вызывается не напрямую, а через
+ * `resolveIdentity` ниже — та сперва спрашивает справочник аэропортов и
+ * при известном коде подменяет производные значения; сами ПРАВИЛА валидности
+ * по-прежнему записаны только здесь.
  */
 function validateIdentity(
   input: CreateLoungeInput,
@@ -174,6 +159,42 @@ function validateIdentity(
   if (airport === '') return fail('Airport is required', 'Аэропорт обязателен')
 
   return { ok: true, identity: { name, provider, country, city, airport, iataCode } }
+}
+
+/**
+ * Валидация + вывод производных колонок из справочника аэропортов — общий
+ * первый шаг обоих писателей паспорта (`createLounge`/`updateLoungePassport`).
+ * Правило согласовано с пользователем: аэропорт/город/страна ЗАВИСЯТ от кода
+ * IATA, и если справочник (`airport_directory`) знает код, в колонки уходят
+ * значения СПРАВОЧНИКА — что бы ни прислал клиент. Это «клиентская подсказка,
+ * серверные ворота» (правило ветки): формы кабинета показывают выведенные
+ * значения read-only, но серверное действие достижимо по сети напрямую, и
+ * присланный руками «город» не должен уметь разойтись со справочником.
+ * Подмена — НЕ ошибка и не логируется: у честного клиента присланное и
+ * выведенное совпадают байт в байт, а нечестному ответ ничего не должен.
+ *
+ * Кода в справочнике НЕТ — значения клиента идут в обычную валидацию:
+ * справочник — не истина в последней инстанции (частные терминалы, новые
+ * коды), и ручной ввод остаётся легальным путём. Порядок намеренно
+ * «справочник ДО валидации»: при известном коде админ может не заполнять
+ * три производных поля вовсе (форма их и не даёт), и валидировать пустоту,
+ * которую сейчас же перезапишет справочник, значило бы отказывать на ровном
+ * месте. Невалидный код валидация ниже ловит сама (`lookupAirport` на нём
+ * возвращает `null`, не падение).
+ *
+ * Чтение справочника — вне транзакций вызывающих: это статичная таблица,
+ * которую меняет только импорт (`db:import-airports`), гонки «справочник
+ * поменялся между чтением и записью» здесь не стоят той блокировки.
+ */
+async function resolveIdentity(
+  db: Db,
+  input: CreateLoungeInput,
+): Promise<{ ok: true; identity: IdentityColumns } | { ok: false; error: Localized }> {
+  const directory = await lookupAirport(db, input.iataCode)
+  const merged = directory
+    ? { ...input, airport: directory.airport, city: directory.city, country: directory.country }
+    : input
+  return validateIdentity(merged)
 }
 
 /**
@@ -206,9 +227,9 @@ export async function createLounge(
   db: Db,
   input: CreateLoungeInput,
 ): Promise<CreateLoungeResult> {
-  // Валидация и нормализация — общие с редактированием паспорта
-  // (`validateIdentity` выше): одно правило, один дом.
-  const validated = validateIdentity(input)
+  // Валидация, нормализация и вывод из справочника — общие с редактированием
+  // паспорта (`resolveIdentity` выше): одно правило, один дом.
+  const validated = await resolveIdentity(db, input)
   if (!validated.ok) return validated
   const identity = validated.identity
 
@@ -373,9 +394,10 @@ export async function updateLoungePassport(
   db: Db,
   input: UpdateLoungePassportInput,
 ): Promise<UpdatePassportResult> {
-  // Валидация до всякого обращения к базе — как у `setOperationalStatus`:
-  // отказ по неверному вводу не нуждается ни в чтении, ни в блокировке.
-  const validated = validateIdentity(input)
+  // Валидация и справочник — до транзакции и блокировок: отказ по неверному
+  // вводу не нуждается ни в чтении строки лаунжа, ни в `FOR UPDATE`, а
+  // чтение справочника блокировки не требует (см. `resolveIdentity`).
+  const validated = await resolveIdentity(db, input)
   if (!validated.ok) return validated
   const next = validated.identity
 
