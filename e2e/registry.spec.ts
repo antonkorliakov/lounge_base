@@ -381,6 +381,80 @@ test('лаунж заводится из реестра, ссылка запол
   await expect(rowFor(page, name)).toHaveCount(0)
 })
 
+test('паспорт лаунжа правится из реестра, непочатый замок формы показывает новое значение', async ({
+  page,
+  watched,
+}) => {
+  const name = `Passport-${Math.random().toString(36).slice(2, 10)}`
+  await openRegistry(page, watched)
+
+  // ── Лаунж настоящим путём «Add lounge»: предзаполнение + первая ссылка ────
+  await page.getByRole('button', { name: 'Add lounge' }).click()
+  await page.getByLabel('Name*', { exact: true }).fill(name)
+  await page.getByLabel('IATA code*', { exact: true }).fill('IST')
+  await page.getByLabel('Country*', { exact: true }).fill('Turkey')
+  await page.getByLabel('City*', { exact: true }).fill('Istanbul')
+  await page.getByLabel('Airport*', { exact: true }).fill('Istanbul Airport')
+  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  const fillUrl = await page.locator('.al-url').inputValue()
+  expect(fillUrl).toMatch(/\/f\/.+/)
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+
+  await searchFor(page, name)
+  const row = rowFor(page, name)
+  await expect(row).toContainText('IST')
+
+  // ── Правка: панель предзаполнена текущими значениями ─────────────────────
+  await row.getByRole('button', { name: `Edit passport: ${name}` }).click()
+  await expect(row.getByLabel('City*', { exact: true })).toHaveValue('Istanbul')
+  await row.getByLabel('City*', { exact: true }).fill('Ankara')
+  await row.getByLabel('IATA code*', { exact: true }).fill('esb') // нормализуется в ESB
+  await row.getByRole('button', { name: 'Save', exact: true }).click()
+
+  // Успех виден строкой БЕЗ перезагрузки (revalidatePath после result.ok) —
+  // и это сервер, а не состояние клиента: перечитанная страница говорит то же.
+  await expect(row.locator('.ep-panel')).toHaveCount(0)
+  await expect(row).toContainText('ESB')
+  await expect(row).toContainText('Ankara')
+  await page.reload()
+  await expect(rowFor(page, name)).toContainText('ESB')
+  await expect(rowFor(page, name)).toContainText('Ankara')
+
+  // Отказ сервера ВИДИМ в панели (серверное действие достижимо напрямую, и
+  // клиентской проверки IATA нет вовсе): четырёхбуквенный код — отказ словами,
+  // строка не изменилась.
+  const edited = rowFor(page, name)
+  await edited.getByRole('button', { name: `Edit passport: ${name}` }).click()
+  await edited.getByLabel('IATA code*', { exact: true }).fill('ESBX')
+  await edited.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(edited.locator('.se-error')).toContainText('IATA code must be 3 letters')
+  await expect(edited).toContainText('ESB')
+
+  // ── История правок — раскрывашка панели, запись old→new ──────────────────
+  await edited.getByRole('button', { name: 'Edit history' }).click()
+  await expect(edited.locator('.se-history-list')).toContainText('City: Istanbul → Ankara')
+  await expect(edited.locator('.se-history-list')).toContainText('IATA code: IST → ESB')
+  await expect(edited.locator('.se-history-actor').first()).toContainText(SEED_REVIEWER_EMAIL)
+
+  // ── Форма заполнения: непочатый замок стоит С НОВЫМ значением ─────────────
+  // Оператор ответы не трогал, поэтому синхронизация провела правку в анкету:
+  // поле показывает Ankara/ESB и ОСТАЁТСЯ под замком (ответ снова дословно
+  // равен колонке — правило `lockedIdentityKeys`, не назначенный флаг).
+  await page.goto(fillUrl)
+  await expect(
+    page.getByRole('heading', { name: 'Lounge Profile & Commercial Details' }),
+  ).toBeVisible()
+  await expect(page.getByLabel(/City/)).toHaveValue('Ankara')
+  await expect(page.getByLabel(/City/)).not.toBeEditable()
+  await expect(page.getByLabel(/IATA Code/)).toHaveValue('ESB')
+  await expect(page.getByLabel(/IATA Code/)).not.toBeEditable()
+  // Все четыре замка на месте (provider пуст — колонка ничего не замыкает),
+  // название — редактируемое, с именем из паспорта.
+  await expect(page.locator('.field-locked-note')).toHaveCount(4)
+  await expect(page.getByLabel(/Lounge Full Name/)).toHaveValue(name)
+  await expect(page.getByLabel(/Lounge Full Name/)).toBeEditable()
+})
+
 test('выгрузка уходит с текущим фильтром: состав строк меняется вместе с ним, непринятые — только по явной ссылке', async ({
   page,
   watched,
