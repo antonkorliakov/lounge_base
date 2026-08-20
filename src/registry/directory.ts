@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm'
+import { asc, eq, ilike, or, sql } from 'drizzle-orm'
 import { airportDirectory } from '@/db/schema'
 import type { Db } from '@/db/types'
 import { normalizeIata } from './iata'
@@ -32,6 +32,96 @@ export async function lookupAirport(db: Db, raw: string): Promise<DirectoryEntry
 }
 
 export type DirectoryRow = DirectoryEntry & { iata: string }
+
+/**
+ * Результат поиска: страница строк и честное «есть ещё» — вместо точного
+ * счётчика, которого интерфейсу не нужно (подсказка «уточните запрос» — да/нет,
+ * а COUNT(*) поверх того же скана был бы вторым запросом ради числа, которое
+ * никто не показывает). `more` добывается трюком limit+1: спрашивается на
+ * строку больше, чем показывается.
+ */
+export type AirportSearchResult = { rows: DirectoryRow[]; more: boolean }
+
+/** Сколько строк видит выпадающий список; выбрано на глаз под панель формы. */
+export const SEARCH_LIMIT = 8
+
+/**
+ * LIKE-шаблон из пользовательского ввода: `%`/`_`/`\` — операторы шаблона,
+ * и без экранирования запрос «a_» совпадал бы с любым «a?» — тихая
+ * подстановка вместо буквального поиска. Backslash — штатный escape LIKE
+ * в postgres (ESCAPE по умолчанию), отдельной оговорки в запросе не нужно.
+ */
+function escapeLike(text: string): string {
+  return text.replace(/[\\%_]/g, (ch) => `\\${ch}`)
+}
+
+/**
+ * Поиск по справочнику для комбобокса «Найти аэропорт» (`PassportFieldsEditor`).
+ *
+ * Ярусы — порядок полей паспорта от самого точного к самому широкому:
+ * код IATA (только ПРЕФИКС: «is» — это «начинается с IS», код по подстроке
+ * никто не ищет) → имя аэропорта → город → страна. Внутри яруса префикс
+ * стоит выше подстроки (CASE это даёт бесплатно — две ветки вместо одной),
+ * сам матч — плоский substring ILIKE '%q%', а не словесный префикс:
+ * word-boundary-шаблоны капризны, а на 10k строк честная подстрока
+ * находит то же самое. Ряд, совпавший в нескольких ярусах, появляется
+ * ОДИН раз на лучшем: CASE берёт первую истинную ветку, скан один.
+ * Внутри ранга — алфавит по коду: детерминизм закреплён тестами
+ * (`directory-search.test.ts`).
+ *
+ * Запрос ОДИН: тот же CASE ранжирует и сортирует поверх WHERE из тех же
+ * ILIKE; индексных фокусов нет намеренно — последовательный скан 10k строк
+ * измерен единицами миллисекунд (см. отчёт ветки), и это дешевле, чем
+ * держать триграммные индексы честными.
+ *
+ * Запрос короче 2 знаков (после trim) — пустой ответ без похода в базу:
+ * однобуквенный поиск вернул бы пол-справочника шумом. Кириллица и прочие
+ * не-латинские запросы не ошибка — они просто ни с чем не совпадают
+ * (справочник англоязычный), ответ — пустой список.
+ */
+export async function searchAirports(
+  db: Db,
+  rawQuery: string,
+  limit = SEARCH_LIMIT,
+): Promise<AirportSearchResult> {
+  const query = rawQuery.trim()
+  if (query.length < 2) return { rows: [], more: false }
+
+  const prefix = `${escapeLike(query)}%`
+  const anywhere = `%${escapeLike(query)}%`
+  const rank = sql<number>`case
+    when ${airportDirectory.iata} ilike ${prefix} then 0
+    when ${airportDirectory.airport} ilike ${prefix} then 1
+    when ${airportDirectory.airport} ilike ${anywhere} then 2
+    when ${airportDirectory.city} ilike ${prefix} then 3
+    when ${airportDirectory.city} ilike ${anywhere} then 4
+    when ${airportDirectory.country} ilike ${prefix} then 5
+    else 6
+  end`
+
+  const rows = await db
+    .select({
+      iata: airportDirectory.iata,
+      airport: airportDirectory.airport,
+      city: airportDirectory.city,
+      country: airportDirectory.country,
+    })
+    .from(airportDirectory)
+    .where(
+      or(
+        ilike(airportDirectory.iata, prefix),
+        ilike(airportDirectory.airport, anywhere),
+        ilike(airportDirectory.city, anywhere),
+        ilike(airportDirectory.country, anywhere),
+      ),
+    )
+    .orderBy(rank, asc(airportDirectory.iata))
+    .limit(limit + 1)
+
+  return rows.length > limit
+    ? { rows: rows.slice(0, limit), more: true }
+    : { rows, more: false }
+}
 
 /**
  * Разбор committed-источника истины — `src/db/reference/airports.tsv`
