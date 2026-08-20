@@ -5,8 +5,8 @@ import { SEED_REVIEWER_EMAIL } from '../scripts/dev-support'
 /**
  * Справочник аэропортов IATA от края до края: настоящий импорт TSV в
  * локальную базу, автозаполнение производных полей в «Add lounge», честный
- * промах на неизвестном коде и порядок «IATA перед производными» в блоке I
- * формы заполнения.
+ * ОТКАЗ на неизвестном коде (ручной путь удалён — см. `resolveIdentity`) и
+ * порядок «IATA перед производными» в блоке I формы заполнения.
  *
  * ОЖИДАНИЕ ОКРУЖЕНИЯ, записанное словами: локальная docker-база
  * (`.env.local`) должна быть МИГРИРОВАНА до `0006` (`npm run db:migrate`) —
@@ -116,6 +116,11 @@ test('известный код: имя + IATA достаточно — трой
   await expect(airport).not.toBeEditable()
   await expect(city).not.toBeEditable()
   await expect(country).not.toBeEditable()
+  // Чистый показ — не остановка Tab: в поле, куда нельзя ввести, фокусу
+  // клавиатуры делать нечего.
+  await expect(airport).toHaveAttribute('tabindex', '-1')
+  await expect(city).toHaveAttribute('tabindex', '-1')
+  await expect(country).toHaveAttribute('tabindex', '-1')
 
   await page.getByRole('button', { name: 'Create', exact: true }).click()
   const fillUrl = await page.locator('.al-url').inputValue()
@@ -259,10 +264,16 @@ test('поиск аэропорта: london — Хитроу и Гатвик в 
   await expect(country).not.toBeEditable()
 })
 
-test('неизвестный код: честный промах, тройка заполняется руками и сохраняется как есть', async ({
+test('неизвестный код: честный отказ — ручного пути нет, Create выключен', async ({
   page,
   watched,
 }) => {
+  // ИНВЕРСИЯ прежнего пина «тройка заполняется руками и сохраняется как
+  // есть»: ручной miss-путь удалён (решение согласовано с пользователем) —
+  // лаунж можно завести только для аэропорта из справочника, лекарство для
+  // нового кода — обновить справочник. Серверная половина отказа (запись не
+  // случается даже при прямом вызове действия) закреплена юнитами:
+  // src/registry/__tests__/directory-derive.test.ts.
   const name = `Manual-${Math.random().toString(36).slice(2, 10)}`
   await openRegistry(page, watched)
 
@@ -270,24 +281,27 @@ test('неизвестный код: честный промах, тройка �
   await page.getByLabel('Name*', { exact: true }).fill(name)
   await page.getByLabel('IATA code*', { exact: true }).fill('QQQ') // кода нет в справочнике
 
-  // Справочник — не истина в последней инстанции: промах говорит об этом
-  // словами, а тройка остаётся редактируемой.
-  await expect(page.getByText('code not found in the directory')).toBeVisible()
+  // Промах объясняет отказ и называет лекарство словами.
+  await expect(
+    page.getByText('code not found in the airport directory', { exact: false }),
+  ).toBeVisible()
+  await expect(
+    page.getByText('new airports are added by updating the directory', { exact: false }),
+  ).toBeVisible()
+
+  // Тройка производных — чистый показ: не редактируется и не в табе-обходе,
+  // набрать «Private City» больше просто некуда.
   const city = page.getByLabel('City*', { exact: true })
-  await expect(city).toBeEditable()
-  await page.getByLabel('Airport*', { exact: true }).fill('Private Terminal')
-  await city.fill('Private City')
-  await page.getByLabel('Country*', { exact: true }).fill('Nowheria')
+  await expect(city).not.toBeEditable()
+  await expect(city).toHaveValue('')
+  await expect(city).toHaveAttribute('tabindex', '-1')
 
-  await page.getByRole('button', { name: 'Create', exact: true }).click()
-  await page.getByRole('button', { name: 'Done', exact: true }).click()
+  // Create выключен, пока справочник не ответил кодом (клиентская половина;
+  // серверные ворота — юнит выше).
+  await expect(page.getByRole('button', { name: 'Create', exact: true })).toBeDisabled()
 
-  // Ручные значения пережили серверные ворота (directory miss — правило
-  // закреплено и юнитом: src/registry/__tests__/directory-derive.test.ts).
+  // Строка не появилась: в реестре нет следа несостоявшегося лаунжа.
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   await searchFor(page, name)
-  const row = rowFor(page, name)
-  await expect(row).toHaveCount(1)
-  await expect(row).toContainText('QQQ')
-  await expect(row).toContainText('Private City')
-  await expect(row).toContainText('Nowheria')
+  await expect(rowFor(page, name)).toHaveCount(0)
 })

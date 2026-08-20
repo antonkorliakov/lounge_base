@@ -430,15 +430,22 @@ test('паспорт лаунжа правится из реестра, непо
   await expect(rowFor(page, name)).toContainText('ESB')
   await expect(rowFor(page, name)).toContainText('Ankara')
 
-  // Отказ сервера ВИДИМ в панели (серверное действие достижимо напрямую, и
-  // клиентской проверки IATA нет вовсе): четырёхбуквенный код — отказ словами,
-  // строка не изменилась.
+  // ИНВЕРСИЯ прежнего пина «четырёхбуквенный код — Save проходит и сервер
+  // отказывает словами»: Save теперь выключен, пока код не полон И не найден
+  // справочником (клиентская половина ворот, `onResolved`), так что до
+  // серверного отказа клик просто не доходит. Сам серверный отказ («IATA
+  // code must be 3 letters», неизвестный код) по-прежнему закреплён юнитами
+  // (edit-passport.test.ts, manage-actions.test.ts) — действие достижимо по
+  // сети напрямую, и ворота там.
   const edited = rowFor(page, name)
   await edited.getByRole('button', { name: `Edit passport: ${name}` }).click()
   await edited.getByLabel('IATA code*', { exact: true }).fill('ESBX')
-  await edited.getByRole('button', { name: 'Save', exact: true }).click()
-  await expect(edited.locator('.se-error')).toContainText('IATA code must be 3 letters')
-  await expect(edited).toContainText('ESB')
+  await expect(edited.getByRole('button', { name: 'Save', exact: true })).toBeDisabled()
+  // Возврат кода из справочника снова включает Save — панель остаётся
+  // открытой для раскрывашки истории ниже.
+  await edited.getByLabel('IATA code*', { exact: true }).fill('ESB')
+  await expect(edited.getByText('from directory: ESB')).toBeVisible()
+  await expect(edited.getByRole('button', { name: 'Save', exact: true })).toBeEnabled()
 
   // ── История правок — раскрывашка панели, запись old→new ──────────────────
   await edited.getByRole('button', { name: 'Edit history' }).click()
