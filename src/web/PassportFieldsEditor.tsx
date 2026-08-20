@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import type { Localized } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 import { normalizeIata } from '@/registry/iata'
@@ -110,20 +110,27 @@ export function PassportFieldsEditor(props: {
       {PASSPORT_FIELDS.map((field) => {
         const isDerived = derived && DERIVED_KEYS.has(field.key)
         return (
-          <label key={field.key} className="al-field">
-            {pick(field.label)}
-            <input
-              value={props.values[field.key]}
-              readOnly={isDerived}
-              className={isDerived ? 'al-derived' : undefined}
-              onChange={(e) => onPatch({ [field.key]: e.target.value })}
-            />
+          <Fragment key={field.key}>
+            <label className="al-field">
+              {pick(field.label)}
+              <input
+                value={props.values[field.key]}
+                readOnly={isDerived}
+                className={isDerived ? 'al-derived' : undefined}
+                onChange={(e) => onPatch({ [field.key]: e.target.value })}
+              />
+            </label>
+            {/* Подпись — СОСЕДОМ label, не внутри него: текст внутри label
+                склеивается в accessible name инпута («IATA code* from
+                directory: IST»), и точные локаторы по подписи поля перестают
+                находить его — имя поля не должно зависеть от ответа
+                справочника. */}
             {field.key === 'iataCode' && answered && (
               <span className="al-directory-note">
                 {lookup.found ? `${pick(FROM_DIRECTORY)} ${code}` : pick(NOT_FOUND)}
               </span>
             )}
-          </label>
+          </Fragment>
         )
       })}
     </>

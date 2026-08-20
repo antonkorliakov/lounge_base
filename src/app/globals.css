@@ -742,7 +742,7 @@ button:disabled { opacity: .4; }
    и «из справочника: IST», и «код не найден…» — приглушена как .ep-note:
    это справка о происхождении значений, не ошибка (ошибки — .se-error). */
 .al-field input.al-derived { background: #f2f4f7; }
-.al-directory-note { font-size: 11px; opacity: .7; }
+.al-directory-note { font-size: 11px; opacity: .7; margin-top: -4px; }
 .al-once { margin: 0; font-size: 12px; color: #92400e; }
 /* Одноразовая ссылка заполнения (`FillLinkReveal`) — общая для панели
    «Добавить лаунж» и экрана проверки. Только раскладка, без цветов, поэтому
