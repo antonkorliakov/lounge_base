@@ -155,6 +155,66 @@ test('известный код: имя + IATA достаточно — трой
   await expect(page.locator('.field-locked-note')).toHaveCount(4)
 })
 
+test('поиск аэропорта: istan — Стамбул впереди, выбор SAW клавиатурой заполняет и замыкает тройку', async ({
+  page,
+  watched,
+}) => {
+  const name = `Picked-${Math.random().toString(36).slice(2, 10)}`
+  await openRegistry(page, watched)
+
+  await page.getByRole('button', { name: 'Add lounge' }).click()
+  await page.getByLabel('Name*', { exact: true }).fill(name)
+
+  const search = page.getByRole('combobox', { name: 'Find airport' })
+
+  // Пустой ответ от двух+ знаков — тихая строка, не молчание.
+  await search.fill('zzxq')
+  await expect(page.getByText('nothing found')).toBeVisible()
+
+  // «istan»: у IST запрос — префикс ИМЕНИ аэропорта (Istanbul Airport, ярус
+  // имени), у SAW — лишь префикс ГОРОДА Istanbul (ярус города ниже), поэтому
+  // IST первым, SAW вторым — порядок закреплён и юнитом
+  // (directory-search.test.ts). Дальше десятки стран на *istan (Pakistan,
+  // Kazakhstan…) — их подстрочный ярус не влезает в 8 строк, и список честно
+  // говорит «уточните».
+  await search.fill('istan')
+  const options = page.getByRole('option')
+  await expect(options.first()).toHaveText('IST — Istanbul Airport · Istanbul, Turkey')
+  await expect(options.nth(1)).toHaveText('SAW — Sabiha Gokcen · Istanbul, Turkey')
+  await expect(page.getByText('refine your search')).toBeVisible()
+
+  // Выбор ТОЛЬКО клавиатурой: активен первый (IST), ↓ — SAW, Enter — выбор.
+  await search.press('ArrowDown')
+  await search.press('Enter')
+  await expect(page.getByRole('listbox')).toHaveCount(0)
+  await expect(search).toHaveValue('SAW — Sabiha Gokcen')
+
+  // Код встал ЧЕРЕЗ то же поле IATA, тройка заполнена и замкнута тем же
+  // механизмом полного кода, что при ручном наборе, — с той же подписью.
+  await expect(page.getByLabel('IATA code*', { exact: true })).toHaveValue('SAW')
+  await expect(page.getByText('from directory: SAW')).toBeVisible()
+  const airport = page.getByLabel('Airport*', { exact: true })
+  const city = page.getByLabel('City*', { exact: true })
+  const country = page.getByLabel('Country*', { exact: true })
+  await expect(airport).toHaveValue('Sabiha Gokcen')
+  await expect(city).toHaveValue('Istanbul')
+  await expect(country).toHaveValue('Turkey')
+  await expect(airport).not.toBeEditable()
+  await expect(city).not.toBeEditable()
+  await expect(country).not.toBeEditable()
+
+  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+
+  // Строка реестра несёт значения выбранного ряда справочника.
+  await searchFor(page, name)
+  const row = rowFor(page, name)
+  await expect(row).toHaveCount(1)
+  await expect(row).toContainText('SAW')
+  await expect(row).toContainText('Istanbul')
+  await expect(row).toContainText('Turkey')
+})
+
 test('неизвестный код: честный промах, тройка заполняется руками и сохраняется как есть', async ({
   page,
   watched,
