@@ -1,12 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import type { Localized } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 import {
   updatePassportAction, passportHistoryAction, type PassportHistoryEntry,
 } from '@/app/admin/actions'
-import { PASSPORT_FIELDS, type PassportFieldKey } from './AddLounge'
+import {
+  PassportFieldsEditor, PASSPORT_FIELDS, type PassportFieldKey,
+} from './PassportFieldsEditor'
 
 const OPEN: Localized = { en: 'Edit passport', ru: 'Править паспорт' }
 const TITLE: Localized = { en: 'Lounge passport', ru: 'Паспорт лаунжа' }
@@ -46,8 +48,9 @@ const toFormValues = (current: PassportValues): Record<PassportFieldKey, string>
  * Правка паспорта лаунжа из строки реестра: неброский «✎» рядом с «×»
  * удаления (те же доводы — операция нечастая, контролы строки не должны
  * спорить с данными), раскрывающий панель с теми же шестью полями, что у
- * «Add lounge» (`PASSPORT_FIELDS` — один список на обе формы), предзаполненную
- * текущими значениями.
+ * «Add lounge» (`PassportFieldsEditor` — одно тело на обе формы: список
+ * полей, порядок «IATA перед производными» и подсказка справочника),
+ * предзаполненную текущими значениями.
  *
  * Валидация — на сервере (`updateLoungePassport`), отказ показывается весь
  * (`Localized` через `pick()` в момент показа) — контракт ветки: серверное
@@ -74,6 +77,12 @@ export function EditPassport(props: {
   // `undefined` — ещё не запрашивали; `null` — запрос в пути (StatusEditor).
   const [history, setHistory] = useState<PassportHistoryEntry[] | null | undefined>(undefined)
   const [historyOpen, setHistoryOpen] = useState(false)
+
+  // Стабильная ссылка обязательна: `PassportFieldsEditor` держит её в deps
+  // эффекта справочника (см. его комментарий про устаревшие ответы).
+  const patch = useCallback((partial: Partial<Record<PassportFieldKey, string>>): void => {
+    setValues((prev) => ({ ...prev, ...partial }))
+  }, [])
 
   const columnLabel = (column: string): string => {
     const field = PASSPORT_FIELDS.find((item) => item.key === column)
@@ -143,15 +152,7 @@ export function EditPassport(props: {
       {open && (
         <div className="ep-panel">
           <p className="al-title">{pick(TITLE)}</p>
-          {PASSPORT_FIELDS.map((field) => (
-            <label key={field.key} className="al-field">
-              {pick(field.label)}
-              <input
-                value={values[field.key]}
-                onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}
-              />
-            </label>
-          ))}
+          <PassportFieldsEditor values={values} onPatch={patch} />
           <p className="ep-note">{pick(SYNC_NOTE)}</p>
           {error && <p className="se-error">{pick(error)}</p>}
           <div className="se-actions">

@@ -7,6 +7,7 @@ import {
   fieldByKey,
   photoSlotByKey,
   serviceItemByKey,
+  type Field,
   type Localized,
   type ServiceValueInput,
 } from '@/form-schema'
@@ -25,6 +26,47 @@ import { FixesOnly, type Flag } from './FixesOnly'
 /** Отправить можно только из состояний, где форма остаётся открытой
  *  заполняющему — то же множество, что `SUBMITTABLE` в transitions.ts. */
 const EDITABLE_STATUSES: ReadonlySet<SubmissionStatus> = new Set(['draft', 'changes_requested'])
+
+/**
+ * ПРЕЗЕНТАЦИОННЫЙ порядок четырёх полей паспорта в блоке I — код IATA первым,
+ * за ним производные от него аэропорт → город → страна (в `FIELDS` исходник
+ * держит их наоборот: I.7 страна … I.10 код). Решение пользователя: аэропорт/
+ * город/страна ВЫВОДЯТСЯ из кода (см. справочник — `registry/directory.ts`),
+ * и оператор обязан видеть причину раньше следствий — тем же порядком, каким
+ * админ набирает их в формах кабинета (`PassportFieldsEditor`). Обычно вся
+ * четвёрка стоит под замком предзаполнения — но и замкнутые поля читаются
+ * сверху вниз.
+ *
+ * Переставляется ТОЛЬКО ЗДЕСЬ, на шве формы заполнения, и это принципиально:
+ * `FIELDS` остаётся в порядке исходной анкеты (нумерация I.7–I.10 — язык
+ * ревьюера и золотых фикстур), экран проверки зеркалит исходный документ,
+ * а выгрузка (`export/columns.ts`, `export/single.ts`) обязана байт в байт
+ * повторять колонки исходного workbook — там перестановка была бы порчей
+ * контракта, а не удобством. Другого места с собственным порядком показа
+ * полей в системе нет и появляться не должно.
+ */
+export const BLOCK_I_IATA_FIRST: readonly string[] = ['I.10', 'I.9', 'I.8', 'I.7']
+
+/**
+ * Поля блока для показа на шаге формы: порядок `FIELDS`, поверх которого
+ * четвёрка `BLOCK_I_IATA_FIRST` занимает СВОИ ЖЕ четыре позиции в новом
+ * порядке — соседние поля (I.6 до, I.11 после) не сдвигаются. Если какого-то
+ * из ключей четвёрки в блоке нет (не тот блок — обычный случай), исходный
+ * порядок возвращается нетронутым: перестановка объявлена ровно для блока I.
+ */
+export function stepFields(blockKey: string): Field[] {
+  const fields = FIELDS.filter((field) => field.block === blockKey)
+  const positions = fields
+    .map((field, index) => (BLOCK_I_IATA_FIRST.includes(field.key) ? index : -1))
+    .filter((index) => index !== -1)
+  if (positions.length !== BLOCK_I_IATA_FIRST.length) return fields
+
+  const reordered = [...fields]
+  BLOCK_I_IATA_FIRST.forEach((key, slot) => {
+    reordered[positions[slot]!] = fields.find((field) => field.key === key)!
+  })
+  return reordered
+}
 
 export function FillForm(props: {
   token: string
@@ -333,7 +375,10 @@ export function FillForm(props: {
                 {step.blockKeys.length > 1 && (
                   <h2 className="step-section-title">{block ? pick(block.label) : blockKey}</h2>
                 )}
-                {FIELDS.filter((f) => f.block === blockKey).map((field) => (
+                {/* Порядок показа — `stepFields`: блок I рисует код IATA
+                    раньше производных от него полей (см. BLOCK_I_IATA_FIRST —
+                    и почему НИГДЕ, кроме этого шва). */}
+                {stepFields(blockKey).map((field) => (
                   <FieldInput
                     key={field.key}
                     field={field}

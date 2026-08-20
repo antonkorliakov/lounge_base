@@ -12,6 +12,7 @@ import {
   passportHistory,
   type CreateLoungeInput,
 } from '@/registry/manage'
+import { lookupAirport, type DirectoryEntry } from '@/registry/directory'
 import type { Localized } from '@/form-schema'
 import type { OperationalStatus } from '@/db/schema'
 import type { ActionResult } from './s/[submissionId]/actions'
@@ -99,6 +100,23 @@ export async function statusHistoryAction(
     actor: change.actor,
     at: change.at.toISOString(),
   }))
+}
+
+/**
+ * Подсказка справочника аэропортов для форм паспорта (`PassportFieldsEditor`):
+ * по полному коду IATA — аэропорт/город/страна или честное `found: null`.
+ * Ровно ПОДСКАЗКА: серверные ворота — в `resolveIdentity`
+ * (`registry/manage.ts`), которая при сохранении выводит тройку заново;
+ * это действие ничего не пишет. `requireSession()` — первым оператором,
+ * как у всех действий кабинета: справочник публичных тайн не хранит, но
+ * анонимных входов у кабинета нет ни одного, и этот не станет первым.
+ * Нормализация кода — внутри `lookupAirport` (единственный `normalizeIata`).
+ */
+export async function lookupIataAction(
+  iata: string,
+): Promise<{ found: DirectoryEntry | null }> {
+  await requireSession()
+  return { found: await lookupAirport(db(), iata) }
 }
 
 /**

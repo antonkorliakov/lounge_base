@@ -1,10 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import type { Localized } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 import { createLoungeAction } from '@/app/admin/actions'
 import { FillLinkReveal } from './FillLinkReveal'
+import { PassportFieldsEditor, type PassportFieldKey } from './PassportFieldsEditor'
 
 const OPEN: Localized = { en: 'Add lounge', ru: 'Добавить лаунж' }
 const TITLE: Localized = { en: 'New lounge', ru: 'Новый лаунж' }
@@ -16,33 +17,19 @@ const CREATED: Localized = {
   ru: 'Лаунж заведён. Ссылка заполнения для оператора:',
 }
 
-/** Поля формы = обязательные колонки `lounges` + provider. Страна/город/
- *  аэропорт обязательны, в отличие от консольного ops.ts, — см. `createLounge`
- *  (пустые строки всплывали бы пустыми пунктами в фильтрах реестра).
- *  Экспортируется: `EditPassport` рисует ТЕ ЖЕ шесть полей с теми же
- *  подписями — второй рукописный список разъезжался бы с первым (класс
- *  расползания, который эта ветка ловит не первый раз). */
-export const PASSPORT_FIELDS: { key: PassportFieldKey; label: Localized; required: boolean }[] = [
-  { key: 'name', label: { en: 'Name*', ru: 'Название*' }, required: true },
-  { key: 'iataCode', label: { en: 'IATA code*', ru: 'Код IATA*' }, required: true },
-  { key: 'provider', label: { en: 'Provider', ru: 'Провайдер' }, required: false },
-  { key: 'country', label: { en: 'Country*', ru: 'Страна*' }, required: true },
-  { key: 'city', label: { en: 'City*', ru: 'Город*' }, required: true },
-  { key: 'airport', label: { en: 'Airport*', ru: 'Аэропорт*' }, required: true },
-]
-export type PassportFieldKey =
-  | 'name' | 'iataCode' | 'provider' | 'country' | 'city' | 'airport'
-
 const EMPTY: Record<PassportFieldKey, string> = {
   name: '', iataCode: '', provider: '', country: '', city: '', airport: '',
 }
 
 /**
- * «Добавить лаунж» на экране реестра: форма из шести полей, создающая лаунж +
- * пустую анкету + первый fill-токен одним действием (`createLoungeAction`),
- * и показ ссылки заполнения для ручного копирования — общим `FillLinkReveal`
- * (копирование, план Б при отказе буфера и предупреждение об одноразовости —
- * его правила, одни на оба места показа ссылки; см. его комментарий).
+ * «Добавить лаунж» на экране реестра: форма из шести полей (общее тело —
+ * `PassportFieldsEditor`: список полей, порядок «IATA перед производными» и
+ * подсказка справочника живут ТАМ, одни на обе формы паспорта), создающая
+ * лаунж + пустую анкету + первый fill-токен одним действием
+ * (`createLoungeAction`), и показ ссылки заполнения для ручного копирования —
+ * общим `FillLinkReveal` (копирование, план Б при отказе буфера и
+ * предупреждение об одноразовости — его правила, одни на оба места показа
+ * ссылки; см. его комментарий).
  *
  * `error` — весь `Localized`, выбор через `pick()` в момент показа
  * (соглашение ветки). Появление нового лаунжа в таблице за спиной формы —
@@ -55,6 +42,12 @@ export function AddLounge(): React.JSX.Element {
   const [error, setError] = useState<Localized | null>(null)
   const [busy, setBusy] = useState(false)
   const [fillUrl, setFillUrl] = useState<string | null>(null)
+
+  // Стабильная ссылка обязательна: `PassportFieldsEditor` держит её в deps
+  // эффекта справочника (см. его комментарий про устаревшие ответы).
+  const patch = useCallback((partial: Partial<Record<PassportFieldKey, string>>): void => {
+    setValues((prev) => ({ ...prev, ...partial }))
+  }, [])
 
   function close(): void {
     setOpen(false)
@@ -95,15 +88,7 @@ export function AddLounge(): React.JSX.Element {
       {fillUrl === null ? (
         <>
           <p className="al-title">{pick(TITLE)}</p>
-          {PASSPORT_FIELDS.map((field) => (
-            <label key={field.key} className="al-field">
-              {pick(field.label)}
-              <input
-                value={values[field.key]}
-                onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}
-              />
-            </label>
-          ))}
+          <PassportFieldsEditor values={values} onPatch={patch} />
           {error && <p className="se-error">{pick(error)}</p>}
           <div className="se-actions">
             <button type="button" disabled={busy} onClick={() => void create()}>

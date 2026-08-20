@@ -736,6 +736,13 @@ button:disabled { opacity: .4; }
 .al-title { margin: 0; font-weight: 600; }
 .al-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
 .al-field input, .al-url { padding: 6px 8px; font: inherit; font-size: 13px; border: 1px solid #c9ced6; border-radius: 6px; }
+/* Поле, выведенное из справочника по коду IATA (read-only), — та же серая
+   заливка, что у замкнутых полей формы заполнения (.field-locked): один
+   визуальный язык «заполнено не вами» на оба кабинета. Подпись под кодом —
+   и «из справочника: IST», и «код не найден…» — приглушена как .ep-note:
+   это справка о происхождении значений, не ошибка (ошибки — .se-error). */
+.al-field input.al-derived { background: #f2f4f7; }
+.al-directory-note { font-size: 11px; opacity: .7; }
 .al-once { margin: 0; font-size: 12px; color: #92400e; }
 /* Одноразовая ссылка заполнения (`FillLinkReveal`) — общая для панели
    «Добавить лаунж» и экрана проверки. Только раскладка, без цветов, поэтому
@@ -1037,6 +1044,10 @@ button:disabled { opacity: .4; }
     color: #f0f1f3;
     border-color: #2a2d34;
   }
+  /* Restated after the generic dark input rule above — тот же довод и тот же
+     тон, что у .field-locked: read-only «из справочника» обязано отличаться
+     от соседей и в тёмной теме. */
+  .al-field input.al-derived { background: #15171c; }
   .al-once { color: #fcd34d; }
   /* Панель правки паспорта — нейтральная рамка на тёмную, как .al-panel;
      её инпуты уже накрыты правилом .al-field input выше. */
