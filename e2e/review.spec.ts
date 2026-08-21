@@ -666,73 +666,105 @@ test('принять анкету можно только когда снято 
 })
 
 /**
- * Гарантия схождения для ПРЕДЗАПОЛНЕННОГО поля (паспорт блока I, который
- * `createLounge` пишет в анкету и который основной проход держит под замком —
- * см. `lockedIdentityKeys`): замок — умолчание UX, не стена. Отмеченный
- * ревьюером I.10 обязан быть редактируемым на экране правок (иначе
- * воспроизводится класс «отмечено, но неисправимо» — Critical, за который
- * ветка уже платила), правка снимает замечание, а после расхождения ответа с
- * колонкой лаунжа замок растворяется и в основном проходе НАВСЕГДА. Соседние
- * предзаполненные поля (I.7–I.9), которых ревьюер не трогал, остаются под
- * замком — растворение точечное, не оптовое.
+ * Гарантия схождения для ЧЕТВЁРКИ ПАСПОРТА при воротах производных полей
+ * (`saveOperatorField`): страна/город/аэропорт (I.7–I.9) выводятся из кода
+ * IATA и оператором не пишутся никогда — ни в основном проходе, ни на экране
+ * правок. Отмеченное ревьюером производное поле ОБЯЗАНО остаться исправимым
+ * (иначе воспроизводится класс «отмечено, но неисправимо» — Critical, за
+ * который ветка уже платила) — исправляется оно КОДОМ: карточка правок несёт
+ * значение read-only, подпись «выводится из кода» и комбобокс справочника;
+ * выбор аэропарта пишет код через серверные ворота, тройка следует за ним
+ * одной транзакцией, и снимаются замечания всей четвёрки.
  *
  * Сид идёт через настоящий `createLounge` (см. seed-dev.ts), поэтому у
- * засеянной анкеты I.10 = `IST` = колонке лаунжа — то самое состояние замка.
+ * засеянной анкеты четвёрка предзаполнена значениями IST из справочника.
+ * Выбирается Гатвик — код другой СТРАНЫ: замечание «не та страна» отвечается
+ * видимой сменой всех трёх производных значений, не только кода.
  */
-test('замечание на предзаполненном I.10: экран правок его редактирует, флаг снимается, замок растворяется', async ({
+test('замечание на производном I.7: правится КОДОМ через поиск справочника, тройка следует, флаг снят', async ({
   page,
   context,
   watched,
 }) => {
-  const { fillUrl, lounge } = seed('submitted', 'locked')
+  const { fillUrl, lounge } = seed('submitted', 'derived')
 
   await page.goto(loginLinkFor(SEED_REVIEWER_EMAIL))
   const reviewUrl = await openSeededSubmission(page, watched, lounge)
 
-  // Блок I открыт по умолчанию; строка I.10 несёт предзаполненный `IST`.
-  const iataRow = row(page, fieldByKey('I.10')!.label.en)
-  await expect(iataRow).toContainText('IST')
-  await flag(iataRow, 'wrong format', 'Код аэропорта не тот — проверьте по IATA')
+  // Блок I открыт по умолчанию; строка I.7 несёт предзаполненный `Turkey`.
+  const countryRow = row(page, fieldByKey('I.7')!.label.en)
+  await expect(countryRow).toContainText('Turkey')
+  await flag(countryRow, 'wrong format', 'Не та страна — лаунж в Великобритании')
 
   await clickAndAwaitAction(page, page.getByRole('button', { name: /Request changes/ }))
 
-  // ── Экран правок: замка НЕТ, поле правится ────────────────────────────────
+  // ── Экран правок: значение read-only + объяснение + поиск по справочнику ──
   const filler = await context.newPage()
   watched.watch(filler, 'filler')
   await filler.goto(fillUrl)
 
   await expect(filler.getByRole('heading', { name: 'Changes requested' })).toBeVisible()
   await expect(filler.locator('.fix-card')).toHaveCount(1)
-  const iataInput = filler.getByLabel(/IATA Code/)
-  await expect(iataInput).toHaveValue('IST')
-  await expect(iataInput).toBeEditable()
-  await expect(filler.locator('.field-locked-note')).toHaveCount(0)
+  const countryInput = filler.getByLabel(/Country/)
+  await expect(countryInput).toHaveValue('Turkey')
+  // Прямой правки НЕТ — и это не тупик: тут же подпись, ПОЧЕМУ (выводится из
+  // кода), и рабочая ручка карточки — исправление кода.
+  await expect(countryInput).not.toBeEditable()
+  await expect(
+    filler.getByText(/derived from the IATA code/).first(),
+  ).toBeVisible()
+  const search = filler.getByRole('combobox', { name: 'Find airport' })
+  await expect(search).toBeVisible()
 
-  await iataInput.fill('SAW')
+  // Свободного ввода кода нет и здесь: текущий код read-only, новый —
+  // только выбором из справочника (сервер иначе откажет — ворота).
+  await expect(filler.getByLabel(/IATA Code/)).not.toBeEditable()
+
+  await search.fill('gatwick')
+  await filler
+    .getByRole('option', { name: 'LGW — Gatwick · London, United Kingdom' })
+    .click()
   await expect(filler.getByText('Saved')).toBeVisible()
+  // Клиент показывает тройку ТЕМИ ЖЕ значениями справочника, что записал
+  // сервер, — сразу, без перезагрузки.
+  await expect(countryInput).toHaveValue('United Kingdom')
 
-  // ── Правка снята с замечания сервером, и замок растворился ────────────────
-  // Перезагрузка перечитывает открытые замечания и замки с сервера: замечаний
-  // больше нет → полная форма; ответ `SAW` разошёлся с колонкой `IST` → I.10
-  // редактируем и в основном проходе, с прежним значением на месте. Соседние
-  // предзаполненные поля не тронуты — их замки стоят.
+  // ── Флаг снят сервером; основной проход — тройка read-only, код с поиском ─
+  // Перезагрузка перечитывает замечания с сервера: их больше нет → полная
+  // форма. Тройка read-only ВСЕГДА (не расчёт замков, а ворота), с новыми
+  // значениями; код разошёлся с колонкой лаунжа (`LGW` ≠ `IST`) → вместо
+  // замка предзаполнения у I.10 стоит тот же контрол исправления кода.
   await filler.reload()
   await expect(
     filler.getByRole('heading', { name: 'Lounge Profile & Commercial Details' }),
   ).toBeVisible()
-  const iataAfter = filler.getByLabel(/IATA Code/)
-  await expect(iataAfter).toHaveValue('SAW')
-  await expect(iataAfter).toBeEditable()
+  await expect(filler.getByLabel(/Country/)).toHaveValue('United Kingdom')
   await expect(filler.getByLabel(/Country/)).not.toBeEditable()
-  await expect(filler.getByLabel(/Country/)).toHaveValue('Turkey')
-  // Сид передаёт provider, так что под замком остаются I.3 и I.7–I.9 — четыре.
+  await expect(filler.getByLabel(/City/)).toHaveValue('London')
+  await expect(filler.getByLabel(/Airport/)).toHaveValue('Gatwick')
+  await expect(filler.getByLabel(/IATA Code/)).toHaveValue('LGW')
+  await expect(filler.getByLabel(/IATA Code/)).not.toBeEditable()
+  await expect(filler.getByRole('combobox', { name: 'Find airport' })).toBeVisible()
+  // Микроподписей замка четыре: провайдер (I.3, предзаполнен и совпадает с
+  // колонкой — «заполнено вашей командой») и производная тройка («выводится
+  // из кода», у всех трёх).
   await expect(filler.locator('.field-locked-note')).toHaveCount(4)
+  await expect(filler.getByText(/derived from the IATA code/)).toHaveCount(3)
 
-  // ── И ревьюер видит исправленный ответ без замечания ──────────────────────
+  // ── Повторная отправка — с основного прохода, через навигатор шагов ───────
+  await filler.locator('.shell-title-btn').click()
+  await filler.getByRole('button', { name: 'Review & submit' }).click()
+  await filler.getByRole('button', { name: 'Submit for review', exact: true }).click()
+  await expect(filler.getByText('Sent for review. We will get back to you.')).toBeVisible()
+
+  // ── И ревьюер видит обновлённую четвёрку без единого замечания ────────────
   await page.goto(reviewUrl)
   await expectRendered(watched, page.locator('.review-screen'))
   await expect(page.locator('.frow-flagged')).toHaveCount(0)
-  await expect(row(page, fieldByKey('I.10')!.label.en)).toContainText('SAW')
+  await expect(row(page, fieldByKey('I.7')!.label.en)).toContainText('United Kingdom')
+  await expect(row(page, fieldByKey('I.8')!.label.en)).toContainText('London')
+  await expect(row(page, fieldByKey('I.9')!.label.en)).toContainText('Gatwick')
+  await expect(row(page, fieldByKey('I.10')!.label.en)).toContainText('LGW')
 })
 
 test('блок «Фото»: галерея открывается, слот можно отметить, опустевший слот честно пуст', async ({
