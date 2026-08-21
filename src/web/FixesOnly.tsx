@@ -13,7 +13,12 @@ import {
 import { useLocale } from '@/i18n/context'
 import { FLAG_REASON_LABELS } from '@/i18n/dictionaries'
 import type { FlagReason } from '@/review/flags'
+// Листовой `registry/identity`, не `manage`: клиентскому бандлу нельзя тащить
+// drizzle и схему БД — см. довод в самом модуле.
+import { DERIVED_FIELD_KEYS, IATA_FIELD_KEY } from '@/registry/identity'
+import type { AirportSearchResult, DirectoryRow } from '@/registry/directory'
 import { FieldInput } from './FieldInput'
+import { IataCorrection } from './IataCorrection'
 import { ServiceItemCard } from './ServiceItemCard'
 import { PhotoSlots } from './PhotoSlots'
 
@@ -111,6 +116,14 @@ export function FixesOnly(props: {
    * it was.
    */
   touched: ReadonlySet<string>
+  /** Поиск по справочнику для контрола исправления кода IATA — токен-скоупное
+   *  действие стороны заполнения, пробрасывается из `FillForm` (см. его
+   *  `searchAirports`). */
+  searchAirports: (query: string) => Promise<AirportSearchResult>
+  /** Выбор аэропорта из справочника — ЕДИНСТВЕННЫЙ путь правки I.10 и
+   *  производной тройки I.7–I.9 на этом экране: `FillForm.pickAirport` пишет
+   *  код через серверные ворота и обновляет всю четвёрку в состоянии. */
+  onAirportPick: (row: DirectoryRow) => void
 }): React.JSX.Element {
   const { t, pick } = useLocale()
 
@@ -137,7 +150,16 @@ export function FixesOnly(props: {
   }, [unmatched.join(',')])
 
   function errorFor(key: string, target: FixTarget): string | undefined {
-    if (target.kind === 'field') return props.fieldErrors?.[key]
+    if (target.kind === 'field') {
+      // Четвёрка паспорта пишется ТОЛЬКО через код: отказ последней записи
+      // живёт под ключом I.10, и карточка отмеченного I.7 обязана видеть его
+      // тоже — иначе «Изменено» появилось бы на карточке, чью правку сервер
+      // отверг.
+      if (key === IATA_FIELD_KEY || DERIVED_FIELD_KEYS.includes(key)) {
+        return props.fieldErrors?.[IATA_FIELD_KEY] ?? props.fieldErrors?.[key]
+      }
+      return props.fieldErrors?.[key]
+    }
     if (target.kind === 'service') return props.serviceErrors?.[key]
     return undefined
   }
@@ -145,6 +167,50 @@ export function FixesOnly(props: {
   function control(flag: Flag, target: FixTarget): React.JSX.Element {
     switch (target.kind) {
       case 'field':
+        // Код IATA: правится ВЫБОРОМ из справочника (`IataCorrection`), не
+        // свободным вводом, — тот же контракт, что в основном проходе:
+        // сервер (`saveOperatorField`) принимает только код из справочника
+        // и одной транзакцией переписывает производную тройку.
+        if (flag.fieldKey === IATA_FIELD_KEY) {
+          return (
+            <IataCorrection
+              field={target.field}
+              value={props.fieldValues[flag.fieldKey]}
+              onPick={props.onAirportPick}
+              search={props.searchAirports}
+              error={props.fieldErrors?.[IATA_FIELD_KEY]}
+            />
+          )
+        }
+        // Производное поле (I.7–I.9): его значение показывается только для
+        // чтения, а РАБОЧИЙ контрол карточки — исправление КОДА в ней же:
+        // страна/город/аэропорт выводятся из кода, и ответ на замечание
+        // «не та страна» — правильный код, после которого сервер снимает
+        // замечания всей четвёрки (`savedKeys` в `saveOperatorField`).
+        // Тупика нет: карточка отвечаема, просто её ручка — код.
+        if (DERIVED_FIELD_KEYS.includes(flag.fieldKey)) {
+          const iataField = fieldByKey(IATA_FIELD_KEY)
+          return (
+            <>
+              <FieldInput
+                field={target.field}
+                value={props.fieldValues[flag.fieldKey]}
+                onChange={() => {}}
+                locked
+                lockedNote={t('form.derivedFromCode')}
+              />
+              {iataField && (
+                <IataCorrection
+                  field={iataField}
+                  value={props.fieldValues[IATA_FIELD_KEY]}
+                  onPick={props.onAirportPick}
+                  search={props.searchAirports}
+                  error={props.fieldErrors?.[IATA_FIELD_KEY]}
+                />
+              )}
+            </>
+          )
+        }
         return (
           <FieldInput
             field={target.field}

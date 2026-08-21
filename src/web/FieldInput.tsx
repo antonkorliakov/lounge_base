@@ -99,10 +99,20 @@ export function FieldInput(props: {
    * disabled выпадает из таб-порядка и произносится как «недоступно», а
    * здесь поле именно ЧИТАЕТСЯ. Событий изменения у readonly-инпута нет,
    * так что автосохранение для замкнутого поля не срабатывает по построению
-   * — обработчик просто не навешан. Экран правок (`FixesOnly`) этот проп
-   * не передаёт никогда — отмеченный ответ правится всегда.
+   * — обработчик просто не навешан. Экран правок (`FixesOnly`) передаёт этот
+   * проп ТОЛЬКО производным полям паспорта (I.7–I.9, вместе с контролом
+   * исправления кода в той же карточке — см. `DERIVED_FIELD_KEYS`); любой
+   * другой отмеченный ответ правится всегда.
    */
   locked?: boolean
+  /**
+   * Микроподпись под замкнутым полем вместо стандартной «заполнено вашей
+   * командой» — производные поля паспорта (I.7–I.9) подписываются «выводится
+   * из кода IATA» (`form.derivedFromCode`): у лаунжа старше предзаполнения
+   * стандартная подпись была бы ложью, а причина read-only у этих полей
+   * другая и постоянная. Читается только вместе с `locked`.
+   */
+  lockedNote?: string
 }): React.JSX.Element {
   const { field, value, onChange, error } = props
   const { pick, t } = useLocale()
@@ -129,7 +139,7 @@ export function FieldInput(props: {
           value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''}
           readOnly
         />
-        <p className="field-hint field-locked-note">{t('form.prefilled')}</p>
+        <p className="field-hint field-locked-note">{props.lockedNote ?? t('form.prefilled')}</p>
         {errorNode}
       </div>
     )

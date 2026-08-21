@@ -85,6 +85,10 @@ function renderFixes(
         onPhotoUploaded={() => {}}
         onPhotoRemoved={() => {}}
         touched={options.touched ?? new Set()}
+        // Поиск асинхронный и в статик-рендере не зовётся никогда (эффектов
+        // у renderToStaticMarkup нет) — заглушка честна.
+        searchAirports={async () => ({ rows: [], more: false })}
+        onAirportPick={() => {}}
       />
     </LocaleProvider>,
   )
@@ -464,24 +468,35 @@ describe('контрол отмеченного слота фото', () => {
  * class="fix-comment">`, так что пустой текст ничего не добавляет).
  */
 /**
- * Гарантия схождения цикла правок для предзаполненных полей блока I
- * (I.7–I.10, I.3): в основном проходе они под замком (`FieldInput`'s
- * `locked`, список считает сервер — `lockedIdentityKeys`), но экран правок
- * замков НЕ ЗНАЕТ — у `FixesOnly` нет пропа замков вовсе, и его `FieldInput`
- * вызывается без `locked`. Это «по построению», и именно поэтому оно
- * закрепляется тестом: следующий, кто протянет замки и сюда «для
- * консистентности», воссоздаст класс «отмечено, но неисправимо» — Critical,
- * за который проект уже платил (см. шапку этого файла), — и упадёт здесь по
- * имени, а не найдётся руками в проде.
+ * Гарантия схождения цикла правок для полей паспорта блока I — с той же
+ * целью, что и раньше (класс «отмечено, но неисправимо» — Critical, за
+ * который проект уже платил, см. шапку файла), но ПОНЯТИЕ «рабочий контрол»
+ * расширено ОСОЗНАННО вместе с воротами производных полей
+ * (`saveOperatorField` в `registry/manage.ts`):
+ *
+ *  - I.2/I.3 (имя, провайдер) — по-прежнему обычный редактируемый инпут:
+ *    сервер их прямые записи принимает.
+ *  - I.7–I.9 (страна/город/аэропорт) — прямых записей сервер БОЛЬШЕ НЕ
+ *    принимает: они выводятся из кода IATA. Редактируемый инпут здесь был бы
+ *    ложью (каждая правка получала бы отказ) — карточка показывает значение
+ *    только для чтения С ПОДПИСЬЮ «выводится из кода» И несёт рабочий контрол
+ *    исправления КОДА (комбобокс справочника): исправленный код переписывает
+ *    тройку и снимает замечание этой карточки на сервере. Тупика нет — ручка
+ *    карточки просто называется «код».
+ *  - I.10 (код) — правится ВЫБОРОМ из справочника, не свободным вводом (тот
+ *    же контракт, что у сервера: код не из справочника — отказ).
+ *
+ * Рабочим контролом для четвёрки считается КОМБОБОКС (role="combobox"), и
+ * это проверяется явно: общий CONTROL_RE в инвариантных циклах выше удобно
+ * матчит и readonly-инпут, то есть для этих ключей он один недоказателен.
  */
-describe('предзаполненное поле на экране правок — РЕДАКТИРУЕМО', () => {
-  const PREFILLED_KEYS = ['I.3', 'I.7', 'I.8', 'I.9', 'I.10']
+describe('поля паспорта на экране правок: тройка read-only, ручка — код', () => {
+  const EDITABLE_PASSPORT_KEYS = ['I.2', 'I.3']
+  const DERIVED_KEYS = ['I.7', 'I.8', 'I.9']
 
-  it('отмеченный ключ паспорта рендерится рабочим инпутом, не readonly', () => {
-    for (const key of PREFILLED_KEYS) {
+  it('имя и провайдер рендерятся рабочим инпутом, не readonly', () => {
+    for (const key of EDITABLE_PASSPORT_KEYS) {
       const html = renderFixes([flagFor(key)], {
-        // Значение как у настоящего предзаполнения — совпадает с колонкой
-        // лаунжа; замок в основном проходе стоял бы именно на таком.
         fieldValues: { [key]: 'prefilled value' },
       })
       expect(html, key).toContain('value="prefilled value"')
@@ -489,6 +504,35 @@ describe('предзаполненное поле на экране правок
       expect(html, key).not.toContain('field-locked')
       expect(html, key).not.toContain(UI['form.prefilled'].en)
     }
+  })
+
+  it('производное поле: значение read-only + подпись «из кода» + комбобокс кода', () => {
+    for (const key of DERIVED_KEYS) {
+      const html = renderFixes([flagFor(key)], {
+        fieldValues: { [key]: 'derived value', 'I.10': 'IST' },
+      })
+      // Значение видно, но не редактируется…
+      expect(html, key).toContain('value="derived value"')
+      expect(html, key).toMatch(/readonly/i)
+      expect(html, key).toContain(UI['form.derivedFromCode'].en)
+      // …а рабочий контрол — исправление кода: комбобокс справочника плюс
+      // текущий код на виду.
+      expect(html, key).toContain('role="combobox"')
+      expect(html, key).toContain('value="IST"')
+      expect(html, key).toContain(UI['form.iataPickNote'].en)
+      // Подпись предзаполнения сюда не относится — причина read-only другая.
+      expect(html, key).not.toContain(UI['form.prefilled'].en)
+    }
+  })
+
+  it('отмеченный I.10: текущий код read-only, правка — выбором из справочника', () => {
+    const html = renderFixes([flagFor('I.10')], {
+      fieldValues: { 'I.10': 'IST' },
+    })
+    expect(html).toContain('value="IST"')
+    expect(html).toMatch(/readonly/i)
+    expect(html).toContain('role="combobox"')
+    expect(html).toContain(UI['form.iataPickNote'].en)
   })
 })
 

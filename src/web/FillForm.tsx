@@ -14,10 +14,20 @@ import {
 import type { SubmissionStatus } from '@/db/schema'
 import type { MissingItems } from '@/submissions/completeness'
 import { useLocale } from '@/i18n/context'
-import { saveFieldAction, saveServiceAction, submitAction } from '@/app/f/[token]/actions'
+// Листовой `registry/identity` (не `manage`): клиентскому бандлу нельзя
+// тащить drizzle и схему БД — см. довод в самом модуле.
+import { DERIVED_FIELD_KEYS, DERIVED_PREFILL, IATA_FIELD_KEY } from '@/registry/identity'
+import type { AirportSearchResult, DirectoryRow } from '@/registry/directory'
+import {
+  saveFieldAction,
+  saveServiceAction,
+  searchAirportsFillAction,
+  submitAction,
+} from '@/app/f/[token]/actions'
 import { useAutosave } from './useAutosave'
 import { FormShell } from './FormShell'
 import { FieldInput } from './FieldInput'
+import { IataCorrection } from './IataCorrection'
 import { ServicesPass1 } from './ServicesPass1'
 import { ServicesPass2 } from './ServicesPass2'
 import { PhotoSlots } from './PhotoSlots'
@@ -80,10 +90,14 @@ export function FillForm(props: {
   flags: Flag[]
   /** Поля блока I, предзаполненные при заведении лаунжа и показываемые в
    *  ОСНОВНОМ проходе только для чтения. Список считает сервер
-   *  (`lockedIdentityKeys`, см. `src/registry/manage.ts`) — здесь нет своей
-   *  копии правила. Экран правок (`FixesOnly`) этих замков сознательно НЕ
-   *  видит: отмеченное ревьюером поле обязано быть исправимым, иначе цикл
-   *  правок не сходится (замок — умолчание UX, не стена). */
+   *  (`lockedIdentityKeys`, см. `src/registry/identity.ts`) — здесь нет своей
+   *  копии правила. Производная тройка I.7–I.9 в этот расчёт больше не
+   *  упирается: она read-only ВСЕГДА (см. `DERIVED_FIELD_KEYS` — сервер
+   *  прямые записи отказывает), а замок решает только показ I.2/I.3 и то,
+   *  рисуется ли I.10 замком или контролом исправления кода. Экран правок
+   *  (`FixesOnly`) замков предзаполнения не видит: отмеченное ревьюером поле
+   *  обязано быть исправимым — у обычных полей правкой значения, у четвёрки
+   *  паспорта исправлением КОДА в той же карточке (цикл правок сходится). */
   lockedKeys: string[]
   initialFields: Record<string, unknown>
   initialServices: Record<string, ServiceValueInput>
@@ -181,6 +195,41 @@ export function FillForm(props: {
     setFields((prev) => ({ ...prev, [key]: value }))
     markTouched(key)
     autosave.push(key, value)
+  }
+
+  /**
+   * Поиск по справочнику для контрола исправления кода IATA — токен-скоупное
+   * действие стороны заполнения (`searchAirportsFillAction`), не действие
+   * кабинета: у оператора нет сессии. `useMemo` — чтобы эффект поиска внутри
+   * `AirportSearch` (у него `search` в зависимостях) не перезапускался от
+   * каждой перерисовки этой формы.
+   */
+  const searchAirports = useMemo(
+    () =>
+      (query: string): Promise<AirportSearchResult> =>
+        searchAirportsFillAction(props.token, query),
+    [props.token],
+  )
+
+  /**
+   * Выбор аэропорта в контроле исправления кода (`IataCorrection`) — на
+   * сервер уходит ОДНА запись, код (`saveFieldAction` → `saveOperatorField`
+   * выведет тройку из справочника и запишет всю четвёрку одной транзакцией);
+   * толкать I.7–I.9 в автосейв нельзя — сервер прямые записи производных
+   * полей отказывает. В клиентском же состоянии обновляется вся четвёрка,
+   * из ТОГО ЖЕ ряда справочника, который запишет сервер: read-only поля
+   * тройки обязаны показать новые значения сразу, не после перезагрузки.
+   * `markTouched` — по всей четвёрке: на экране правок исправленный код
+   * отвечает и на замечание «не та страна», и её карточка должна показать
+   * «Изменено» (сервер той же логикой снимает все четыре замечания — см.
+   * `savedKeys` в `saveOperatorField`).
+   */
+  function pickAirport(row: DirectoryRow): void {
+    const patch: Record<string, string> = { [IATA_FIELD_KEY]: row.iata }
+    for (const entry of DERIVED_PREFILL) patch[entry.fieldKey] = row[entry.column]
+    setFields((prev) => ({ ...prev, ...patch }))
+    for (const key of Object.keys(patch)) markTouched(key)
+    autosave.push(IATA_FIELD_KEY, row.iata)
   }
 
   function changeService(key: string, value: ServiceValueInput): void {
@@ -338,6 +387,8 @@ export function FillForm(props: {
             onPhotoUploaded={photoUploaded}
             onPhotoRemoved={photoRemoved}
             touched={touched}
+            searchAirports={searchAirports}
+            onAirportPick={pickAirport}
           />
           {submitErrorNode()}
         </main>
@@ -378,19 +429,59 @@ export function FillForm(props: {
                 {/* Порядок показа — `stepFields`: блок I рисует код IATA
                     раньше производных от него полей (см. BLOCK_I_IATA_FIRST —
                     и почему НИГДЕ, кроме этого шва). */}
-                {stepFields(blockKey).map((field) => (
-                  <FieldInput
-                    key={field.key}
-                    field={field}
-                    value={fields[field.key]}
-                    onChange={(value) => changeField(field.key, value)}
-                    error={autosave.rejected[field.key]}
-                    // Замок — только здесь, в основном проходе. `FixesOnly`
-                    // ниже рендерит свой `FieldInput` без этого пропа, и это
-                    // его контракт: отмеченный ответ правится всегда.
-                    locked={lockedKeys.has(field.key)}
-                  />
-                ))}
+                {stepFields(blockKey).map((field) => {
+                  // Производная тройка (I.7–I.9) — read-only ВСЕГДА, что бы
+                  // ни сказал расчёт замков: сервер прямые записи этих полей
+                  // отказывает (`saveOperatorField`), и UI не вправе
+                  // предлагать то, в чём сервер откажет. Подпись — «выводится
+                  // из кода», не «заполнено вашей командой»: у лаунжа старше
+                  // предзаполнения второе было бы ложью.
+                  if (DERIVED_FIELD_KEYS.includes(field.key)) {
+                    return (
+                      <FieldInput
+                        key={field.key}
+                        field={field}
+                        value={fields[field.key]}
+                        onChange={() => {}}
+                        locked
+                        lockedNote={t('form.derivedFromCode')}
+                      />
+                    )
+                  }
+                  // Код IATA без замка предзаполнения (лаунж старше фичи или
+                  // код уже расходился с колонкой) — не свободный ввод, а
+                  // исправление через справочник: любой путь записи I.10
+                  // проходит серверные ворота (`saveOperatorField`), и
+                  // свободное поле почти всегда получало бы отказ. Заодно это
+                  // единственный живой путь оператора ДОЗАПОЛНИТЬ пустую
+                  // четвёрку старого лаунжа — без него анкета с read-only
+                  // тройкой была бы неотправляемой (класс «нужный человек не
+                  // может дотянуться»).
+                  if (field.key === IATA_FIELD_KEY && !lockedKeys.has(field.key)) {
+                    return (
+                      <IataCorrection
+                        key={field.key}
+                        field={field}
+                        value={fields[field.key]}
+                        onPick={pickAirport}
+                        search={searchAirports}
+                        error={autosave.rejected[field.key]}
+                      />
+                    )
+                  }
+                  return (
+                    <FieldInput
+                      key={field.key}
+                      field={field}
+                      value={fields[field.key]}
+                      onChange={(value) => changeField(field.key, value)}
+                      error={autosave.rejected[field.key]}
+                      // Замок предзаполнения — только в основном проходе;
+                      // производная тройка и код разобраны ветками выше.
+                      locked={lockedKeys.has(field.key)}
+                    />
+                  )
+                })}
               </section>
             )
           })

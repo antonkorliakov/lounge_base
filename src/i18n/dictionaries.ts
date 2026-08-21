@@ -93,6 +93,21 @@ export const UI = {
     en: 'Provided by your team earlier',
     ru: 'Заполнено вашей командой ранее',
   },
+  // Микроподпись под производными полями паспорта (I.7–I.9): они выводятся из
+  // кода IATA справочником и не редактируются НИГДЕ — ни в основном проходе,
+  // ни на экране правок (сервер откажет, см. `saveOperatorField`). Правда
+  // всегда, в отличие от `form.prefilled`: у лаунжа старше предзаполнения
+  // «заполнено вашей командой» было бы ложью, а «выводится из кода» — нет.
+  'form.derivedFromCode': {
+    en: 'Country, city and airport are derived from the IATA code — correct the code to change them',
+    ru: 'Страна, город и аэропорт выводятся из кода IATA — чтобы изменить их, исправьте код',
+  },
+  // Подсказка у контрола исправления кода (`IataCorrection`): что произойдёт
+  // при выборе — тройка следует за кодом, набирать её не нужно и негде.
+  'form.iataPickNote': {
+    en: 'Pick the airport from the directory — country, city and airport will follow the code',
+    ru: 'Выберите аэропорт из справочника — страна, город и аэропорт заполнятся по коду',
+  },
   'services.pass1Title': {
     en: 'What does the lounge offer?',
     ru: 'Что есть в лаунже?',
