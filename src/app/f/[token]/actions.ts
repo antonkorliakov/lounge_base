@@ -2,8 +2,10 @@
 
 import { db } from '@/db/client'
 import { resolveFillToken } from '@/access/tokens'
-import { saveFieldValue, saveServiceValue } from '@/submissions/values'
+import { saveServiceValue } from '@/submissions/values'
 import { submitSubmission } from '@/submissions/transitions'
+import { saveOperatorField } from '@/registry/manage'
+import { searchAirports, type AirportSearchResult } from '@/registry/directory'
 import { clearFlagAfterSave } from '@/app/clear-flag-after-save'
 import type { Localized, ServiceValueInput } from '@/form-schema'
 import type { MissingItems } from '@/submissions/completeness'
@@ -58,7 +60,12 @@ export async function saveFieldAction(
   const resolved = await resolveFillToken(db(), token)
   if (!resolved) return DENIED
 
-  const result = await saveFieldValue(db(), {
+  // Не голый `saveFieldValue`, а дверь оператора (`saveOperatorField`,
+  // `src/registry/manage.ts`): производные поля паспорта (I.7/I.8/I.9)
+  // отказываются ЗДЕСЬ, на сервере, — прежний замок был только в UI, а
+  // действие достижимо по сети напрямую; код IATA (I.10) пишется через
+  // справочник и в одной транзакции переписывает выведенную тройку.
+  const result = await saveOperatorField(db(), {
     submissionId: resolved.submissionId,
     fieldKey,
     value,
@@ -68,8 +75,36 @@ export async function saveFieldAction(
   // Исправленный ответ снимает своё замечание и подтверждение своего блока:
   // ревьюер посмотрит его заново, остальное останется подтверждённым. Сбой
   // этого шага не отменяет успех записи — см. `clearFlagAfterSave`.
-  await clearFlagAfterSave(resolved.submissionId, fieldKey)
+  // По КАЖДОМУ записанному ключу (`savedKeys`): исправленный код IATA
+  // переписал и тройку, значит отвечает и на замечание «не та страна» —
+  // замечания по I.7–I.9 снимаются той же правкой кода.
+  for (const savedKey of result.savedKeys) {
+    await clearFlagAfterSave(resolved.submissionId, savedKey)
+  }
   return { ok: true }
+}
+
+/**
+ * Поиск по справочнику аэропортов для комбобокса исправления кода IATA на
+ * стороне ЗАПОЛНЕНИЯ (экран правок и основной проход без замка). Свой,
+ * токен-скоупный вход, а не `searchAirportsAction` кабинета: у оператора нет
+ * сессии, а `requireSession` — первый оператор того действия. Ворота — тот же
+ * fill-токен, что у всех действий этого файла: справочник — публичные данные
+ * (те же строки видит любой админ), но анонимных входов у формы заполнения
+ * нет ни одного, и посточка «кто может дёргать поиск» остаётся той же, что у
+ * остальной поверхности заполнения — держатель живой ссылки. Невалидный
+ * токен — пустой ответ, той же формы, что «ничего не найдено»: поиск ничего
+ * не пишет, и различать «ссылка мертва» и «нет совпадений» здесь незачем
+ * (сохранение по мёртвой ссылке откажет само). Вся семантика поиска — в
+ * `searchAirports` (`registry/directory.ts`), как у кабинета: правило одно.
+ */
+export async function searchAirportsFillAction(
+  token: string,
+  query: string,
+): Promise<AirportSearchResult> {
+  const resolved = await resolveFillToken(db(), token)
+  if (!resolved) return { rows: [], more: false }
+  return searchAirports(db(), query)
 }
 
 export async function saveServiceAction(

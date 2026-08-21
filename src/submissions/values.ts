@@ -40,6 +40,14 @@ export type { SaveResult }
  */
 const WRITTEN_AT = sql`clock_timestamp()`
 
+/**
+ * ВОРОТ производных полей паспорта (I.7/I.8/I.9 из кода IATA) здесь НЕТ —
+ * намеренно: этот писатель обслуживает и предзаполнение `createLounge`, и
+ * синхронизацию `updateLoungePassport`, и сиды/стенды, которым нужны сырые
+ * записи любых ключей. Дверь ОПЕРАТОРА — `saveOperatorField`
+ * (`src/registry/manage.ts`): серверные действия ссылки заполнения ходят
+ * только через неё, и отказывать держателю токена — её работа, не этого слоя.
+ */
 export async function saveFieldValue(
   db: Db,
   input: { submissionId: string; fieldKey: string; value: unknown },

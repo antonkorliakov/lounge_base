@@ -7,6 +7,26 @@ import { saveFieldValue } from '@/submissions/values'
 import { EDITABLE_STATUSES } from '@/submissions/editable'
 import { normalizeIata } from './iata'
 import { lookupAirport } from './directory'
+import {
+  IDENTITY_PREFILL,
+  DERIVED_PREFILL,
+  DERIVED_FIELD_KEYS,
+  IATA_FIELD_KEY,
+  type IdentityColumns,
+} from './identity'
+
+// Соответствие «паспорт ↔ поля блока I» и производные от него списки живут в
+// листовом `registry/identity.ts` (клиентские компоненты формы заполнения не
+// могут импортировать этот модуль — см. довод там). Ре-экспорт сохраняет
+// прежние серверные импорты правдой: запись одна.
+export {
+  IDENTITY_PREFILL,
+  DERIVED_PREFILL,
+  DERIVED_FIELD_KEYS,
+  IATA_FIELD_KEY,
+  lockedIdentityKeys,
+} from './identity'
+export type { IdentityColumns } from './identity'
 
 /**
  * Вход обоих писателей паспорта — ТОЛЬКО то, что администратор решает сам:
@@ -45,93 +65,6 @@ const fail = (en: string, ru: string): { ok: false; error: Localized } => ({
 // формы кабинета не могут импортировать этот модуль — см. довод там).
 // Ре-экспорт сохраняет прежние серверные импорты правдой: правило одно.
 export { normalizeIata }
-
-/**
- * Паспорт лаунжа ↔ анкетные поля блока I: то, что администратор уже набрал в
- * «Add lounge», оператор не должен набирать второй раз. ОДНА запись
- * соответствия на оба его употребления — предзаполнение при создании
- * (`createLounge` ниже) и серверный расчёт «что показать под замком» на
- * форме заполнения (`lockedIdentityKeys`); рукописная копия списка на
- * клиенте — ровно тот класс расползания, который эта ветка ловит не первый
- * раз (`EDITABLE_STATUSES`, `FLAG_REASONS`, …).
- *
- * `lockable: false` у названия — решение пользователя: название лаунжа
- * остаётся редактируемым оператором ВСЕГДА. Отсюда осознанная асимметрия,
- * и с синхронизацией паспорта на принятии она стала РЕЗЧЕ, а не исчезла:
- * `approveSubmission` теперь копирует в реестр, кроме классифицирующих
- * полей (III.6.*), ещё и принятые ответы паспорта — страну/город/аэропорт/
- * IATA (I.7–I.10, см. `passportFieldsFrom` в `review/decide.ts`), — но
- * НЕ название: правка I.2 оператором по-прежнему НЕ меняет `lounges.name`.
- * Строка реестра держит имя администратора, а экран проверки показывает оба
- * (заголовок — имя реестра, строка I.2 — ответ оператора), и расхождение
- * видно ревьюеру. Это существующее и принятое поведение, не побочный эффект
- * предзаполнения; на нём стоит и заголовок экрана проверки. `provider`
- * (I.3) в синхронизацию тоже не входит — не по принципиальному решению, как
- * имя, а потому, что согласованный разрыв касался четырёх полей, которыми
- * фильтруют реестр и выгрузку; колонка остаётся творением создания лаунжа.
- */
-export const IDENTITY_PREFILL = [
-  { column: 'name', fieldKey: 'I.2', lockable: false },
-  { column: 'provider', fieldKey: 'I.3', lockable: true },
-  { column: 'country', fieldKey: 'I.7', lockable: true },
-  { column: 'city', fieldKey: 'I.8', lockable: true },
-  { column: 'airport', fieldKey: 'I.9', lockable: true },
-  { column: 'iataCode', fieldKey: 'I.10', lockable: true },
-] as const satisfies readonly {
-  column: keyof IdentityColumns
-  fieldKey: string
-  lockable: boolean
-}[]
-
-/** Колонки паспорта лаунжа, которые участвуют в предзаполнении, — ровно те,
- *  что принимает `createLounge` (плюс их nullability по `db/schema.ts`). */
-export type IdentityColumns = {
-  name: string
-  provider: string | null
-  country: string
-  city: string
-  airport: string
-  iataCode: string
-}
-
-/**
- * Какие поля блока I показывать оператору под замком (только чтение) в
- * ОСНОВНОМ проходе формы. Правило по каждому полю: колонка паспорта непуста
- * И сохранённый ответ анкеты дословно (после trim) совпадает с ней. Обе
- * половины обязательны, и это не перестраховка:
- *
- *  - «Колонка непуста» одна НЕ годится: лаунжи, заведённые до этой фичи
- *    (или ops-скриптом с пустой страной), имеют непустые колонки и НИ ОДНОГО
- *    предзаполненного ответа — замок на пустом обязательном поле сделал бы
- *    анкету незаполнимой и неотправляемой (тот самый класс «нужный человек
- *    не может дотянуться», за который проект уже платил Critical'ом).
- *  - «Ответ есть» одно не годится тоже: после того как ревьюер отметил
- *    поле, а оператор на экране правок исправил его (экран правок замки не
- *    рисует — это его контракт, см. `FixesOnly`), ответ расходится с
- *    колонкой, и подпись «заполнено вашей командой» стала бы ложью. Совпало
- *    — замок стоит; разошлось — замок растворяется НАВСЕГДА, и основной
- *    проход тоже отдаёт поле в правку. Схождение цикла правок гарантировано
- *    конструкцией, а не запретом.
- *
- * Считается НА СЕРВЕРЕ (страница заполнения знает и лаунж, и ответы) и
- * передаётся клиенту готовым списком ключей.
- */
-export function lockedIdentityKeys(
-  lounge: IdentityColumns,
-  fields: Record<string, unknown>,
-): string[] {
-  const locked: string[] = []
-  for (const entry of IDENTITY_PREFILL) {
-    if (!entry.lockable) continue
-    const column = lounge[entry.column]
-    if (column === null || column.trim() === '') continue
-    const answer = fields[entry.fieldKey]
-    if (typeof answer !== 'string') continue
-    if (answer.trim() !== column.trim()) continue
-    locked.push(entry.fieldKey)
-  }
-  return locked
-}
 
 /**
  * Единственная запись правил валидности паспорта в исполнимом виде — общий
@@ -287,6 +220,117 @@ export async function createLounge(
       expiresAt,
     }
   })
+}
+
+export type OperatorSaveResult =
+  /** `savedKeys` — все ключи, чьи ответы эта запись изменила: сам ключ для
+   *  обычного поля, вся четвёрка I.10+I.7/8/9 для кода IATA. Вызывающий
+   *  (`saveFieldAction`) снимает замечания ровно по этому списку —
+   *  исправленный код отвечает и на замечание «не та страна». */
+  | { ok: true; savedKeys: readonly string[] }
+  | { ok: false; error: Localized }
+
+/**
+ * ЕДИНСТВЕННАЯ дверь оператора к записи ответа плоского поля — то, что
+ * вызывает `saveFieldAction` (`src/app/f/[token]/actions.ts`) вместо голого
+ * `saveFieldValue`. Ворота производных полей живут ЗДЕСЬ, в слое действия
+ * оператора, а НЕ в самом `saveFieldValue` — и это граница, а не пропуск:
+ * `saveFieldValue` обязан оставаться свободным для предзаполнения
+ * (`createLounge`), синхронизации паспорта (`updateLoungePassport`), сидов и
+ * юнит-стендов, которым нужны сырые записи любых ключей. Оператор же ходит
+ * только через серверные действия ссылки заполнения, и эта функция — их
+ * общий путь для полей.
+ *
+ * Правила (решение пользователя — справочник как ворота, продолжение
+ * `resolveIdentity`):
+ *
+ *  1. Прямая запись производного поля (I.7/I.8/I.9, см. `DERIVED_FIELD_KEYS`)
+ *     — ОТКАЗ всегда: тройка выводится из кода IATA, исправляется код.
+ *     Прежний замок был только в UI, а действие достижимо по сети напрямую —
+ *     держатель токена мог записать любую страну поверх выведенной; теперь
+ *     сервер отказывает сам (правило ветки: клиентская проверка — подсказка).
+ *  2. Запись кода IATA (I.10) — через справочник: нормализация той же
+ *     `normalizeIata`, промах справочника — отказ (тот же гейт, что у
+ *     `resolveIdentity`: источник тройки один), попадание — В ОДНОЙ
+ *     ТРАНЗАКЦИИ записываются код и вся выведенная тройка. Атомарность
+ *     обязательна: код `ESB` с городом `Istanbul` — состояние, которого не
+ *     должен уметь оставить ни один сбой между четырьмя записями. Приём тот
+ *     же, что у предзаполнения `createLounge`: `saveFieldValue` с `tx` даёт
+ *     SAVEPOINT, а не вторую транзакцию; первый вызов берёт `FOR UPDATE` на
+ *     строку `submissions` (`assertEditable`), так что статус не может
+ *     уехать между записями четвёрки. Отказ ПЕРВОЙ записи (анкета закрыта,
+ *     пустое значение) возвращается значением — записано ещё ничего не было;
+ *     отказ ПОСЛЕДУЮЩИХ недостижим через валидные входы (строка уже заперта
+ *     этой транзакцией, значения — непустые строки справочника) и потому
+ *     роняет транзакцию целиком, а не коммитит половину четвёрки — тот же
+ *     выбор и довод, что у предзаполнения.
+ *  3. Любое другое поле — обычный `saveFieldValue`, без изменений.
+ *
+ * Снятие замечаний сюда НЕ входит (граница модулей: registry/submissions не
+ * видят review) — вызывающий делает это по `savedKeys`, второй транзакцией,
+ * best-effort (`clearFlagAfterSave` и его довод).
+ */
+export async function saveOperatorField(
+  db: Db,
+  input: { submissionId: string; fieldKey: string; value: unknown },
+): Promise<OperatorSaveResult> {
+  if (DERIVED_FIELD_KEYS.includes(input.fieldKey)) {
+    return fail(
+      'Country, city and airport are derived from the IATA code — correct the code instead',
+      'Страна, город и аэропорт выводятся из кода IATA — исправьте код',
+    )
+  }
+
+  if (input.fieldKey === IATA_FIELD_KEY) {
+    const iata = typeof input.value === 'string' ? normalizeIata(input.value) : null
+    if (iata === null) {
+      return fail('IATA code must be 3 letters', 'Код IATA — три латинские буквы')
+    }
+
+    // Чтение справочника — вне транзакции, как у `resolveIdentity`: статичная
+    // таблица, гонки с импортом не стоят блокировки.
+    const directory = await lookupAirport(db, iata)
+    if (directory === null) {
+      return fail(
+        `Code ${iata} is not in the airport directory — country, city and airport ` +
+          'can only be derived from a directory code; new airports are added by ' +
+          'updating the directory',
+        `Код ${iata} не найден в справочнике аэропортов — страна, город и аэропорт ` +
+          'выводятся только из кода справочника; новый аэропорт добавляется ' +
+          'обновлением справочника',
+      )
+    }
+
+    return db.transaction(async (tx) => {
+      const code = await saveFieldValue(tx, {
+        submissionId: input.submissionId,
+        fieldKey: IATA_FIELD_KEY,
+        value: iata,
+      })
+      if (!code.ok) return code
+
+      for (const entry of DERIVED_PREFILL) {
+        const derived = await saveFieldValue(tx, {
+          submissionId: input.submissionId,
+          fieldKey: entry.fieldKey,
+          value: directory[entry.column],
+        })
+        if (!derived.ok) {
+          throw new Error(
+            `saveOperatorField: derived ${entry.fieldKey} refused — ${derived.error.en}`,
+          )
+        }
+      }
+
+      return {
+        ok: true as const,
+        savedKeys: [IATA_FIELD_KEY, ...DERIVED_FIELD_KEYS],
+      }
+    })
+  }
+
+  const saved = await saveFieldValue(db, input)
+  return saved.ok ? { ok: true, savedKeys: [input.fieldKey] } : saved
 }
 
 export type UpdateLoungePassportInput = CreateLoungeInput & {
