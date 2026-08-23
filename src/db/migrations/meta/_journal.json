@@ -50,6 +50,13 @@
       "when": 1787230714824,
       "tag": "0006_tranquil_whirlwind",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787511034861,
+      "tag": "0007_awesome_mandarin",
+      "breakpoints": true
     }
   ]
 }

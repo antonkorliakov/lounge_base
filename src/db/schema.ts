@@ -94,12 +94,24 @@ export const submissions = pgTable(
   (table) => [index('submissions_lounge_idx').on(table.loungeId, table.createdAt)],
 )
 
+/**
+ * `edited_by` — провенанс ответа: NULL — ответ писал ОПЕРАТОР (или
+ * предзаполнение/синхронизация от его имени — любой путь через
+ * `saveFieldValue`/`saveServiceValue`), почта участника команды — последнюю
+ * правку внёс РЕВЬЮЕР во время проверки (`editAnswerDuringReview`,
+ * `src/review/edit.ts`). Колонка перезаписывается КАЖДОЙ записью, в обе
+ * стороны: правка оператора после возврата на правку сбрасывает провенанс в
+ * NULL — значок «исправлено командой» говорит о ПОСЛЕДНЕЙ руке, а не о том,
+ * что команда когда-либо касалась ответа (история — в `events`,
+ * `answer_edited_by_team`).
+ */
 export const fieldValues = pgTable(
   'field_values',
   {
     submissionId: uuid('submission_id').notNull().references(() => submissions.id, { onDelete: 'cascade' }),
     fieldKey: text('field_key').notNull(),
     value: jsonb('value'),
+    editedBy: text('edited_by'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [unique('field_values_unique').on(table.submissionId, table.fieldKey)],
@@ -117,6 +129,8 @@ export const serviceValues = pgTable(
     slotMinutes: integer('slot_minutes'),
     bookingRequired: boolean('booking_required'),
     details: text('details'),
+    /** Провенанс — то же правило, что у `field_values.edited_by` выше. */
+    editedBy: text('edited_by'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [unique('service_values_unique').on(table.submissionId, table.itemKey)],
