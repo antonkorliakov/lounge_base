@@ -8,6 +8,7 @@ import { requireSession } from '@/access/session'
 import { raiseFlag, resolveFlag, openFlags, type FlagReason } from '@/review/flags'
 import { confirmBlock, unconfirmBlock } from '@/review/blocks'
 import { requestChanges, approveSubmission } from '@/review/decide'
+import { editAnswerDuringReview } from '@/review/edit'
 import { submissions, lounges, fieldValues } from '@/db/schema'
 import type { SubmissionStatus } from '@/db/schema'
 import { createMailer, mailDelivers } from '@/notify/mailer'
@@ -125,6 +126,41 @@ const MAIL_NOT_CONFIGURED_NOTICE: Localized = {
 const RETURNED_LINK_SEND_FAILED_NOTICE: Localized = {
   en: 'Saved. The email to the operator failed to send — hand them this link yourself:',
   ru: 'Сохранено. Письмо оператору не отправилось — передайте ему эту ссылку сами:',
+}
+
+/**
+ * Правка ответа КОМАНДОЙ во время проверки — дверь `editAnswerDuringReview`
+ * (`src/review/edit.ts`): все правила там, в одной транзакции (окно
+ * `REVIEW_STATUSES`, паритет валидации с дверью оператора, провенанс,
+ * событие old→new, снятие замечания ключа, четвёрка паспорта по коду,
+ * отказ фото/производных). Здесь — только сессия, вызов и revalidate, тем
+ * же составом, что у `flagAction`/`confirmBlockAction`.
+ *
+ * Предварительного чтения статуса ради текста отказа (как у
+ * `unconfirmBlockAction`) нет НАМЕРЕННО: у той функции гейта внутри нет
+ * вовсе — читать статус больше некому; здесь настоящий гейт стоит в самой
+ * транзакции и отказывает тем же текстом, что `confirmBlock` («Анкета
+ * сейчас не на проверке»). Согласованность с `reviewStateFor` держит экран:
+ * карандаш показывается только при `state.decisions.allowed` — том же
+ * ответе, которым выключены остальные решения (`ReviewScreen`), так что
+ * до серверного отказа доходит только гонка (анкету решили в соседней
+ * вкладке) или прямой сетевой вызов.
+ *
+ * `value: unknown` — как у `saveFieldAction` стороны заполнения: для поля
+ * это значение поля, для позиции услуг — `ServiceValueInput`, для I.10 —
+ * строка кода; различает сервер по ключу, а не клиент по второму параметру.
+ */
+export async function editAnswerAction(
+  submissionId: string,
+  key: string,
+  value: unknown,
+): Promise<ActionResult> {
+  const session = await requireSession()
+  const result = await editAnswerDuringReview(db(), {
+    submissionId, key, value, reviewer: session.email,
+  })
+  revalidatePath(`/admin/s/${submissionId}`)
+  return result.ok ? { ok: true } : { ok: false, error: result.error }
 }
 
 export async function flagAction(
