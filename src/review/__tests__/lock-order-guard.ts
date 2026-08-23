@@ -266,12 +266,18 @@ const LOUNGE_WRITE_TABLES = [LOUNGES] as const
  *    unguarded, it is guarded by the OTHER check in this file
  *    (`loungeLockViolationsIn`), which asks for a lock on the `lounges` row
  *    and to which this list is irrelevant.
+ *  - `lockForReview` (`src/review/edit.ts`, module-local) — locks, then only
+ *    reads `submissions.status` against `REVIEW_STATUSES` (the reviewer's
+ *    window, the exact complement of `assertEditable`'s); called with `tx`
+ *    as the first statement of every write branch of
+ *    `editAnswerDuringReview`, before its writes to
+ *    `field_values`/`service_values`.
  *
  * If a new delegate is added, add it here with the same kind of note —
  * this list is the guard's only way of knowing an indirect lock is real,
  * so it must stay honest about why each entry is trusted.
  */
-export const LOCK_DELEGATES = ['assertEditable', 'lockSubmission'] as const
+export const LOCK_DELEGATES = ['assertEditable', 'lockSubmission', 'lockForReview'] as const
 
 /**
  * Strips `//` line comments and `/* … *\/` block comments from `text`,
