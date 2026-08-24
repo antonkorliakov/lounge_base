@@ -1,9 +1,14 @@
 'use client'
 
 import { useState } from 'react'
+import type { Field, ServiceItem, ServiceValueInput } from '@/form-schema'
+import type { AirportSearchResult } from '@/registry/directory'
 import { useLocale } from '@/i18n/context'
 import { FLAG_REASON_LABELS } from '@/i18n/dictionaries'
 import type { FlagReason } from '@/review/flags'
+import { FieldInput } from './FieldInput'
+import { IataCorrection } from './IataCorrection'
+import { ServiceItemCard } from './ServiceItemCard'
 
 /**
  * Коды замечаний для чипов — ВЫВЕДЕНЫ из подписей, а не перечислены здесь.
@@ -28,6 +33,38 @@ import type { FlagReason } from '@/review/flags'
 const REASON_IDS = Object.keys(FLAG_REASON_LABELS) as FlagReason[]
 
 export type ExistingFlag = { id: string; reason: FlagReason | null; comment: string }
+
+/**
+ * Чем строка правится, если её вообще можно править, — ГОТОВЫЙ ответ от
+ * `ReviewScreen` (тот же приём, что `photos.required` и `canFlag` ниже:
+ * компонент получает решение, а не правила его принятия). Виды повторяют
+ * серверные ворота `editAnswerDuringReview` (`src/review/edit.ts`) —
+ * клиентский показ обязан не предлагать того, в чём сервер откажет:
+ *
+ *  - `field` — обычный редактор поля (`FieldInput`, тот же контрол, что у
+ *    заполняющего, не вторая копия);
+ *  - `iata` — код правится ТОЛЬКО выбором из справочника (`IataCorrection`,
+ *    поиск — действие кабинета `searchAirportsAction`); сервер перепишет и
+ *    производную тройку;
+ *  - `derived` — производные I.7–I.9 не правятся напрямую нигде: карандаш
+ *    открывает записку «выводится из кода» (`form.derivedFromCode`);
+ *  - `service` — карточка позиции целиком (`ServiceItemCard`,
+ *    `withAvailability` — как на экране правок: замечание адресует позицию
+ *    целиком, и правка команды тоже);
+ *  - `photo` — записка `review.photoNotEditable`: серверного пути правки
+ *    фото у команды не существует.
+ */
+export type EditTarget =
+  | { kind: 'field'; field: Field; value: unknown }
+  | {
+      kind: 'iata'
+      field: Field
+      value: unknown
+      search: (query: string) => Promise<AirportSearchResult>
+    }
+  | { kind: 'derived' }
+  | { kind: 'service'; item: ServiceItem; value: ServiceValueInput | undefined }
+  | { kind: 'photo' }
 
 /**
  * Кнопка «отметить» проявляется по наведению на устройствах с мышью — в
@@ -82,11 +119,54 @@ export function FieldRow(props: {
   canFlag: boolean
   onRaise: (reason: FlagReason | null, comment: string) => void
   onResolve: (flagId: string) => void
+  /**
+   * Последнюю правку этого ответа внесла команда (`edited_by`, см.
+   * `RenderedCell.editedByTeam`) — строка несёт значок «исправлено
+   * командой». Тем же текстом (`answer.teamEdited`) значок читает оператор
+   * на своей стороне: один факт — одни слова.
+   */
+  editedByTeam?: boolean
+  /**
+   * Чем эта строка правится (см. `EditTarget` выше); `undefined` — карандаша
+   * нет вовсе (решения по анкете сейчас недоступны — причина одна на весь
+   * экран и стоит в подписи состояния, тот же выбор, что у `canFlag`).
+   */
+  edit?: EditTarget
+  /** Отправить новое значение (для `field`/`service` — черновик редактора,
+   *  для `iata` — код выбранного ряда). У `derived`/`photo` не вызывается:
+   *  их «редактор» — записка. */
+  onEdit?: (value: unknown) => void
 }): React.JSX.Element {
   const { locale, t, pick } = useLocale()
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState<FlagReason | null>(null)
   const [comment, setComment] = useState('')
+
+  // Редактор правки — состояние своё, независимое от композера замечания:
+  // черновики инициализируются в момент открытия (см. `openEditor`), а не в
+  // useState — карандаш можно открывать повторно, и каждый раз он обязан
+  // стартовать от ТЕКУЩЕГО значения строки, не от прошлогоднего черновика.
+  const [editOpen, setEditOpen] = useState(false)
+  const [fieldDraft, setFieldDraft] = useState<unknown>(undefined)
+  const [serviceDraft, setServiceDraft] = useState<ServiceValueInput | undefined>(undefined)
+
+  function openEditor(): void {
+    if (!props.edit) return
+    if (props.edit.kind === 'field' || props.edit.kind === 'iata') {
+      setFieldDraft(props.edit.value)
+    }
+    if (props.edit.kind === 'service') setServiceDraft(props.edit.value)
+    setEditOpen(true)
+  }
+
+  function saveEdit(): void {
+    if (!props.edit || !props.onEdit) return
+    props.onEdit(props.edit.kind === 'service' ? serviceDraft : fieldDraft)
+    // Закрывается сразу, как композер замечания после «Отметить»: отклик
+    // действия (успех или отказ) приходит в подвал блока — одно место
+    // отклика на решение, см. `FeedbackScope` в `ReviewScreen`.
+    setEditOpen(false)
+  }
 
   /**
    * Выбранная причина — САМА ПО СЕБЕ полное замечание (то же правило, что у

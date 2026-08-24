@@ -19,8 +19,13 @@ import {
  * Тип экспортируется, чтобы `ReviewScreen` импортировал его, а не объявлял
  * ту же форму у себя вторым независимым описанием — эта ветка уже несколько
  * раз чинила ровно такое расхождение (`SaveResult`, `FLAG_REASONS`).
+ *
+ * `editedByTeam` — последнюю правку этого ответа внесла команда во время
+ * проверки (`edited_by`, см. `db/schema.ts`); строка экрана проверки несёт
+ * значок «исправлено командой». Необязателен и ставится только `true` — как
+ * `value`, это свойство вида строки, а не тристабильное состояние.
  */
-export type RenderedCell = { label: string; value?: string }
+export type RenderedCell = { label: string; value?: string; editedByTeam?: boolean }
 
 /**
  * Плоское представление одной позиции услуг для показа ревьюеру.
@@ -91,8 +96,14 @@ export function renderValues(input: {
   fields: Record<string, unknown>
   services: Record<string, ServiceValueInput>
   locale: 'en' | 'ru'
+  /** Ключи, чью последнюю правку внесла команда, — `teamEditedKeys` из
+   *  `loadSubmissionValues` (те же выборки, что дали `fields`/`services`).
+   *  Фото-слотов здесь не бывает по построению: серверного пути правки фото
+   *  у команды нет (`editAnswerDuringReview`). */
+  teamEdited?: readonly string[]
 }): Record<string, RenderedCell> {
   const out: Record<string, RenderedCell> = {}
+  const teamEdited = new Set(input.teamEdited ?? [])
 
   for (const field of FIELDS) {
     const raw = input.fields[field.key]
@@ -100,6 +111,7 @@ export function renderValues(input: {
       label: field.label[input.locale],
       value:
         formatFieldValue(field, raw, { locale: input.locale, template: 'slots' }) ?? '—',
+      ...(teamEdited.has(field.key) ? { editedByTeam: true } : {}),
     }
   }
 
@@ -107,6 +119,7 @@ export function renderValues(input: {
     out[item.key] = {
       label: item.label[input.locale],
       value: formatServiceValue(input.services[item.key], input.locale),
+      ...(teamEdited.has(item.key) ? { editedByTeam: true } : {}),
     }
   }
 
