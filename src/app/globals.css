@@ -601,6 +601,20 @@ button:disabled { opacity: .4; }
   .frow-act { opacity: 1; }
 }
 .frow-act:focus-visible { opacity: 1; }
+/* Две кнопки действий строки (отметить + править) — колонкой, чтобы вторая
+   не расталкивала ряд по ширине; правила проявления наследуются от
+   .frow-act, который остаётся на обеих. */
+.frow-acts { flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+/* Значок провенанса «исправлено командой» — маленькая пилюля над значением;
+   синяя, не красная: это факт о происхождении ответа, а не претензия. */
+.team-badge {
+  display: inline-block; margin: 0 0 3px; padding: 1px 8px;
+  border: 1px solid #bcd3f5; border-radius: 20px; background: #eef4fd;
+  color: #1d4ed8; font-size: 11px;
+}
+/* «Сохранить» редактора правки — утвердительная, но не красная (красный на
+   этом экране — язык замечаний, см. .bt-flag). */
+.bt-save { background: #1d4ed8; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
 .frow-flagged { background: #fff8f8; border-left: 3px solid #dc2626; padding-left: 13px; }
 .frow-comment { margin-top: 6px; padding: 8px 10px; border: 1px solid #f0d5d5; border-radius: 6px; color: #7f1d1d; font-size: 13px; }
 .frow-comment b { display: block; font-size: 11px; text-transform: uppercase; color: #b91c1c; margin-bottom: 3px; }
@@ -1026,6 +1040,9 @@ button:disabled { opacity: .4; }
   .review-state-changes_requested b { border-color: #d97706; color: #fcd34d; }
   .review-state-approved b { border-color: #22c55e; color: #86efac; }
   .frow-act { border-color: #2a2d34; }
+  /* Пилюля провенанса — тот же приём, что у пилюль состояния: тёмный фон,
+     светлый синий текст вместо пастельной подложки. */
+  .team-badge { background: #14233b; border-color: #2a4a7f; color: #93c5fd; }
   .chip { border-color: #2a2d34; }
   /* Фон плитки — это поля вокруг снимка, который не заполнил её целиком
      (`object-fit: contain`), поэтому в тёмном режиме он должен быть тёмным:

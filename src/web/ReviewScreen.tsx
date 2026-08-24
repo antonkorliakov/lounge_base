@@ -1,20 +1,30 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { BLOCKS, PHOTO_SLOTS, type Localized } from '@/form-schema'
+import {
+  BLOCKS, PHOTO_SLOTS, fieldByKey, photoSlotByKey, serviceItemByKey,
+  type Localized, type ServiceValueInput,
+} from '@/form-schema'
 import type { RenderedCell } from './renderValues'
 import type { BlockState } from '@/review/blocks'
 import type { FlagRow, FlagReason } from '@/review/flags'
 import { useLocale } from '@/i18n/context'
 import { keysOfBlock } from '@/review/blocks'
+// Листовой `registry/identity`, не `manage`: клиентскому бандлу нельзя тащить
+// drizzle и схему БД — тот же довод и тот же импорт, что у `FillForm`.
+import { DERIVED_FIELD_KEYS, IATA_FIELD_KEY } from '@/registry/identity'
 import { BlockNav } from './BlockNav'
-import { FieldRow } from './FieldRow'
+import { FieldRow, type EditTarget } from './FieldRow'
 import { FillLinkReveal } from './FillLinkReveal'
 import {
   flagAction, unflagAction, confirmBlockAction, unconfirmBlockAction,
-  requestChangesAction, approveAction, copyFillLinkAction,
+  requestChangesAction, approveAction, copyFillLinkAction, editAnswerAction,
   type FillLinkActionResult,
 } from '@/app/admin/s/[submissionId]/actions'
+// Поиск по справочнику для правки I.10 — ТО ЖЕ действие кабинета, каким
+// ищет панель паспорта (`PassportFieldsEditor`): ворота — сессия, токена у
+// ревьюера нет и не должно быть (токен-скоупный поиск — путь оператора).
+import { searchAirportsAction } from '@/app/admin/actions'
 // `import type` — стирается при компиляции, так что серверный модуль (а с ним
 // `@/submissions/editable`, `@/review/blocks` и `drizzle-orm`) в браузерный
 // бандл не попадает; то же соглашение, что у `SubmissionStatus` в
@@ -129,6 +139,16 @@ export function ReviewScreen(props: {
    * как и раньше.
    */
   photos: Record<string, string[]>
+  /**
+   * СЫРЫЕ значения ответов (не отрендеренные строки `rendered`) — то, чем
+   * инициализируются инлайн-редакторы правки командой (`FieldRow`'s `edit`):
+   * редактор обязан стартовать от настоящего значения (`SelectValue`,
+   * массив мультивыбора, `ServiceValueInput`), а плоская строка показа для
+   * этого необратима. Оба — из того же `loadSubmissionValues`, которым
+   * страница уже кормит `renderValues`; второй формы запроса нет.
+   */
+  fieldValues: Record<string, unknown>
+  serviceValues: Record<string, ServiceValueInput>
 }): React.JSX.Element {
   const { locale, pick } = useLocale()
   const [current, setCurrent] = useState(BLOCKS[0]!.key)
@@ -161,6 +181,32 @@ export function ReviewScreen(props: {
   const decisions = props.state.decisions
   const decisionHint = decisions.allowed ? undefined : pick(decisions.reason)
   const blockConfirmed = props.progress.find((b) => b.blockKey === current)?.confirmed ?? false
+
+  /**
+   * Чем правится строка `key` — и правится ли вообще. `undefined` вне окна
+   * решений (`decisions.allowed`, то есть `submitted`): карандаша нет совсем,
+   * как и кнопки «отметить» на принятой анкете, — причина одна на весь экран
+   * и стоит в подписи состояния (это подсказка, не защита: настоящий гейт —
+   * в транзакции `editAnswerDuringReview`). Виды повторяют серверные ворота:
+   * производная тройка и фото получают записку вместо редактора — сервер в
+   * их прямой правке откажет, и экран не предлагает того, в чём откажут.
+   */
+  function editTargetFor(key: string): EditTarget | undefined {
+    if (!decisions.allowed) return undefined
+    if (DERIVED_FIELD_KEYS.includes(key)) return { kind: 'derived' }
+    const field = fieldByKey(key)
+    if (field) {
+      return key === IATA_FIELD_KEY
+        ? { kind: 'iata', field, value: props.fieldValues[key], search: searchAirportsAction }
+        : { kind: 'field', field, value: props.fieldValues[key] }
+    }
+    const item = serviceItemByKey(key)
+    if (item) return { kind: 'service', item, value: props.serviceValues[key] }
+    if (photoSlotByKey(key)) return { kind: 'photo' }
+    // Ключ вне схемы — дефект данных, не состояние: редактора не предлагаем
+    // (тот же выбор, что `fixTargetFor`'s `unknown` на стороне заполнения).
+    return undefined
+  }
 
   // Тот же приём, что и в `FillForm` (план 1): `error` несёт `Localized`
   // целиком, а не заранее выбранную строку — `pick()` внизу выбирает нужный
@@ -446,6 +492,14 @@ export function ReviewScreen(props: {
               }
               onResolve={(flagId) =>
                 void run('block', () => unflagAction(props.submissionId, flagId))
+              }
+              editedByTeam={cell?.editedByTeam ?? false}
+              edit={editTargetFor(key)}
+              // Отклик правки — туда же, куда у замечания ('block'), и тем же
+              // `run`: успех перерисует строку ответом действия
+              // (revalidatePath), отказ покажет причину в подвале.
+              onEdit={(value) =>
+                void run('block', () => editAnswerAction(props.submissionId, key, value))
               }
             />
           )

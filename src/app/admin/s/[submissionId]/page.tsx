@@ -74,10 +74,14 @@ export default async function ReviewPage(props: {
 
   // `photos` идёт только в `ReviewScreen` (и дальше в `FieldRow`), а не в
   // `renderValues`: текстового представления у снимка нет — см. `RenderedCell`.
+  // `teamEdited` — из того же `loadSubmissionValues`, что и сами значения:
+  // строка ответа, чью последнюю правку внесла команда, несёт значок
+  // «исправлено командой» (`RenderedCell.editedByTeam`).
   const rendered = renderValues({
     fields: values.fields,
     services: values.services,
     locale: 'en',
+    teamEdited: values.teamEditedKeys,
   })
 
   return (
@@ -90,6 +94,10 @@ export default async function ReviewPage(props: {
         flags={await openFlags(db(), submissionId)}
         rendered={rendered}
         photos={photos}
+        // Сырые значения — для инлайн-редакторов правки командой (см. проп в
+        // `ReviewScreen`): тот же `loadSubmissionValues`, что дал `rendered`.
+        fieldValues={values.fields}
+        serviceValues={values.services}
       />
     </LocaleProvider>
   )

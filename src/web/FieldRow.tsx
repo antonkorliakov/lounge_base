@@ -249,12 +249,78 @@ export function FieldRow(props: {
       </div>
     )
 
+  // Значок провенанса — над значением, в колонке значения: он описывает
+  // ЗНАЧЕНИЕ («последняя правка — команды»), а не строку целиком.
+  const badge = props.editedByTeam ? (
+    <p className="team-badge">{t('answer.teamEdited')}</p>
+  ) : null
+
+  // Карандаш — та же механика проявления, что у «отметить» (`.frow-act`:
+  // hover на мыши, всегда видим на touch/фокусе — см. globals.css). Свой
+  // класс `.frow-editbtn` — для адресации в e2e, тем же приёмом, что
+  // `.frow-act` у кнопки замечания (имена «править»/«отметить» с ролью
+  // кнопки различимы, но класс не зависит от локали).
+  const pencil = props.edit && (
+    <button type="button" className="frow-act frow-editbtn" onClick={openEditor}>
+      {locale === 'ru' ? 'править' : 'edit'}
+    </button>
+  )
+
+  const editor = editOpen && props.edit && (
+    <div className="frow-editor">
+      {props.edit.kind === 'derived' && (
+        // Записка вместо редактора: тройка правится кодом — теми же словами,
+        // какими это объясняется оператору (`form.derivedFromCode`).
+        <p className="field-hint">{t('form.derivedFromCode')}</p>
+      )}
+      {props.edit.kind === 'photo' && (
+        <p className="field-hint">{t('review.photoNotEditable')}</p>
+      )}
+      {props.edit.kind === 'field' && (
+        <FieldInput field={props.edit.field} value={fieldDraft} onChange={setFieldDraft} />
+      )}
+      {props.edit.kind === 'iata' && (
+        // Выбор из справочника ЕСТЬ сохранение (как на стороне заполнения):
+        // отдельной кнопки «Сохранить» у этого вида нет.
+        <IataCorrection
+          field={props.edit.field}
+          value={props.edit.value}
+          onPick={(row) => {
+            props.onEdit?.(row.iata)
+            setEditOpen(false)
+          }}
+          search={props.edit.search}
+        />
+      )}
+      {props.edit.kind === 'service' && (
+        <ServiceItemCard
+          item={props.edit.item}
+          value={serviceDraft}
+          onChange={setServiceDraft}
+          withAvailability
+        />
+      )}
+      <div className="frow-actions">
+        {(props.edit.kind === 'field' || props.edit.kind === 'service') && (
+          <button type="button" className="bt-save" onClick={saveEdit}>
+            {locale === 'ru' ? 'Сохранить' : 'Save'}
+          </button>
+        )}
+        <button type="button" onClick={() => setEditOpen(false)}>
+          {locale === 'ru' ? 'Отмена' : 'Cancel'}
+        </button>
+      </div>
+    </div>
+  )
+
   if (props.flag) {
     return (
       <div className="frow frow-flagged">
         <div className="frow-key">{props.label}</div>
         <div className="frow-value">
+          {badge}
           {valueArea}
+          {editor}
           <div className="frow-comment">
             <b>
               {/* Общая подпись остаётся ровно для одного случая — замечания
@@ -277,6 +343,10 @@ export function FieldRow(props: {
             </button>
           </div>
         </div>
+        {/* Карандаш есть и на отмеченной строке: обычный ход ревьюера —
+            «отметил, подумал, исправил сам»; правка снимает замечание на
+            сервере (`editAnswerDuringReview` → `clearFlagsFor`). */}
+        {pencil}
       </div>
     )
   }
@@ -285,7 +355,9 @@ export function FieldRow(props: {
     <div className="frow">
       <div className="frow-key">{props.label}</div>
       <div className="frow-value">
+        {badge}
         {valueArea}
+        {editor}
         {open && (
           <div className="frow-editor">
             <div className="frow-chips">
@@ -333,10 +405,17 @@ export function FieldRow(props: {
           </div>
         )}
       </div>
-      {props.canFlag && (
-        <button type="button" className="frow-act" onClick={() => setOpen(true)}>
-          {locale === 'ru' ? 'отметить' : 'flag'}
-        </button>
+      {/* Обе кнопки действий — колонкой в третьей колонке строки
+          (`.frow-acts`), чтобы вторая не разъезжалась по ширине ряда. */}
+      {(props.canFlag || props.edit) && (
+        <div className="frow-acts">
+          {props.canFlag && (
+            <button type="button" className="frow-act" onClick={() => setOpen(true)}>
+              {locale === 'ru' ? 'отметить' : 'flag'}
+            </button>
+          )}
+          {pencil}
+        </div>
       )}
     </div>
   )
