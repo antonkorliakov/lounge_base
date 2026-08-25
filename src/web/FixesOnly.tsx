@@ -124,6 +124,14 @@ export function FixesOnly(props: {
    *  производной тройки I.7–I.9 на этом экране: `FillForm.pickAirport` пишет
    *  код через серверные ворота и обновляет всю четвёрку в состоянии. */
   onAirportPick: (row: DirectoryRow) => void
+  /**
+   * Ключи, чью последнюю правку внесла КОМАНДА во время проверки, — контрол
+   * карточки несёт значок «исправлено командой» (`answer.teamEdited`).
+   * Обычный случай на этом экране: команда исправила ответ сама и тут же
+   * отметила его заново («проверьте — мы поправили»), так что карточка
+   * показывает и замечание, и чьё значение сейчас в поле.
+   */
+  teamEdited?: ReadonlySet<string>
 }): React.JSX.Element {
   const { t, pick } = useLocale()
 
@@ -165,6 +173,7 @@ export function FixesOnly(props: {
   }
 
   function control(flag: Flag, target: FixTarget): React.JSX.Element {
+    const teamEdited = props.teamEdited?.has(flag.fieldKey) ?? false
     switch (target.kind) {
       case 'field':
         // Код IATA: правится ВЫБОРОМ из справочника (`IataCorrection`), не
@@ -179,6 +188,7 @@ export function FixesOnly(props: {
               onPick={props.onAirportPick}
               search={props.searchAirports}
               error={props.fieldErrors?.[IATA_FIELD_KEY]}
+              teamEdited={teamEdited}
             />
           )
         }
@@ -198,6 +208,7 @@ export function FixesOnly(props: {
                 onChange={() => {}}
                 locked
                 lockedNote={t('form.derivedFromCode')}
+                teamEdited={teamEdited}
               />
               {iataField && (
                 <IataCorrection
@@ -206,6 +217,9 @@ export function FixesOnly(props: {
                   onPick={props.onAirportPick}
                   search={props.searchAirports}
                   error={props.fieldErrors?.[IATA_FIELD_KEY]}
+                  // Значок у контрола кода — про сам I.10 (четвёрку команда
+                  // правит только через него), а не про отмеченный I.7 карточки.
+                  teamEdited={props.teamEdited?.has(IATA_FIELD_KEY) ?? false}
                 />
               )}
             </>
@@ -217,6 +231,7 @@ export function FixesOnly(props: {
             value={props.fieldValues[flag.fieldKey]}
             onChange={(value) => props.onFieldChange(flag.fieldKey, value)}
             error={props.fieldErrors?.[flag.fieldKey]}
+            teamEdited={teamEdited}
           />
         )
 
@@ -232,6 +247,7 @@ export function FixesOnly(props: {
             onChange={(value) => props.onServiceChange(flag.fieldKey, value)}
             error={props.serviceErrors?.[flag.fieldKey]}
             withAvailability
+            teamEdited={teamEdited}
           />
         )
 

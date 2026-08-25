@@ -37,6 +37,9 @@ export function IataCorrection(props: {
   /** Отказ сервера по последней записи кода — тот же контракт, что у
    *  `FieldInput`'s `error`. */
   error?: string
+  /** Последнюю правку кода внесла команда — тот же значок и тот же смысл,
+   *  что у `FieldInput`'s `teamEdited`. */
+  teamEdited?: boolean
 }): React.JSX.Element {
   const { pick, t } = useLocale()
 
@@ -46,6 +49,7 @@ export function IataCorrection(props: {
         {pick(props.field.label)}
         {props.field.required && <span className="field-required">{t('form.required')}</span>}
       </label>
+      {props.teamEdited && <p className="team-badge">{t('answer.teamEdited')}</p>}
       <input
         id={props.field.key}
         type="text"

@@ -102,6 +102,14 @@ export function FillForm(props: {
   initialFields: Record<string, unknown>
   initialServices: Record<string, ServiceValueInput>
   initialPhotos: Record<string, string[]>
+  /**
+   * Ключи (полей и позиций услуг), чью последнюю правку внесла КОМАНДА во
+   * время проверки (`edited_by`, `loadSubmissionValues.teamEditedKeys`) —
+   * ответ несёт значок «исправлено командой» везде, где показывается:
+   * основной проход (FieldInput/IataCorrection/ServicesPass2) и карточки
+   * экрана правок (FixesOnly).
+   */
+  teamEditedKeys: string[]
 }): React.JSX.Element {
   const { t, pick, locale, setLocale } = useLocale()
   const [fields, setFields] = useState(props.initialFields)
@@ -121,10 +129,32 @@ export function FillForm(props: {
    */
   const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set())
 
+  /**
+   * Значок «исправлено командой» — session-local, как `touched`, и по той же
+   * причине: значок следует за ПОСЛЕДНЕЙ рукой, и правка оператора обязана
+   * снимать его сразу, не после перезагрузки (сервер сбрасывает провенанс той
+   * же записью — `OPERATOR_PROVENANCE` в `values.ts`). Снятие оптимистично,
+   * как и отметка `touched`: отказ записи оставит провенанс команды в базе, и
+   * перезагрузка вернёт значок, — консервативнее держать экран простым, чем
+   * гонять второй канал подтверждений ради редкого отказа.
+   */
+  const [teamEdited, setTeamEdited] = useState<ReadonlySet<string>>(
+    () => new Set(props.teamEditedKeys),
+  )
+
   const lockedKeys = useMemo(() => new Set(props.lockedKeys), [props.lockedKeys])
 
   function markTouched(key: string): void {
     setTouched((prev) => (prev.has(key) ? prev : new Set(prev).add(key)))
+  }
+
+  function clearTeamEdited(keys: readonly string[]): void {
+    setTeamEdited((prev) => {
+      if (!keys.some((key) => prev.has(key))) return prev
+      const next = new Set(prev)
+      for (const key of keys) next.delete(key)
+      return next
+    })
   }
 
   const autosave = useAutosave({
@@ -194,6 +224,7 @@ export function FillForm(props: {
   function changeField(key: string, value: unknown): void {
     setFields((prev) => ({ ...prev, [key]: value }))
     markTouched(key)
+    clearTeamEdited([key])
     autosave.push(key, value)
   }
 
@@ -229,12 +260,16 @@ export function FillForm(props: {
     for (const entry of DERIVED_PREFILL) patch[entry.fieldKey] = row[entry.column]
     setFields((prev) => ({ ...prev, ...patch }))
     for (const key of Object.keys(patch)) markTouched(key)
+    // Сервер перепишет четвёрку операторской рукой (провенанс сбрасывается на
+    // всех четырёх) — значок снимается той же четвёркой.
+    clearTeamEdited(Object.keys(patch))
     autosave.push(IATA_FIELD_KEY, row.iata)
   }
 
   function changeService(key: string, value: ServiceValueInput): void {
     setServices((prev) => ({ ...prev, [key]: value }))
     markTouched(key)
+    clearTeamEdited([key])
     autosave.push(`svc:${key}`, value)
   }
 
@@ -389,6 +424,7 @@ export function FillForm(props: {
             touched={touched}
             searchAirports={searchAirports}
             onAirportPick={pickAirport}
+            teamEdited={teamEdited}
           />
           {submitErrorNode()}
         </main>
@@ -445,6 +481,7 @@ export function FillForm(props: {
                         onChange={() => {}}
                         locked
                         lockedNote={t('form.derivedFromCode')}
+                        teamEdited={teamEdited.has(field.key)}
                       />
                     )
                   }
@@ -466,6 +503,7 @@ export function FillForm(props: {
                         onPick={pickAirport}
                         search={searchAirports}
                         error={autosave.rejected[field.key]}
+                        teamEdited={teamEdited.has(field.key)}
                       />
                     )
                   }
@@ -479,6 +517,7 @@ export function FillForm(props: {
                       // Замок предзаполнения — только в основном проходе;
                       // производная тройка и код разобраны ветками выше.
                       locked={lockedKeys.has(field.key)}
+                      teamEdited={teamEdited.has(field.key)}
                     />
                   )
                 })}
@@ -492,7 +531,18 @@ export function FillForm(props: {
         }
 
         if (step.kind === 'services2') {
-          return <ServicesPass2 values={services} onChange={changeService} errors={serviceErrors} />
+          // Значок на карточке деталей; первый проход (да/нет) значка не
+          // несёт осознанно: 58 строк-переключателей, а сам ответ команды
+          // виден или здесь, или — для закрытой командой позиции — на
+          // карточке правок, если её отметили.
+          return (
+            <ServicesPass2
+              values={services}
+              onChange={changeService}
+              errors={serviceErrors}
+              teamEdited={teamEdited}
+            />
+          )
         }
 
         if (step.kind === 'photos') {

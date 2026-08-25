@@ -210,6 +210,9 @@ export function ServiceItemCard(props: {
   /** Server refusal for this item's most recent save, if any. */
   error?: string
   withAvailability?: boolean
+  /** Последнюю правку позиции внесла команда — тот же значок и тот же смысл,
+   *  что у `FieldInput`'s `teamEdited`. */
+  teamEdited?: boolean
 }): React.JSX.Element {
   const { pick, t } = useLocale()
   const { item } = props
@@ -221,6 +224,7 @@ export function ServiceItemCard(props: {
     <div className="pass2-card">
       <h3>{pick(item.label)}</h3>
       {item.hint && <p className="field-hint">{pick(item.hint)}</p>}
+      {props.teamEdited && <p className="team-badge">{t('answer.teamEdited')}</p>}
 
       {/* Подпись — отдельной строкой над контролом, как у «Платно/бесплатно»
           и остальных списков этой карточки. Раньше здесь была вторая ветка

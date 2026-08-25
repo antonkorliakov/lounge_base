@@ -113,6 +113,15 @@ export function FieldInput(props: {
    * другая и постоянная. Читается только вместе с `locked`.
    */
   lockedNote?: string
+  /**
+   * Последнюю правку этого ответа внесла КОМАНДА во время проверки
+   * (`edited_by`, см. `db/schema.ts`) — под подписью поля стоит значок
+   * «исправлено командой», тем же текстом (`answer.teamEdited`) и тем же
+   * видом (`.team-badge`), что на строке экрана проверки: один факт — одни
+   * слова на обе стороны. Значок следует за последней рукой: правка поля
+   * оператором снимает его (см. `FillForm`'s `teamEdited`).
+   */
+  teamEdited?: boolean
 }): React.JSX.Element {
   const { field, value, onChange, error } = props
   const { pick, t } = useLocale()
@@ -124,7 +133,15 @@ export function FieldInput(props: {
     </label>
   )
 
-  const hint = field.hint && <p className="field-hint">{pick(field.hint)}</p>
+  // Значок провенанса едет ВНУТРИ узла подсказки, а не отдельной вставкой в
+  // каждую из шести веток рендера: все ветки уже рисуют `{hint}` сразу после
+  // подписи, и это единственное место, которое покрывает их разом.
+  const hint = (
+    <>
+      {field.hint && <p className="field-hint">{pick(field.hint)}</p>}
+      {props.teamEdited && <p className="team-badge">{t('answer.teamEdited')}</p>}
+    </>
+  )
   const errorNode = error && <p className="fix-comment">{error}</p>
 
   if (props.locked) {

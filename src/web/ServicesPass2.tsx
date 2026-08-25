@@ -43,6 +43,9 @@ export function ServicesPass2(props: {
    *  the item's own key (already stripped of the queue's `svc:` prefix by
    *  the caller — see `FillForm`'s `serviceErrors`). */
   errors?: Record<string, string>
+  /** Ключи позиций, чью последнюю правку внесла команда, — карточка несёт
+   *  значок «исправлено командой» (см. `FillForm`'s `teamEdited`). */
+  teamEdited?: ReadonlySet<string>
 }): React.JSX.Element {
   const { t } = useLocale()
   const keys = offeredKeys(props.values)
@@ -66,6 +69,7 @@ export function ServicesPass2(props: {
             value={props.values[key]}
             onChange={(value) => props.onChange(key, value)}
             error={props.errors?.[key]}
+            teamEdited={props.teamEdited?.has(key) ?? false}
           />
         )
       })}

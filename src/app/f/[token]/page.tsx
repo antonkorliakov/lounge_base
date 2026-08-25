@@ -75,6 +75,9 @@ export default async function FillPage(props: {
         initialFields={values.fields}
         initialServices={values.services}
         initialPhotos={uploaded}
+        // Из ТОГО ЖЕ loadSubmissionValues, что и значения, — второй формы
+        // запроса ради значка «исправлено командой» у страницы нет.
+        teamEditedKeys={values.teamEditedKeys}
       />
     </LocaleProvider>
   )
