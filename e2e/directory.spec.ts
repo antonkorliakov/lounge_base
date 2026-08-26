@@ -85,11 +85,21 @@ function rowFor(page: Page, name: string): Locator {
   return page.getByRole('row').filter({ hasText: name })
 }
 
+/**
+ * Повтор — та же доказанная гонка гидрации, что у одноимённого хелпера в
+ * `e2e/registry.spec.ts` (подробный довод там, первоисточник —
+ * `fillEnabling` в `e2e/review.spec.ts`): до гидрации Enter в поле поиска не
+ * делает ничего, потому что переход собирает клиентский роутер, и адрес не
+ * меняется никогда. В полном параллельном прогоне это падало здесь по-настоящему.
+ */
 async function searchFor(page: Page, text: string): Promise<void> {
   const box = page.getByRole('searchbox', { name: /Name or IATA/ })
-  await box.fill(text)
-  await box.press('Enter')
-  await expect(page).toHaveURL(new RegExp(`search=${text}`))
+  await expect(async () => {
+    await box.fill('')
+    await box.fill(text)
+    await box.press('Enter')
+    await expect(page).toHaveURL(new RegExp(`search=${text}`), { timeout: 1_000 })
+  }).toPass({ timeout: 20_000 })
 }
 
 test('известный код: имя + IATA достаточно — тройка из справочника, форма заполнения кодом вперёд', async ({
