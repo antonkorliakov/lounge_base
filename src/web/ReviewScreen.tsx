@@ -495,12 +495,23 @@ export function ReviewScreen(props: {
               }
               editedByTeam={cell?.editedByTeam ?? false}
               edit={editTargetFor(key)}
-              // Отклик правки — туда же, куда у замечания ('block'), и тем же
-              // `run`: успех перерисует строку ответом действия
-              // (revalidatePath), отказ покажет причину в подвале.
-              onEdit={(value) =>
-                void run('block', () => editAnswerAction(props.submissionId, key, value))
-              }
+              // Отклик правки живёт У САМОЙ СТРОКИ, не в подвале: успех
+              // перерисует значение ответом действия (revalidatePath), отказ
+              // рисует сам редактор — с ключом и НЕ теряя черновик (см.
+              // `EditOutcome` в `FieldRow`; прежний путь через `run` ронял
+              // отказ в подвал без ключа, а редактор уже был закрыт).
+              // Прежний отклик подвала при этом гасится: отклик на экране
+              // один и принадлежит последнему действию — то же правило, что
+              // у `run`.
+              onEdit={async (value) => {
+                const result = await editAnswerAction(props.submissionId, key, value)
+                setFeedbackScope('block')
+                setCopied(false)
+                setError(null)
+                setNotice(null)
+                setFillUrl(null)
+                return result
+              }}
             />
           )
         })}

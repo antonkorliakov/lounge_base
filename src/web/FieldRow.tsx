@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import type { Field, ServiceItem, ServiceValueInput } from '@/form-schema'
+import type { Field, Localized, ServiceItem, ServiceValueInput } from '@/form-schema'
 import type { AirportSearchResult } from '@/registry/directory'
 import { useLocale } from '@/i18n/context'
 import { FLAG_REASON_LABELS } from '@/i18n/dictionaries'
@@ -65,6 +65,21 @@ export type EditTarget =
   | { kind: 'derived' }
   | { kind: 'service'; item: ServiceItem; value: ServiceValueInput | undefined }
   | { kind: 'photo' }
+
+/**
+ * Итог правки, который строка ждёт от `onEdit`, — ровно форма `ActionResult`
+ * (`src/app/admin/s/[submissionId]/actions.ts`; тип повторён здесь, а не
+ * импортирован: клиентскому компоненту незачем тянуть модуль серверных
+ * действий ради двух строк типа). Редактор закрывается ТОЛЬКО на `ok: true`:
+ * отказ сервера оставляет черновик на месте и показывает причину внутри
+ * самого редактора — теми же `error`-пропсами `FieldInput`/`ServiceItemCard`/
+ * `IataCorrection`, какими та же причина стоит у оператора. Прежде редактор
+ * закрывался синхронно, до ответа: отказ уносил черновик (повторное открытие
+ * пересеивало сохранённое значение), а причина падала в подвал блока без
+ * ключа — целиком перезаполненная карточка услуги пропадала из-за «Price is
+ * required».
+ */
+export type EditOutcome = { ok: true } | { ok: false; error: Localized }
 
 /**
  * Кнопка «отметить» проявляется по наведению на устройствах с мышью — в
@@ -133,9 +148,10 @@ export function FieldRow(props: {
    */
   edit?: EditTarget
   /** Отправить новое значение (для `field`/`service` — черновик редактора,
-   *  для `iata` — код выбранного ряда). У `derived`/`photo` не вызывается:
-   *  их «редактор» — записка. */
-  onEdit?: (value: unknown) => void
+   *  для `iata` — код выбранного ряда) и вернуть итог действия (см.
+   *  `EditOutcome` выше: закрытие редактора — только на успех). У
+   *  `derived`/`photo` не вызывается: их «редактор» — записка. */
+  onEdit?: (value: unknown) => Promise<EditOutcome>
 }): React.JSX.Element {
   const { locale, t, pick } = useLocale()
   const [open, setOpen] = useState(false)
@@ -149,6 +165,10 @@ export function FieldRow(props: {
   const [editOpen, setEditOpen] = useState(false)
   const [fieldDraft, setFieldDraft] = useState<unknown>(undefined)
   const [serviceDraft, setServiceDraft] = useState<ServiceValueInput | undefined>(undefined)
+  /** Отказ ПОСЛЕДНЕЙ попытки сохранить эту правку — живёт внутри редактора,
+   *  у самого значения (см. `EditOutcome`). Сбрасывается на открытии (новая
+   *  сессия правки — чистый лист) и на успехе. */
+  const [editError, setEditError] = useState<Localized | null>(null)
 
   function openEditor(): void {
     if (!props.edit) return
@@ -156,16 +176,23 @@ export function FieldRow(props: {
       setFieldDraft(props.edit.value)
     }
     if (props.edit.kind === 'service') setServiceDraft(props.edit.value)
+    setEditError(null)
     setEditOpen(true)
   }
 
-  function saveEdit(): void {
+  async function saveEdit(): Promise<void> {
     if (!props.edit || !props.onEdit) return
-    props.onEdit(props.edit.kind === 'service' ? serviceDraft : fieldDraft)
-    // Закрывается сразу, как композер замечания после «Отметить»: отклик
-    // действия (успех или отказ) приходит в подвал блока — одно место
-    // отклика на решение, см. `FeedbackScope` в `ReviewScreen`.
-    setEditOpen(false)
+    const result = await props.onEdit(props.edit.kind === 'service' ? serviceDraft : fieldDraft)
+    // Закрытие — ТОЛЬКО на успех. Прежде редактор закрывался синхронно, до
+    // ответа, «как композер замечания» — но у замечания нет серверной
+    // валидации, которой есть что отказать, а у правки есть: отказ уносил
+    // черновик, и причина падала в подвал блока без ключа (см. `EditOutcome`).
+    if (result.ok) {
+      setEditError(null)
+      setEditOpen(false)
+      return
+    }
+    setEditError(result.error)
   }
 
   /**
@@ -277,19 +304,35 @@ export function FieldRow(props: {
         <p className="field-hint">{t('review.photoNotEditable')}</p>
       )}
       {props.edit.kind === 'field' && (
-        <FieldInput field={props.edit.field} value={fieldDraft} onChange={setFieldDraft} />
+        <FieldInput
+          field={props.edit.field}
+          value={fieldDraft}
+          onChange={setFieldDraft}
+          error={editError ? pick(editError) : undefined}
+        />
       )}
       {props.edit.kind === 'iata' && (
         // Выбор из справочника ЕСТЬ сохранение (как на стороне заполнения):
-        // отдельной кнопки «Сохранить» у этого вида нет.
+        // отдельной кнопки «Сохранить» у этого вида нет. Закрытие — только
+        // на успех (см. `EditOutcome`): до сервера здесь доезжает и гонка
+        // (анкету решили в соседней вкладке), и её отказ обязан остаться
+        // у контрола, а не пропасть вместе с редактором.
         <IataCorrection
           field={props.edit.field}
           value={props.edit.value}
           onPick={(row) => {
-            props.onEdit?.(row.iata)
-            setEditOpen(false)
+            void (async () => {
+              const result = await props.onEdit?.(row.iata)
+              if (!result || result.ok) {
+                setEditError(null)
+                setEditOpen(false)
+                return
+              }
+              setEditError(result.error)
+            })()
           }}
           search={props.edit.search}
+          error={editError ? pick(editError) : undefined}
         />
       )}
       {props.edit.kind === 'service' && (
@@ -298,11 +341,12 @@ export function FieldRow(props: {
           value={serviceDraft}
           onChange={setServiceDraft}
           withAvailability
+          error={editError ? pick(editError) : undefined}
         />
       )}
       <div className="frow-actions">
         {(props.edit.kind === 'field' || props.edit.kind === 'service') && (
-          <button type="button" className="bt-save" onClick={saveEdit}>
+          <button type="button" className="bt-save" onClick={() => void saveEdit()}>
             {locale === 'ru' ? 'Сохранить' : 'Save'}
           </button>
         )}
