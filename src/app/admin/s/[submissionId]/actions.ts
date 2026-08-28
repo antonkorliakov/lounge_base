@@ -14,6 +14,7 @@ import type { SubmissionStatus } from '@/db/schema'
 import { createMailer, mailDelivers } from '@/notify/mailer'
 import { changesRequestedMail, fillLinkMail, approvedMail } from '@/notify/messages'
 import { issueFillToken, FILL_TOKEN_TTL_DAYS } from '@/access/tokens'
+import { loadSubmissionValues } from '@/submissions/values'
 import { copyLinkGateFor, reviewStateFor } from './gates'
 
 /**
@@ -468,7 +469,16 @@ async function sendFillLink(submissionId: string): Promise<FillLinkOutcome> {
   const to = await contactEmail(submissionId)
   if (to === null) return { outcome: 'no_recipient' }
 
-  const flagCount = (await openFlags(db(), submissionId)).length
+  const flags = await openFlags(db(), submissionId)
+  const flagCount = flags.length
+  // Исправленное командой БЕЗ замечания — тот же состав, что у группы
+  // «команда исправила эти ответы» на экране правок, который эта ссылка
+  // открывает: письмо и экран говорят одну оговорку одним условием (см.
+  // `changesRequestedMail`).
+  const flaggedKeys = new Set(flags.map((flag) => flag.fieldKey))
+  const teamCorrectedCount = (
+    await loadSubmissionValues(db(), submissionId)
+  ).teamEditedKeys.filter((key) => !flaggedKeys.has(key)).length
   const fillUrl = await mintFillUrl(submissionId)
 
   // Граница `try` — граница выписки: всё, что падает ПОСЛЕ `issueFillToken`,
@@ -493,7 +503,9 @@ async function sendFillLink(submissionId: string): Promise<FillLinkOutcome> {
   try {
     const common = { to, loungeName: await loungeName(submissionId), fillUrl }
     await createMailer().send(
-      flagCount > 0 ? changesRequestedMail({ ...common, flagCount }) : fillLinkMail(common),
+      flagCount > 0
+        ? changesRequestedMail({ ...common, flagCount, teamCorrectedCount })
+        : fillLinkMail(common),
     )
   } catch (err) {
     console.error(

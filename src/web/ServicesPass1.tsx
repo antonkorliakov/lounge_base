@@ -12,6 +12,16 @@ import { ServiceAvailabilityInput } from './ServiceItemCard'
 export function ServicesPass1(props: {
   values: Record<string, ServiceValueInput>
   onChange: (itemKey: string, value: ServiceValueInput) => void
+  /**
+   * Ключи позиций, чью последнюю правку внесла КОМАНДА (`answer.teamEdited`)
+   * — строка первого прохода несёт значок провенанса. Именно этот проход
+   * ОБЯЗАН его нести, а не только карточки деталей второго: позиция, которую
+   * команда ЗАКРЫЛА («no»/«not_allowed»), выпадает из offered-фильтра второго
+   * прохода вовсе, и ответ, перезаписанный чужой рукой, был бы неотличим от
+   * собственного «нет» оператора нигде в основной форме. Значок гаснет той же
+   * оптимистичной правкой (`clearTeamEdited`), что и всюду.
+   */
+  teamEdited?: ReadonlySet<string>
 }): React.JSX.Element {
   const { pick, t } = useLocale()
 
@@ -60,7 +70,14 @@ export function ServicesPass1(props: {
             const Row = isBinaryAvailability(item) ? 'div' : 'label'
             return (
               <Row key={item.key} className="pass1-row">
-                <span>{pick(item.label)}</span>
+                <span>
+                  {pick(item.label)}
+                  {/* Значок — у названия, в один ряд с ним: строка прохода
+                      компактна, и блок над контролом раздувал бы все 58. */}
+                  {(props.teamEdited?.has(item.key) ?? false) && (
+                    <span className="team-badge pass1-badge">{t('answer.teamEdited')}</span>
+                  )}
+                </span>
                 <ServiceAvailabilityInput
                   item={item}
                   value={props.values[item.key]}

@@ -1,7 +1,9 @@
 'use client'
 
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
+  FIELDS,
+  SERVICE_ITEMS,
   fieldByKey,
   photoSlotByKey,
   serviceItemByKey,
@@ -130,6 +132,16 @@ export function FixesOnly(props: {
    * Обычный случай на этом экране: команда исправила ответ сама и тут же
    * отметила его заново («проверьте — мы поправили»), так что карточка
    * показывает и замечание, и чьё значение сейчас в поле.
+   *
+   * Ключ из этого набора БЕЗ открытого замечания получает СВОЮ карточку — в
+   * группе «команда исправила эти ответы» ниже отмеченных. До этой группы
+   * такие правки были невидимы оператору в принципе: `editAnswerDuringReview`
+   * снимает замечание правленого ключа, `requestChanges` требует хотя бы
+   * одного ДРУГОГО открытого, а этот экран — единственный, который оператор
+   * получает после возврата, — рисовал по карточке только на открытое
+   * замечание. Ответы, которые команда переписала, не имели ни карточки, ни
+   * значка, ни значения — под вступлением, утверждавшим «остальное принято».
+   * Карточка группы РАБОЧАЯ, не read-only (см. `teamCorrectedControl`).
    */
   teamEdited?: ReadonlySet<string>
 }): React.JSX.Element {
@@ -139,6 +151,30 @@ export function FixesOnly(props: {
     () => props.flags.map((flag) => ({ flag, target: fixTargetFor(flag.fieldKey) })),
     [props.flags],
   )
+
+  /**
+   * Группа «команда исправила эти ответы»: teamEdited-ключи БЕЗ открытого
+   * замечания (у отмеченных карточка уже есть — выше, с тем же значком).
+   *
+   * Состав ЗАМОРОЖЕН на монтировании (`useState`-инициализатор), а не выводится
+   * из живого `props.teamEdited`: правка оператора оптимистично снимает ключ
+   * из набора (`clearTeamEdited` в `FillForm`) — живая группа размонтировала
+   * бы карточку ПОД ПЕРВЫМ ЖЕ нажатием клавиши, унося редактор из-под рук.
+   * Значок внутри карточки при этом читает живой набор и гаснет сразу — сама
+   * карточка остаётся, с отметкой «Изменено» (те же слова, что у отмеченных).
+   * Порядок — порядок схемы (поля, затем позиции), как их читает человек, а
+   * не порядок строк выборки.
+   */
+  const [teamCorrected] = useState<{ key: string; target: FixTarget }[]>(() => {
+    const flagged = new Set(props.flags.map((flag) => flag.fieldKey))
+    const schemaOrder = [
+      ...FIELDS.map((field) => field.key),
+      ...SERVICE_ITEMS.map((item) => item.key),
+    ]
+    return schemaOrder
+      .filter((key) => (props.teamEdited?.has(key) ?? false) && !flagged.has(key))
+      .map((key) => ({ key, target: fixTargetFor(key) }))
+  })
 
   const unmatched = targets
     .filter((entry) => entry.target.kind === 'unknown')
@@ -172,19 +208,19 @@ export function FixesOnly(props: {
     return undefined
   }
 
-  function control(flag: Flag, target: FixTarget): React.JSX.Element {
-    const teamEdited = props.teamEdited?.has(flag.fieldKey) ?? false
+  function control(key: string, target: FixTarget): React.JSX.Element {
+    const teamEdited = props.teamEdited?.has(key) ?? false
     switch (target.kind) {
       case 'field':
         // Код IATA: правится ВЫБОРОМ из справочника (`IataCorrection`), не
         // свободным вводом, — тот же контракт, что в основном проходе:
         // сервер (`saveOperatorField`) принимает только код из справочника
         // и одной транзакцией переписывает производную тройку.
-        if (flag.fieldKey === IATA_FIELD_KEY) {
+        if (key === IATA_FIELD_KEY) {
           return (
             <IataCorrection
               field={target.field}
-              value={props.fieldValues[flag.fieldKey]}
+              value={props.fieldValues[key]}
               onPick={props.onAirportPick}
               search={props.searchAirports}
               error={props.fieldErrors?.[IATA_FIELD_KEY]}
@@ -198,13 +234,13 @@ export function FixesOnly(props: {
         // «не та страна» — правильный код, после которого сервер снимает
         // замечания всей четвёрки (`savedKeys` в `saveOperatorField`).
         // Тупика нет: карточка отвечаема, просто её ручка — код.
-        if (DERIVED_FIELD_KEYS.includes(flag.fieldKey)) {
+        if (DERIVED_FIELD_KEYS.includes(key)) {
           const iataField = fieldByKey(IATA_FIELD_KEY)
           return (
             <>
               <FieldInput
                 field={target.field}
-                value={props.fieldValues[flag.fieldKey]}
+                value={props.fieldValues[key]}
                 onChange={() => {}}
                 locked
                 lockedNote={t('form.derivedFromCode')}
@@ -228,9 +264,9 @@ export function FixesOnly(props: {
         return (
           <FieldInput
             field={target.field}
-            value={props.fieldValues[flag.fieldKey]}
-            onChange={(value) => props.onFieldChange(flag.fieldKey, value)}
-            error={props.fieldErrors?.[flag.fieldKey]}
+            value={props.fieldValues[key]}
+            onChange={(value) => props.onFieldChange(key, value)}
+            error={props.fieldErrors?.[key]}
             teamEdited={teamEdited}
           />
         )
@@ -243,9 +279,9 @@ export function FixesOnly(props: {
         return (
           <ServiceItemCard
             item={target.item}
-            value={props.services[flag.fieldKey]}
-            onChange={(value) => props.onServiceChange(flag.fieldKey, value)}
-            error={props.serviceErrors?.[flag.fieldKey]}
+            value={props.services[key]}
+            onChange={(value) => props.onServiceChange(key, value)}
+            error={props.serviceErrors?.[key]}
             withAvailability
             teamEdited={teamEdited}
           />
@@ -278,11 +314,46 @@ export function FixesOnly(props: {
 
       case 'unknown':
         return (
-          <p className="fix-unmatched" data-unmatched={flag.fieldKey}>
-            {t('fixes.noControl')} <code>{flag.fieldKey}</code>
+          <p className="fix-unmatched" data-unmatched={key}>
+            {t('fixes.noControl')} <code>{key}</code>
           </p>
         )
     }
+  }
+
+  /**
+   * Контрол карточки группы «команда исправила эти ответы» — те же контролы,
+   * что у отмеченных карточек (`control` выше), с одним отличием: производная
+   * тройка здесь read-only БЕЗ комбобокса кода. Провенанс четвёрки ставится
+   * всегда целиком (`editAnswerDuringReview` пишет все четыре ключа), так что
+   * рядом в этой же группе — или выше, среди отмеченных, — уже стоит карточка
+   * самого I.10 с настоящим контролом; три копии комбобокса были бы шумом.
+   * Карточка РАБОЧАЯ по решению задачи: ответ принадлежит оператору, окно —
+   * его (`changes_requested`), сервер принимает его запись любого ключа, и
+   * несогласие с правкой команды — или правка команды, оставившая позицию
+   * незаполненной («yes» без типа оплаты), — исправимы здесь же. Read-only
+   * группа оставляла бы структурный тупик: отказ отправки называет
+   * незаполненную позицию, а контрола для неё не было бы нигде.
+   */
+  function teamCorrectedControl(key: string, target: FixTarget): React.JSX.Element {
+    if (target.kind === 'field' && DERIVED_FIELD_KEYS.includes(key)) {
+      return (
+        <FieldInput
+          field={target.field}
+          value={props.fieldValues[key]}
+          onChange={() => {}}
+          locked
+          lockedNote={t('form.derivedFromCode')}
+          teamEdited={props.teamEdited?.has(key) ?? false}
+        />
+      )
+    }
+    // Фото и неизвестные ключи в teamEdited не бывают по построению
+    // (`loadSubmissionValues` читает только field_values/service_values, а
+    // правка фото командой отказана сервером); если ключ всё же не
+    // разрешился — `control` покажет ту же честную «нет контрола», что и у
+    // отмеченных.
+    return control(key, target)
   }
 
   const changedCount = targets.filter(
@@ -294,7 +365,12 @@ export function FixesOnly(props: {
   return (
     <section className="fixes">
       <h2>{t('fixes.title')}</h2>
-      <p className="subtitle">{t('fixes.intro')}</p>
+      {/* «Остальное принято» — правда только пока команда ничего не правила
+          мимо замечаний; иначе вступление честно называет группу ниже (тем же
+          условием оговорку несёт письмо — `changesRequestedMail`). */}
+      <p className="subtitle">
+        {t(teamCorrected.length > 0 ? 'fixes.introTeamEdited' : 'fixes.intro')}
+      </p>
 
       {targets.map(({ flag, target }) => {
         const changed = props.touched.has(flag.fieldKey) && !errorFor(flag.fieldKey, target)
@@ -321,13 +397,32 @@ export function FixesOnly(props: {
               {flag.reason !== null && <b>{pick(FLAG_REASON_LABELS[flag.reason])}</b>}
               {flag.comment}
             </p>
-            {control(flag, target)}
+            {control(flag.fieldKey, target)}
             <p className={changed ? 'fix-changed' : 'fix-open'}>
               {changed ? t('fixes.changed') : t('fixes.stillOpen')}
             </p>
           </div>
         )
       })}
+
+      {teamCorrected.length > 0 && (
+        <>
+          <h3 className="fixes-team-title">{t('fixes.teamCorrectedTitle')}</h3>
+          <p className="subtitle">{t('fixes.teamCorrectedHint')}</p>
+          {teamCorrected.map(({ key, target }) => {
+            const changed = props.touched.has(key) && !errorFor(key, target)
+            return (
+              <div key={key} className="fix-card fix-card-team">
+                {teamCorrectedControl(key, target)}
+                {/* «Изменено» — теми же словами, что у отмеченных карточек;
+                    немой карточки достаточно в исходном состоянии: менять её
+                    не требуется, это предложение, а не долг. */}
+                {changed && <p className="fix-changed">{t('fixes.changed')}</p>}
+              </div>
+            )
+          })}
+        </>
+      )}
 
       {stillOpen > 0 && (
         <p className="fix-open">

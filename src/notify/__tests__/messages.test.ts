@@ -9,12 +9,48 @@ describe('письма', () => {
       loungeName: 'Primeclass Lounge',
       fillUrl: 'https://app.test/f/abc',
       flagCount: 3,
+      teamCorrectedCount: 0,
     })
 
     expect(mail.to).toBe('operator@lounge.test')
     expect(mail.subject).toContain('Primeclass Lounge')
     expect(mail.text).toContain('https://app.test/f/abc')
     expect(mail.text).toContain('3')
+  })
+
+  /**
+   * «Everything else is accepted» — правда ровно пока команда ничего не
+   * исправила мимо замечаний: за ссылкой тогда стоят ответы, которых оператор
+   * не писал, и письмо обязано сказать об этом (тот же состав и то же
+   * условие, что у группы «команда исправила эти ответы» на экране правок,
+   * который ссылка открывает — см. `FixesOnly`).
+   */
+  it('возврат с правками команды: письмо называет их и не говорит «только отмеченное»', () => {
+    const mail = changesRequestedMail({
+      to: 'operator@lounge.test',
+      loungeName: 'Primeclass Lounge',
+      fillUrl: 'https://app.test/f/abc',
+      flagCount: 1,
+      teamCorrectedCount: 2,
+    })
+
+    expect(mail.text).toContain('corrected 2 answer(s)')
+    expect(mail.text).not.toContain('you only need to fix what is flagged')
+    // Принятость остального письмо по-прежнему утверждает — теперь честно.
+    expect(mail.text).toContain('Everything else is accepted')
+  })
+
+  it('возврат без правок команды — прежний текст, без пустых упоминаний команды', () => {
+    const mail = changesRequestedMail({
+      to: 'operator@lounge.test',
+      loungeName: 'Primeclass Lounge',
+      fillUrl: 'https://app.test/f/abc',
+      flagCount: 3,
+      teamCorrectedCount: 0,
+    })
+
+    expect(mail.text).toContain('Everything else is accepted — you only need to fix what is flagged')
+    expect(mail.text).not.toContain('corrected')
   })
 
   it('принятие не содержит ссылки на правку', () => {
@@ -37,7 +73,7 @@ describe('письма', () => {
 
   it('тема письма не пустая ни в одном случае', () => {
     const mails = [
-      changesRequestedMail({ to: 'a@b.c', loungeName: 'L', fillUrl: 'u', flagCount: 1 }),
+      changesRequestedMail({ to: 'a@b.c', loungeName: 'L', fillUrl: 'u', flagCount: 1, teamCorrectedCount: 0 }),
       fillLinkMail({ to: 'a@b.c', loungeName: 'L', fillUrl: 'u' }),
       approvedMail({ to: 'a@b.c', loungeName: 'L' }),
       loginMail({ to: 'a@b.c', loginUrl: 'u' }),

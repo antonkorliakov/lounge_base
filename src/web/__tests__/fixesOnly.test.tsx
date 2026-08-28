@@ -68,6 +68,7 @@ function renderFixes(
     touched?: ReadonlySet<string>
     fieldErrors?: Record<string, string>
     serviceErrors?: Record<string, string>
+    teamEdited?: ReadonlySet<string>
   } = {},
 ): string {
   return renderToStaticMarkup(
@@ -85,6 +86,7 @@ function renderFixes(
         onPhotoUploaded={() => {}}
         onPhotoRemoved={() => {}}
         touched={options.touched ?? new Set()}
+        teamEdited={options.teamEdited}
         // Поиск асинхронный и в статик-рендере не зовётся никогда (эффектов
         // у renderToStaticMarkup нет) — заглушка честна.
         searchAirports={async () => ({ rows: [], more: false })}
@@ -602,5 +604,84 @@ describe('какие карточки заполняющий уже правил
     })
     expect(html).toContain(UI['fixes.stillOpen'].en)
     expect(html).not.toContain(UI['fixes.changed'].en)
+  })
+})
+
+/**
+ * Группа «команда исправила эти ответы» — teamEdited-ключи БЕЗ открытого
+ * замечания (must-fix 2 аудита). До неё такие правки были невидимы оператору
+ * в принципе: правка команды снимает замечание своего ключа, `requestChanges`
+ * требует хотя бы одного ДРУГОГО открытого, а этот экран — единственный после
+ * возврата — рисовал карточки только по открытым замечаниям, под вступлением
+ * «остальное принято».
+ */
+describe('группа «команда исправила эти ответы»', () => {
+  const FIRST_FIELD = FIELDS[0]!.key
+
+  it('teamEdited-ключ без замечания получает карточку: значение, значок и РАБОЧИЙ контрол', () => {
+    const html = renderFixes([flagFor('entrance')], {
+      fieldValues: { [FIRST_FIELD]: 'Corrected by the team' },
+      teamEdited: new Set([FIRST_FIELD]),
+    })
+    expect(html).toContain(UI['fixes.teamCorrectedTitle'].en)
+    expect(html).toContain('Corrected by the team')
+    expect(html).toContain(UI['answer.teamEdited'].en)
+    // Карточка группы носит свой класс — и настоящий контрол, не read-only:
+    // ответ принадлежит оператору, несогласие исправимо здесь же.
+    const teamCard = html.split('fix-card-team')[1] ?? ''
+    expect(CONTROL_RE.test(teamCard)).toBe(true)
+  })
+
+  it('позиция, ЗАКРЫТАЯ командой («no»), получает карточку с контролом наличия', () => {
+    // Ровно дыра из аудита: закрытая позиция выпадает из offered-фильтра
+    // второго прохода, замечания на ней нет — и без этой группы ответ,
+    // перезаписанный чужой рукой, не был виден оператору нигде.
+    const key = serviceItemByKey('2.1')!.key
+    const html = renderFixes([flagFor(FIRST_FIELD)], {
+      services: { [key]: {
+        available: 'no', chargeType: null, price: null, currency: null,
+        slotMinutes: null, bookingRequired: null, details: null,
+      } },
+      teamEdited: new Set([key]),
+    })
+    expect(html).toContain(UI['fixes.teamCorrectedTitle'].en)
+    const teamCard = html.split('fix-card-team')[1] ?? ''
+    expect(CONTROL_RE.test(teamCard)).toBe(true)
+    expect(teamCard).toContain(UI['answer.teamEdited'].en)
+  })
+
+  it('teamEdited-ключ С открытым замечанием карточку группы НЕ дублирует', () => {
+    const html = renderFixes([flagFor(FIRST_FIELD)], {
+      teamEdited: new Set([FIRST_FIELD]),
+    })
+    expect(html).not.toContain('fix-card-team')
+    expect(html).not.toContain(UI['fixes.teamCorrectedTitle'].en)
+    // Значок при этом на отмеченной карточке есть.
+    expect(html).toContain(UI['answer.teamEdited'].en)
+  })
+
+  it('вступление оговаривает правки команды, когда группа непуста, и не оговаривает иначе', () => {
+    const withTeam = renderFixes([flagFor('entrance')], {
+      teamEdited: new Set([FIRST_FIELD]),
+    })
+    expect(withTeam).toContain(UI['fixes.introTeamEdited'].en)
+    expect(withTeam).not.toContain(UI['fixes.intro'].en)
+
+    const withoutTeam = renderFixes([flagFor('entrance')])
+    expect(withoutTeam).toContain(UI['fixes.intro'].en)
+    expect(withoutTeam).not.toContain(UI['fixes.introTeamEdited'].en)
+  })
+
+  it('производная тройка в группе — read-only, без второго комбобокса кода', () => {
+    // Провенанс четвёрки ставится всегда целиком: контрол кода стоит на
+    // карточке самого I.10 в этой же группе, три копии комбобокса — шум.
+    const html = renderFixes([flagFor('entrance')], {
+      fieldValues: { 'I.7': 'Turkey', 'I.10': 'IST' },
+      teamEdited: new Set(['I.7', 'I.8', 'I.9', 'I.10']),
+    })
+    const teamPart = html.slice(html.indexOf('fix-card-team'))
+    // Комбобокс кода — ровно один (у карточки I.10), а не четыре.
+    const comboboxes = (teamPart.match(/role="combobox"/g) ?? []).length
+    expect(comboboxes).toBe(1)
   })
 })

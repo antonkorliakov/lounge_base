@@ -57,6 +57,15 @@ export function changesRequestedMail(input: {
   loungeName: string
   fillUrl: string
   flagCount: number
+  /**
+   * Сколько ответов команда исправила САМА, без замечания на них (teamEdited
+   * минус открытые замечания — тот же состав, что у группы «команда
+   * исправила эти ответы» на экране правок, который открывает ссылка). При
+   * нуле письмо говорит прежнее «everything else is accepted»; при ненуле та
+   * же фраза была бы неправдой — за ссылкой стоят ответы, которых оператор
+   * не писал, и письмо обязано сказать об этом теми же словами, что экран.
+   */
+  teamCorrectedCount: number
 }): OutgoingMail {
   return {
     to: input.to,
@@ -65,7 +74,13 @@ export function changesRequestedMail(input: {
       `We reviewed the onboarding form for ${input.loungeName}.`,
       `${input.flagCount} answer(s) need a correction.`,
       '',
-      'Everything else is accepted — you only need to fix what is flagged:',
+      ...(input.teamCorrectedCount > 0
+        ? [
+            `Our team also corrected ${input.teamCorrectedCount} answer(s) — ` +
+              'please review them on the same page.',
+            'Everything else is accepted:',
+          ]
+        : ['Everything else is accepted — you only need to fix what is flagged:']),
       input.fillUrl,
     ].join('\n'),
   }
