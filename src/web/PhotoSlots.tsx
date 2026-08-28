@@ -45,22 +45,22 @@ function isLocalized(value: unknown): value is Localized {
  * `onRemoved` is what makes the per-photo Remove button appear, and only for
  * an `extra` slot — the two halves of "who may remove a photo" deliberately
  * live in different places. WHICH slot can offer it is derived from the schema
- * here (`slot.extra`), because for a named slot a new upload replaces the old
- * one and therefore already answers the complaint in full, while for
- * `additional` it does not: `attachPhoto` adds a row and leaves the objected-to
- * photo where it was. WHICH SCREEN offers it is the caller's choice — only
- * `FixesOnly` passes `onRemoved`, so the photos step of the main form is
- * unchanged. Scoped there because that screen is the only one where a specific
- * existing photo has been objected to by name; on the photos step nobody has
- * complained about anything yet, and widening it is a separate decision about
- * the main form, not a consequence of this one.
+ * here (`slot.extra`): for a named slot a new upload replaces the old one
+ * (`attachPhoto` deletes-then-inserts), so replace already covers every
+ * operation the filler actually has on required content — a Remove button
+ * there could only make the questionnaire incomplete, never fix anything,
+ * while inviting accidental data loss right next to required photos. For
+ * `additional` upload ADDS a row, so removal is the only way to get rid of a
+ * bad shot. WHICH SCREEN offers it is the caller's choice — both callers now
+ * pass `onRemoved` (`FixesOnly` and the main photos step in `FillForm`): a
+ * stray photo in the extra slot is a problem while filling, not only after a
+ * reviewer objects to it by name.
  */
 export function PhotoSlots(props: {
   token: string
   uploaded: Record<string, string[]>
   onUploaded: (slot: string, url: string) => void
-  /** Убрать снимок (см. выше): передаётся только экраном правок, работает
-   *  только у накопительного слота. */
+  /** Убрать снимок (см. выше): работает только у накопительного слота. */
   onRemoved?: (slot: string, url: string) => void
   slotKeys?: readonly string[]
 }): React.JSX.Element {

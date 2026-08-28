@@ -558,8 +558,19 @@ export function FillForm(props: {
         }
 
         if (step.kind === 'photos') {
+          // `onRemoved` — и на основном шаге фото, не только на экране правок:
+          // лишний или неудачный снимок в накопительном слоте — проблема уже
+          // при заполнении, а не только после замечания ревьюера, и без
+          // кнопки у оператора не было способа его убрать вовсе (у
+          // именованных слотов способ есть — «Заменить»; кнопку «Убрать» они
+          // не получают и здесь, см. `PhotoSlots`).
           return (
-            <PhotoSlots token={props.token} uploaded={photos} onUploaded={photoUploaded} />
+            <PhotoSlots
+              token={props.token}
+              uploaded={photos}
+              onUploaded={photoUploaded}
+              onRemoved={photoRemoved}
+            />
           )
         }
 
