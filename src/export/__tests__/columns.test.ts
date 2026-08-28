@@ -43,7 +43,13 @@ const sourceServiceLabels = fixture('source-service-labels.json')
  * а колонки в файле нет». Этот же тест поймал бы шестиатрибутный набор из
  * плана, потерявший `details`.
  */
-const NON_ATTRIBUTE_COLUMNS = ['submissionId', 'itemKey', 'updatedAt']
+// `editedBy` — служебная запись (провенанс: кто последним правил ответ,
+// null — оператор), а не атрибут ответа: выгрузка везёт ОТВЕТЫ, а история
+// «кто и когда» живёт в `events`. Ровно та же причина, по которой здесь
+// исключён `updatedAt`. Колонка добавлена миграцией 0007 вместе с правкой
+// ответов командой — и этот тест её сразу поймал, потребовав решения; это и
+// есть его работа, а не ложное срабатывание.
+const NON_ATTRIBUTE_COLUMNS = ['submissionId', 'itemKey', 'updatedAt', 'editedBy']
 const storedAttributes = Object.keys(getTableColumns(serviceValues)).filter(
   (name) => !NON_ATTRIBUTE_COLUMNS.includes(name),
 )
