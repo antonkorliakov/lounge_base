@@ -154,6 +154,9 @@ export const UI = {
   // снимок и оставляло тот, на который ревьюер жаловался.
   'photos.add': { en: 'Add photo', ru: 'Добавить фото' },
   'photos.missing': { en: 'No photo', ru: 'Нет фото' },
+  // Пофайловый прогресс пачки на шаге фото: «Uploading 2 / 3…» — счётчик
+  // дописывается на месте (`PhotoSlots`), здесь только глагол.
+  'photos.uploading': { en: 'Uploading', ru: 'Загрузка' },
   'photos.uploadFailed': {
     en: 'Upload failed. Please try again.',
     ru: 'Не удалось загрузить. Попробуйте ещё раз.',

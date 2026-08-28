@@ -24,6 +24,14 @@ function isLocalized(value: unknown): value is Localized {
 }
 
 /**
+ * Один пофайловый отказ слота. `fileName` есть только у отказа из
+ * многофайловой пачки — см. комментарий у `errors` в компоненте.
+ * `error` хранится как `Localized`, не как готовая строка: переключение
+ * языка перерисовывает уже показанный отказ, как и всюду в форме.
+ */
+type SlotFailure = { fileName: string | null; error: Localized }
+
+/**
  * `slotKeys` narrows which of `PHOTO_SLOTS` this renders; omitted, it renders
  * all four, as the photos step of the main form does.
  *
@@ -71,7 +79,24 @@ export function PhotoSlots(props: {
       : PHOTO_SLOTS.filter((slot) => props.slotKeys?.includes(slot.key))
   // Per-slot, not a single form-wide error: a rejection on one slot must
   // not blank out or get confused with whatever another slot is showing.
-  const [errors, setErrors] = useState<Record<string, Localized>>({})
+  //
+  // A LIST per slot, not one Localized: the extra slot takes several files in
+  // one pick, and each file succeeds or fails on its own — one failed file
+  // must not hide the others' success (their thumbnails are already on
+  // screen) nor be collapsed into a single anonymous "upload failed" that
+  // doesn't say WHICH file to retry. `fileName` is set only when the batch
+  // had several files — a lone upload's failure needs no name to be
+  // unambiguous, and the named slots rename the file anyway.
+  const [errors, setErrors] = useState<Record<string, SlotFailure[]>>({})
+  /**
+   * Пофайловый прогресс пачки: «Загрузка 2 / 3…» у слота, пока пачка в пути.
+   * Заявленная среда — телефон на аэропортовом Wi-Fi: три снимка могут идти
+   * десятки секунд, и без счётчика между выбором файлов и первой миниатюрой
+   * экран выглядит зависшим. Ключ в `progress` заодно и защёлка: пока пачка
+   * не закончена, input слота выключен — вторая пачка, запущенная поверх
+   * первой, перемешала бы порядок снимков (см. довод у `uploadBatch`).
+   */
+  const [progress, setProgress] = useState<Record<string, { done: number; total: number }>>({})
   /**
    * Снимки, удаление которых уже в пути. Нужно потому, что заявленная среда —
    * телефон на аэропортовом Wi-Fi: между тапом и ответом сервера проходит
@@ -84,7 +109,13 @@ export function PhotoSlots(props: {
    */
   const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set())
 
-  async function upload(slot: string, file: File): Promise<void> {
+  /**
+   * Один файл через существующий конвейер (resize → FormData → POST) —
+   * возвращает отказ, а не пишет его в состояние сам: кто и как показывает
+   * отказ, решает `uploadBatch`, которому для пачки нужен список пофайловых
+   * отказов, а не последний затёрший остальные.
+   */
+  async function uploadOne(slot: string, file: File): Promise<Localized | null> {
     // `resizeToJpeg` and `fetch` were previously called outside any `try`:
     // a dropped connection (or a resize failure) threw an unhandled
     // rejection instead of reaching either branch below, so the operator
@@ -110,28 +141,77 @@ export function PhotoSlots(props: {
         } catch {
           // Тело не JSON (или пустое) — используем общее сообщение выше.
         }
-        setErrors((prev) => ({ ...prev, [slot]: error }))
-        return
+        return error
       }
-
-      // Успешная загрузка снимает прежний отказ по этому слоту — заполняющий
-      // это увидит сам, повторно открыв слот, но чистим сразу, а не оставляем
-      // старую ошибку висеть рядом с уже загруженным фото.
-      setErrors((prev) => {
-        if (!(slot in prev)) return prev
-        const next = { ...prev }
-        delete next[slot]
-        return next
-      })
 
       const data = (await response.json()) as { url: string }
       props.onUploaded(slot, data.url)
+      return null
     } catch {
       // Network drop, a `resizeToJpeg` failure (corrupt image, decode
       // error), or anything else that throws before a response exists — all
       // the same to the operator: the upload didn't happen and needs a
       // visible, retryable error, not silence.
-      setErrors((prev) => ({ ...prev, [slot]: UI['photos.uploadFailed'] }))
+      return UI['photos.uploadFailed']
+    }
+  }
+
+  /**
+   * Пачка файлов одного слота — ПОСЛЕДОВАТЕЛЬНО, не параллельно, и это выбор,
+   * а не лень:
+   *  - порядок: снимки рендерятся в порядке вставки строк, и
+   *    последовательная загрузка сохраняет порядок выбора сама собой —
+   *    параллельная закончилась бы в порядке «кто быстрее» и потребовала бы
+   *    отдельной машинерии упорядочивания;
+   *  - среда: на аэропортовом Wi-Fi параллельные загрузки делят тонкий
+   *    uplink — ВСЕ файлы едут долго и каждый дольше живёт под риском
+   *    обрыва; последовательно первый снимок виден через секунды, и обрыв
+   *    на третьем не теряет первые два;
+   *  - сервер всё равно сериализует: `attachPhoto` берёт блокировку строки
+   *    submissions, так что параллельность почти ничего не выигрывает даже
+   *    на быстрой сети.
+   *
+   * У именованных слотов пачка всегда из одного файла (у их input нет
+   * `multiple`) — это тот же путь, не второй.
+   */
+  async function uploadBatch(slot: string, files: readonly File[]): Promise<void> {
+    if (files.length === 0 || progress[slot] !== undefined) return
+    // Новая пачка снимает прежние отказы слота сразу: их файлы либо
+    // перевыбраны в этой пачке, либо решено их не грузить — старый список
+    // рядом с новым прогрессом только путал бы, чей отказ на экране.
+    setErrors((prev) => {
+      if (!(slot in prev)) return prev
+      const next = { ...prev }
+      delete next[slot]
+      return next
+    })
+    setProgress((prev) => ({ ...prev, [slot]: { done: 0, total: files.length } }))
+
+    const failures: SlotFailure[] = []
+    try {
+      for (const file of files) {
+        const error = await uploadOne(slot, file)
+        if (error) {
+          failures.push({ fileName: files.length > 1 ? file.name : null, error })
+        }
+        setProgress((prev) => {
+          const current = prev[slot]
+          if (!current) return prev
+          return { ...prev, [slot]: { ...current, done: current.done + 1 } }
+        })
+      }
+    } finally {
+      // И при неожиданном исключении тоже: незакрытый прогресс навсегда
+      // запер бы input слота — тот же класс, что у `removing` ниже.
+      setProgress((prev) => {
+        if (!(slot in prev)) return prev
+        const next = { ...prev }
+        delete next[slot]
+        return next
+      })
+      if (failures.length > 0) {
+        setErrors((prev) => ({ ...prev, [slot]: failures }))
+      }
     }
   }
 
@@ -154,7 +234,7 @@ export function PhotoSlots(props: {
         } catch {
           // Тело не JSON — общее сообщение выше, как и у загрузки.
         }
-        setErrors((prev) => ({ ...prev, [slot]: error }))
+        setErrors((prev) => ({ ...prev, [slot]: [{ fileName: null, error }] }))
         return
       }
 
@@ -167,9 +247,12 @@ export function PhotoSlots(props: {
 
       props.onRemoved?.(slot, url)
     } catch {
-      // Ровно те же причины и та же цена, что у `upload`: без видимого отказа
+      // Ровно те же причины и та же цена, что у загрузки: без видимого отказа
       // заполняющий жмёт «Убрать» и не понимает, произошло ли что-нибудь.
-      setErrors((prev) => ({ ...prev, [slot]: UI['photos.removeFailed'] }))
+      setErrors((prev) => ({
+        ...prev,
+        [slot]: [{ fileName: null, error: UI['photos.removeFailed'] }],
+      }))
     } finally {
       // И после отказа тоже: иначе один сбой сети запирал бы этот снимок
       // навсегда — единственный правдивый ответ на замечание по слоту стал бы
@@ -212,7 +295,31 @@ export function PhotoSlots(props: {
           {slot.required && !props.uploaded[slot.key]?.length && (
             <p className="field-hint">{t('photos.missing')}</p>
           )}
-          {errors[slot.key] && <p className="fix-comment">{pick(errors[slot.key]!)}</p>}
+          {/* role="status" — чтобы скринридер услышал смену счётчика без
+              перевода фокуса; визуально это та же строка-подсказка, что и
+              «Нет фото». Счётчик показывает НОМЕР ФАЙЛА В РАБОТЕ (done+1,
+              с потолком total на последнем), одиночная загрузка обходится
+              без счётчика — «1 / 1» читался бы как обещание продолжения. */}
+          {progress[slot.key] && (
+            <p className="field-hint" role="status">
+              {progress[slot.key]!.total > 1
+                ? `${t('photos.uploading')} ${Math.min(
+                    progress[slot.key]!.done + 1,
+                    progress[slot.key]!.total,
+                  )} / ${progress[slot.key]!.total}…`
+                : `${t('photos.uploading')}…`}
+            </p>
+          )}
+          {errors[slot.key]?.map((failure) => (
+            // Ключ — имя файла (у одиночного отказа оно null, но такой отказ
+            // в списке один): двух отказов ОДНОГО имени в пачке не бывает
+            // осмысленно различимых и для пользователя.
+            <p key={failure.fileName ?? 'single'} className="fix-comment">
+              {failure.fileName
+                ? `${failure.fileName}: ${pick(failure.error)}`
+                : pick(failure.error)}
+            </p>
+          ))}
           <label className="photo-upload">
             {/* Подпись читается по тому же правилу, по которому сервер
                 действительно поступает со слотом, а не по «есть ли уже
@@ -226,13 +333,30 @@ export function PhotoSlots(props: {
               : props.uploaded[slot.key]?.length
                 ? t('photos.replace')
                 : t('photos.upload')}
+            {/* `multiple` — только у накопительного слота: именованный держит
+                один снимок, и «выбрать несколько» там было бы обещанием,
+                которое сервер не выполняет (замена оставила бы последний).
+
+                `capture` у накопительного слота при этом СНЯТ, и это не
+                случайная пара к `multiple`: на iOS Safari `capture` открывает
+                сразу камеру, а камера отдаёт один кадр — `multiple` молча
+                переставал бы работать ровно на телефоне, то есть в заявленной
+                среде. Без `capture` открывается выбор «камера или галерея», и
+                множественный выбор из галереи работает; именованные слоты
+                (один свежий снимок конкретного места) камеру сохраняют. */}
             <input
               type="file"
               accept="image/*"
-              capture="environment"
+              capture={slot.extra ? undefined : 'environment'}
+              multiple={slot.extra}
+              disabled={progress[slot.key] !== undefined}
               onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) void upload(slot.key, file)
+                const files = Array.from(e.target.files ?? [])
+                // Сброс value — чтобы ПОВТОРНЫЙ выбор того же файла снова
+                // вызвал change: после отказа сети «попробовать ещё раз» с тем
+                // же снимком — обычный путь, а не краевой случай.
+                e.target.value = ''
+                if (files.length > 0) void uploadBatch(slot.key, files)
               }}
             />
           </label>
