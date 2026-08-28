@@ -1271,13 +1271,14 @@ test('правка ответа командой: карандаш, значок
   // Тип оплаты выбирается НЕ для полноты картинки, и это выяснилось прогоном:
   // у ПРЕДЛОЖЕННОЙ позиции без него анкета неполна (`serviceItemAnswered`), и
   // повторная отправка ниже отказывала — «1 item(s) still need an answer: Wifi
-  // Access». Экран правок оператору в этом не помог бы: он показывает только
-  // отмеченные ответы, а замечания на этой позиции нет, и другого пути к
-  // основной форме с него нет вовсе. То есть ревьюер МОЖЕТ, оставив «yes» без
-  // типа оплаты, вернуть оператору анкету, которую тому нечем отправить;
-  // продукт этого не запрещает (см. отчёт задачи). Сценарий сознательно
-  // правит позицию ПОЛНОСТЬЮ — как это сделал бы ревьюер, доводящий ответ до
-  // отправляемого, — и то, что отправка ниже проходит, это и подтверждает.
+  // Access». Ревьюер по-прежнему МОЖЕТ, оставив «yes» без типа оплаты,
+  // вернуть анкету незаполненной — продукт этого не запрещает, — но тупика
+  // это больше не создаёт: экран правок теперь показывает и правленные
+  // командой ответы БЕЗ замечания, рабочей карточкой в группе «команда
+  // исправила эти ответы» (`FixesOnly`'s `teamCorrected`), так что оператор
+  // может дозаполнить позицию там же (проверено ниже: карточка группы есть и
+  // несёт контрол). Сценарий всё же правит позицию ПОЛНОСТЬЮ — как это сделал
+  // бы ревьюер, доводящий ответ до отправляемого.
   // Единственный `<select>` карточки — как раз тип оплаты (остальные контролы
   // «предложенной» позиции — числа, чекбокс и текст), поэтому локатор такой.
   await wifiEditor.locator('select').selectOption('complimentary')
@@ -1308,10 +1309,31 @@ test('правка ответа командой: карандаш, значок
   await filler.goto(fillUrl)
 
   await expect(filler.getByRole('heading', { name: 'Changes requested' })).toBeVisible()
-  await expect(filler.locator('.fix-card')).toHaveCount(1)
+  // Карточек ДВЕ, и это разные карточки (перепинато сознательно: прежняя
+  // версия утверждала count 1 — то есть закрепляла невидимость правки wifi):
+  // отмеченная I.2 — и карточка группы «команда исправила эти ответы» для
+  // wifi, чью правку команда внесла БЕЗ замечания. Вступление оговаривает
+  // группу, а не утверждает «остальное принято» без оговорки.
+  await expect(filler.locator('.fix-card:not(.fix-card-team)')).toHaveCount(1)
+  await expect(filler.locator('.fix-card-team')).toHaveCount(1)
+  await expect(
+    filler.getByRole('heading', { name: 'The team corrected these answers' }),
+  ).toBeVisible()
+  await expect(filler.locator('.subtitle').first()).toContainText(
+    'the team corrected some others',
+  )
+  // Карточка группы — РАБОЧАЯ: значение wifi, значок, и настоящий контрол
+  // (несогласие или незаполненность исправимы здесь же).
+  const teamCard = filler.locator('.fix-card-team')
+  await expect(teamCard).toContainText(wifi.label.en)
+  await expect(teamCard.locator('textarea')).toHaveValue(WIFI_DETAILS)
+  await expect(teamCard.locator('.team-badge')).toHaveText(TEAM_BADGE)
+
   const operatorInput = filler.getByLabel(/Lounge Full Name/)
   await expect(operatorInput).toHaveValue(CORRECTED)
-  await expect(filler.locator('.fix-card .team-badge')).toHaveText(TEAM_BADGE)
+  await expect(
+    filler.locator('.fix-card:not(.fix-card-team) .team-badge'),
+  ).toHaveText(TEAM_BADGE)
 
   // ── Оператор перезаписывает ответ своей рукой ────────────────────────────
   const OPERATOR_VALUE = 'Primeclass Lounge Istanbul Ltd'
@@ -1319,7 +1341,11 @@ test('правка ответа командой: карандаш, значок
   // Значок снимается сразу, без перезагрузки: он следует за ПОСЛЕДНЕЙ рукой,
   // и ждать перезагрузки значило бы какое-то время показывать оператору
   // «исправлено командой» над его собственным, только что набранным ответом.
-  await expect(filler.locator('.team-badge')).toHaveCount(0)
+  // ИЗБИРАТЕЛЬНО: значок карточки wifi, которой оператор не касался, ОСТАЁТСЯ
+  // (перепинато: прежний count 0 по всему экрану был верен только пока правка
+  // wifi была невидима вовсе).
+  await expect(filler.locator('.fix-card:not(.fix-card-team) .team-badge')).toHaveCount(0)
+  await expect(teamCard.locator('.team-badge')).toHaveText(TEAM_BADGE)
 
   await filler.getByRole('button', { name: 'Submit for review', exact: true }).click()
   await expect(filler.getByText('Sent for review. We will get back to you.')).toBeVisible()
