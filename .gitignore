@@ -11,4 +11,7 @@ next-env.d.ts
 # Синтетические снимки, которые пишет `npm run seed` (см. `seedPhotoUrl`) —
 # локальные тестовые данные, как и сама засеянная анкета.
 public/seed/
-
+# Снимки dev-fallback'а блоб-хранилища (`src/photos/blob.ts`): без
+# `BLOB_READ_WRITE_TOKEN` загрузки пишутся сюда — локальные артефакты,
+# как и `public/seed/`.
+public/dev-blob/

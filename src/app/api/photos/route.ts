@@ -1,9 +1,10 @@
-import { del, put } from '@vercel/blob'
+import { randomUUID } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import type { Localized } from '@/form-schema'
 import { photoSlotByKey } from '@/form-schema'
 import { db } from '@/db/client'
 import { resolveFillToken } from '@/access/tokens'
+import { deletePhoto, putPhoto } from '@/photos/blob'
 import { attachPhoto, removePhotoAt } from '@/photos/store'
 import { clearFlagAfterSave } from '@/app/clear-flag-after-save'
 
@@ -78,8 +79,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: UNKNOWN_SLOT }, { status: 400 })
   }
 
-  const key = `${resolved.submissionId}/${slot}-${Date.now()}.${extension}`
-  const blob = await put(key, file, { access: 'public', contentType: file.type })
+  // Случайный хвост в ключе — не декор: с мультизагрузкой в накопительный
+  // слот две подряд идущие загрузки могут пройти маршрут в одну миллисекунду,
+  // и ключ из одного `Date.now()` дал бы им ОДИН URL — второй файл затёр бы
+  // первый в хранилище, а в `photos` остались бы две строки с одинаковым
+  // `url`, по которому и рендер (`key={url}`), и удаление
+  // (`removePhotoAt` ищет по URL) различают снимки. `blobKey` нигде не
+  // разбирается обратно — хвост никого не ломает.
+  const key = `${resolved.submissionId}/${slot}-${Date.now()}-${randomUUID().slice(0, 8)}.${extension}`
+  // Шов вместо прямого `@vercel/blob`: с токеном — настоящий put, без токена
+  // — громкий dev-fallback в `public/dev-blob/` (см. `src/photos/blob.ts`),
+  // благодаря которому загрузка проходима e2e без реквизитов хранилища.
+  const blob = await putPhoto(key, file, file.type)
 
   // Блоб пишется раньше строки в БД, так что между ними есть окно, где
   // запись в БД может не пройти (ожидаемый отказ attachPhoto — например,
@@ -99,7 +110,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     })
 
     if (!result.ok) {
-      await del(blob.url).catch(() => {})
+      await deletePhoto(blob.url).catch(() => {})
       return NextResponse.json({ error: result.error }, { status: 400 })
     }
 
@@ -121,7 +132,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     return NextResponse.json({ url: blob.url })
   } catch (error) {
-    await del(blob.url).catch(() => {})
+    await deletePhoto(blob.url).catch(() => {})
     throw error
   }
 }
@@ -136,11 +147,12 @@ export async function POST(request: Request): Promise<NextResponse> {
  * четвёртый снимок не убирает тот, на который жаловался ревьюер, — то есть
  * цикл проверки по этому ключу не сходился ровно так же, как он не сходился
  * для 62 ключей до появления контролов на экране правок. UI предлагает это
- * только у `extra`-слота и только на экране правок (см. `PhotoSlots`);
- * маршрут шире не потому, что забыли, а потому, что запрет здесь ничего не
- * защищал бы: удалить снимок из СВОЕЙ анкеты и так может только владелец
- * валидного fill-токена, а удаление из обязательного слота честно
- * возвращается `missingItems` при отправке.
+ * только у `extra`-слота — теперь на обоих экранах, и правок, и основного
+ * шага фото (см. `PhotoSlots`: лишний снимок в `additional` — проблема не
+ * только после замечания ревьюера); маршрут шире не потому, что забыли, а
+ * потому, что запрет здесь ничего не защищал бы: удалить снимок из СВОЕЙ
+ * анкеты и так может только владелец валидного fill-токена, а удаление из
+ * обязательного слота честно возвращается `missingItems` при отправке.
  *
  * Тот же порядок проверок, что у POST: токен — раньше всего, `submissionId`
  * берётся только из `resolveFillToken`, никогда от клиента.
@@ -178,11 +190,11 @@ export async function DELETE(request: Request): Promise<NextResponse> {
   await clearFlagAfterSave(resolved.submissionId, slot)
 
   // Блоб удаляется ПОСЛЕ строки и только best-effort — тот же выбор и та же
-  // цена, что у orphan-блоба в POST: если `del` не пройдёт (или, как у
+  // цена, что у orphan-блоба в POST: если удаление не пройдёт (или, как у
   // засеянных снимков, URL вообще не блобовский), в хранилище останутся лишние
   // байты, но у заполняющего снимок убран, и говорить ему обратное было бы
-  // ложью.
-  await del(url).catch(() => {})
+  // ложью. Тот же шов, что у загрузки: без токена чистится dev-fallback.
+  await deletePhoto(url).catch(() => {})
 
   return NextResponse.json({ ok: true })
 }

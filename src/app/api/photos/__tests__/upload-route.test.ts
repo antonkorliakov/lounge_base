@@ -23,7 +23,13 @@ import { raiseFlag, openFlags } from '@/review/flags'
  *  - `@vercel/blob`, because there are no blob credentials in this
  *    environment or in CI (see `e2e/fill.spec.ts`'s own note), so `put()`
  *    throws before the route can reach any of the logic under test. The stub
- *    returns the one field the route reads (`url`).
+ *    returns the one field the route reads (`url`). The route now reaches it
+ *    through the `src/photos/blob.ts` seam, which branches on
+ *    `BLOB_READ_WRITE_TOKEN` — every test here stubs the token PRESENT (see
+ *    `beforeEach` below), which doubles as the break-verify pin for the
+ *    seam's core promise: with a token, the dev fallback must never
+ *    activate. If it did, every URL below would come back `/dev-blob/...`
+ *    instead of `blob.test` and this whole file would fail.
  *  - `@/db/client`'s `db()`, pointed at the PGlite harness — the same
  *    database every other integration test in this repo runs against, with
  *    the real migrations applied. `attachPhoto`, `resolveFillToken`,
@@ -54,6 +60,17 @@ vi.mock('@/db/client', () => ({
 
 const { POST, DELETE } = await import('../route')
 const { clearFlagAfterSave } = await import('@/app/clear-flag-after-save')
+
+// Токен ПРИСУТСТВУЕТ во всех тестах файла — шов обязан идти в (замоканный)
+// настоящий `put`/`del`, никогда в dev-fallback; см. шапку выше. Сам fallback
+// покрыт своими тестами (`src/photos/__tests__/blob.test.ts`).
+beforeEach(() => {
+  vi.stubEnv('BLOB_READ_WRITE_TOKEN', 'vercel_blob_rw_test_token')
+})
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xd9])
 
