@@ -80,6 +80,14 @@ export async function listPhotos(db: Db, submissionId: string): Promise<PhotoRow
     })
     .from(photos)
     .where(eq(photos.submissionId, submissionId))
+    // Порядок загрузки, ЯВНО: без ORDER BY Postgres не обещает ничего, а с
+    // мультизагрузкой в накопительный слот порядок стал наблюдаемым
+    // свойством — клиент грузит пачку последовательно именно чтобы снимки
+    // стояли в порядке выбора, и перезагрузка страницы (или экран проверки,
+    // или выгрузка) не вправе их перетасовать. Штамп — `clock_timestamp()`
+    // на каждой вставке (см. `attachPhoto`), у последовательных загрузок он
+    // строго растёт.
+    .orderBy(photos.uploadedAt)
 
   return rows
 }

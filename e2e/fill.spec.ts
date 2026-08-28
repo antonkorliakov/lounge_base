@@ -359,9 +359,11 @@ test('отказ при загрузке фото виден рядом со с�
   await expect(page.getByRole('heading', { name: 'Photos', exact: true })).toBeVisible()
 
   // `/api/photos` checks token, size, MIME, and slot BEFORE it ever touches
-  // Vercel Blob (see src/app/api/photos/route.ts) — CI has no blob token, so
-  // a rejection reachable at that stage is the only one this test can drive
-  // through the real route rather than a mock.
+  // blob storage (see src/app/api/photos/route.ts) — this rejection must
+  // fire at the validation stage, not depend on storage at all. (Successful
+  // uploads are now coverable too — the dev fallback in `src/photos/blob.ts`
+  // stores them under public/dev-blob/ when no token is set; see the
+  // main-photos-step tests below.)
   //
   // An invalid-MIME file does NOT reach that check through the real UI: the
   // client (src/photos/resize.ts + PhotoSlots.tsx) unconditionally declares
@@ -397,6 +399,160 @@ test('отказ при загрузке фото виден рядом со с�
 })
 
 /**
+ * Настоящая (8×8, валидный PNG) картинка для загрузки: `resizeToJpeg` в
+ * Chromium её действительно декодирует и пережимает, миниатюра действительно
+ * рендерится. Кормить сюда мусорные байты было бы проверкой другого пути
+ * (resize падает → уходит оригинал), а не того, которым ходит оператор.
+ */
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGOQS7mDFTEMLQkAAUZXgYCD0b8AAAAASUVORK5CYII=',
+  'base64',
+)
+
+function png(name: string): { name: string; mimeType: string; buffer: Buffer } {
+  return { name, mimeType: 'image/png', buffer: TINY_PNG }
+}
+
+/** Слот основного шага фото по его заголовку (подписи из `PHOTO_SLOTS`). */
+function photoSlot(page: Page, heading: string): Locator {
+  return page.locator('.photo-slot').filter({
+    has: page.getByRole('heading', { name: heading }),
+  })
+}
+
+/**
+ * Сценарии, которые до dev-fallback'а (`src/photos/blob.ts`) e2e не мог
+ * пройти ВООБЩЕ: без `BLOB_READ_WRITE_TOKEN` `put()` бросал раньше любой
+ * логики приложения, так что успешная загрузка — сердце шага фото — жила
+ * только в интеграционных тестах маршрута с замоканным хранилищем. Теперь
+ * файл честно проходит resize → FormData → маршрут → диск (public/dev-blob/)
+ * → строка в photos → миниатюра по локальному URL.
+ */
+test('шаг фото: загрузка и замена именованного слота, мультизагрузка и удаление накопительного — сервер помнит всё после перезагрузки', async ({ page }) => {
+  const url = seed()
+  await page.goto(url)
+
+  await clickNext(page, FIELD_STEP_COUNT + 2)
+  await expect(page.getByRole('heading', { name: 'Photos', exact: true })).toBeVisible()
+
+  const entrance = photoSlot(page, 'Entrance')
+  const additional = photoSlot(page, 'Additional Photos')
+
+  // Контракт input'ов: именованный слот — камера (`capture`), один файл;
+  // накопительный — `multiple` БЕЗ `capture`: на iOS Safari `capture`
+  // открывает сразу камеру, камера отдаёт один кадр, и `multiple` молча не
+  // работал бы ровно на телефоне — в заявленной среде (см. `PhotoSlots`).
+  await expect(entrance.locator('input[type="file"]')).toHaveAttribute('capture', 'environment')
+  await expect(entrance.locator('input[type="file"]')).not.toHaveAttribute('multiple')
+  await expect(additional.locator('input[type="file"]')).toHaveAttribute('multiple')
+  await expect(additional.locator('input[type="file"]')).not.toHaveAttribute('capture')
+
+  // ── Именованный слот: загрузка, затем замена ──────────────────────────────
+  await entrance.locator('input[type="file"]').setInputFiles(png('entrance-first.png'))
+  await expect(entrance.locator('img')).toHaveCount(1)
+  await expect(entrance.locator('img')).toHaveAttribute('src', /\/dev-blob\//)
+  const firstSrc = await entrance.locator('img').getAttribute('src')
+
+  await entrance.locator('input[type="file"]').setInputFiles(png('entrance-second.png'))
+  // Замена, не накопление: снимок по-прежнему один, но уже другой.
+  await expect(entrance.locator('img')).not.toHaveAttribute('src', firstSrc!)
+  await expect(entrance.locator('img')).toHaveCount(1)
+  // И «Убрать» у именованного слота нет и на основном шаге: его операция —
+  // замена; удаление могло бы только сделать анкету неполной (см. `PhotoSlots`).
+  await expect(entrance.locator('.photo-remove')).toHaveCount(0)
+
+  // ── Накопительный слот: три файла ОДНИМ выбором ───────────────────────────
+  await additional
+    .locator('input[type="file"]')
+    .setInputFiles([png('a.png'), png('b.png'), png('c.png')])
+  await expect(additional.locator('img')).toHaveCount(3)
+  const srcs = await additional
+    .locator('img')
+    .evaluateAll((images) => images.map((image) => image.getAttribute('src')))
+
+  // ── Удаление на ОСНОВНОМ шаге (раньше — только на экране правок) ──────────
+  // Убирается именно выбранный (средний), порядок остальных цел — загрузка
+  // пачки последовательная ровно ради порядка (см. `uploadBatch`).
+  await expect(additional.locator('.photo-remove')).toHaveCount(3)
+  await additional.locator('.photo-remove').nth(1).click()
+  await expect(additional.locator('img')).toHaveCount(2)
+  await expect(additional.locator('img').nth(0)).toHaveAttribute('src', srcs[0]!)
+  await expect(additional.locator('img').nth(1)).toHaveAttribute('src', srcs[2]!)
+
+  // ── Перезагрузка: всё это — состояние сервера, не только страницы ─────────
+  await page.reload()
+  await clickNext(page, FIELD_STEP_COUNT + 2)
+  await expect(entrance.locator('img')).toHaveCount(1)
+  await expect(entrance.locator('img')).not.toHaveAttribute('src', firstSrc!)
+  await expect(additional.locator('img')).toHaveCount(2)
+  // И в том же порядке: `listPhotos` сортирует по uploadedAt — порядок
+  // выбора файлов переживает перезагрузку, а не тасуется планировщиком.
+  await expect(additional.locator('img').nth(0)).toHaveAttribute('src', srcs[0]!)
+  await expect(additional.locator('img').nth(1)).toHaveAttribute('src', srcs[2]!)
+})
+
+test('мультизагрузка: упавший файл — пофайловый отказ с именем, успех остальных виден', async ({ page }) => {
+  const url = seed()
+  await page.goto(url)
+
+  await clickNext(page, FIELD_STEP_COUNT + 2)
+  const additional = photoSlot(page, 'Additional Photos')
+
+  // Первый файл пройдёт, второй — над потолком размера (тот же реальный
+  // отказ маршрута, что и в тесте выше: 16MB > MAX_PHOTO_BYTES).
+  await additional.locator('input[type="file"]').setInputFiles([
+    png('good.png'),
+    { name: 'huge.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(16 * 1024 * 1024) },
+  ])
+
+  // Успех первого файла ВИДЕН (миниатюра на месте) — отказ второго его не
+  // прячет и назван по имени файла, чтобы было понятно, что перевыбирать.
+  await expect(additional.locator('img')).toHaveCount(1)
+  await expect(additional.getByText('huge.bin: The file is too large')).toBeVisible()
+
+  // Отказ хранится как Localized — переключение языка перерисовывает его же.
+  // На уровне страницы: фильтр `additional` держится за английский заголовок
+  // и после переключения перестал бы находить слот (см. довод у теста про
+  // отказ загрузки выше).
+  await page.getByRole('button', { name: 'RU', exact: true }).click()
+  await expect(page.getByText('huge.bin: Файл слишком велик')).toBeVisible()
+})
+
+/**
+ * Осмысленность удаления против полноты: `MIN_PHOTOS` = 4 при трёх
+ * обязательных именованных слотах, так что добавочные снимки — часть
+ * полноты. Удаление на основном шаге может сделать анкету неотправляемой —
+ * отказ отправки обязан назвать слот ПО ИМЕНИ (а не только посчитать), и
+ * дозагрузка в него должна возвращать отправляемость. Круг целиком.
+ */
+test('удаление добавочных снимков честно ломает полноту: отказ называет слот, дозагрузка возвращает отправляемость', async ({ page }) => {
+  const url = seed({ complete: true })
+  await page.goto(url)
+
+  await clickNext(page, FIELD_STEP_COUNT + 2)
+  const additional = photoSlot(page, 'Additional Photos')
+  await expect(additional.locator('img')).toHaveCount(2)
+
+  await additional.locator('.photo-remove').first().click()
+  await expect(additional.locator('img')).toHaveCount(1)
+  await additional.locator('.photo-remove').first().click()
+  await expect(additional.locator('img')).toHaveCount(0)
+
+  await clickNext(page) // экран отправки
+  await page.getByRole('button', { name: 'Submit for review', exact: true }).click()
+  await expect(page.getByText(/item\(s\) still need an answer/)).toBeVisible()
+  await expect(page.getByRole('listitem').filter({ hasText: 'Additional Photos' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Back', exact: true }).click()
+  await additional.locator('input[type="file"]').setInputFiles(png('refill.png'))
+  await expect(additional.locator('img')).toHaveCount(1)
+
+  await clickNext(page)
+  await page.getByRole('button', { name: 'Submit for review', exact: true }).click()
+  await expect(page.getByText('Sent for review. We will get back to you.')).toBeVisible()
+})
+
+/**
  * Экран правок со всеми категориями отмеченных ответов сразу — поле, позиция
  * услуг, именованный слот фото и накопительный слот (`--changes-requested` в
  * `scripts/seed-dev.ts` ставит по замечанию на каждую).
@@ -412,14 +568,15 @@ test('отказ при загрузке фото виден рядом со с�
  * не снимает чужие», что видно только после перезагрузки, то есть только
  * пройдя настоящий путь автосохранение → серверное действие → clearFlagsFor.
  *
- * Загрузка фото здесь не выполняется: `put()` требует
- * `BLOB_READ_WRITE_TOKEN`, которого в CI нет (см. тест про отказ загрузки
- * выше). Проверяется, что контрол загрузки и текущий снимок слота на экране
- * есть; снятие замечания при загрузке покрыто интеграционным тестом маршрута
- * (`src/app/api/photos/__tests__/upload-route.test.ts`). УДАЛЕНИЕ снимка, в
- * отличие от загрузки, блоб-токена не требует (удаление блоба — best-effort,
- * см. `DELETE /api/photos`), поэтому единственный правдивый ответ на замечание
- * по накопительному слоту проходится здесь целиком, до снятия замечания.
+ * Загрузка фото здесь не выполняется — не потому, что нельзя (dev-fallback в
+ * `src/photos/blob.ts` сделал её проходимой без блоб-токена; сами сценарии
+ * загрузки/замены/мультизагрузки покрыты тестами основного шага фото выше),
+ * а чтобы этот тест остался про СВОЁ: контролы всех категорий и снятие
+ * замечаний правками. Снятие замечания именно ЗАГРУЗКОЙ покрыто
+ * интеграционным тестом маршрута
+ * (`src/app/api/photos/__tests__/upload-route.test.ts`). УДАЛЕНИЕ снимка —
+ * единственный правдивый ответ на замечание по накопительному слоту —
+ * проходится здесь целиком, до снятия замечания.
  */
 test('экран правок: у каждой категории есть рабочий контрол, и правка снимает своё замечание', async ({ page }) => {
   const url = seed({ changesRequested: true })
