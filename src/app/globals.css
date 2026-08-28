@@ -596,6 +596,11 @@ button:disabled { opacity: .4; }
    даже когда она уже в фокусе. */
 @media (hover: hover) and (pointer: fine) {
   .frow:hover .frow-act { opacity: 1; }
+  /* Глобальный button { min-height: 44px } — floor для пальца; у мыши он
+     раздувает каждую строку проверки вдвое (на экран влезает 4 строки вместо
+     8). Внутри именно этого медиа-блока указатель точный, и компактная кнопка
+     легитимна; на touch floor остаётся нетронутым. */
+  .frow-act { min-height: 0; }
 }
 @media (hover: none), (pointer: coarse) {
   .frow-act { opacity: 1; }

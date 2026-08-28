@@ -48,7 +48,9 @@ const WRITTEN_AT = sql`clock_timestamp()`
  * команда (`editAnswerDuringReview`, `src/review/edit.ts`), СБРАСЫВАЕТ
  * провенанс — значок «исправлено командой» говорит о последней руке, и
  * пропуск `editedBy` в `set` тихо оставил бы его висеть на ответе, который
- * команда больше не писала. Закреплено тестом (`values.test.ts`).
+ * команда больше не писала. Закреплено тестом — сброс провенанса
+ * операторской записью держат тесты «провенанс: значок следует за последней
+ * рукой» в `src/review/__tests__/edit.test.ts` (в `values.test.ts` его нет).
  */
 const OPERATOR_PROVENANCE = { editedBy: null }
 
