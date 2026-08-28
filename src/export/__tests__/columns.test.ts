@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getTableColumns } from 'drizzle-orm'
-import { serviceValues } from '@/db/schema'
+import { fieldValues, serviceValues } from '@/db/schema'
 import { FIELDS, PHOTO_SLOTS, SERVICE_ATTRIBUTES, SERVICE_ITEMS } from '@/form-schema'
 import { duplicateKeysIn, flatColumns, IDENTITY_COLUMNS, type Column } from '../columns'
 
@@ -52,6 +52,24 @@ const sourceServiceLabels = fixture('source-service-labels.json')
 const NON_ATTRIBUTE_COLUMNS = ['submissionId', 'itemKey', 'updatedAt', 'editedBy']
 const storedAttributes = Object.keys(getTableColumns(serviceValues)).filter(
   (name) => !NON_ATTRIBUTE_COLUMNS.includes(name),
+)
+
+/**
+ * Тот же оракул для `field_values` — у него не было эквивалента, и колонка,
+ * добавленная в ЭТУ таблицу, не роняла бы ничего: сервисный оракул выше её не
+ * видит, а группа `fields` сверяется с golden fixture, которая про хранение
+ * не знает. Таблица одноатрибутная, поэтому честная форма проверки другая:
+ * не «каждый атрибут имеет колонку у каждого поля» (колонка поля и ЕСТЬ его
+ * единственный атрибут — сравнение вышло бы тавтологией), а «атрибут ровно
+ * один, и это `value`». Новая колонка в `field_values` попадает в разность и
+ * роняет тест ниже, требуя решения: либо она выгружается (и тогда группа
+ * `fields` перестаёт быть «одна колонка на ключ» — правится и `columns.ts`,
+ * и этот оракул), либо она служебная — и тогда её вносят в этот список с
+ * причиной, как `editedBy`/`updatedAt` выше.
+ */
+const FIELD_NON_ATTRIBUTE_COLUMNS = ['submissionId', 'fieldKey', 'updatedAt', 'editedBy']
+const storedFieldAttributes = Object.keys(getTableColumns(fieldValues)).filter(
+  (name) => !FIELD_NON_ATTRIBUTE_COLUMNS.includes(name),
 )
 
 const IDENTITY_KEYS = [
@@ -144,6 +162,14 @@ describe('колонки плоской выгрузки', () => {
     expect([...attributesUsed].sort()).toEqual([...storedAttributes].sort())
     expect(services).toHaveLength(sourceServiceKeys.length * storedAttributes.length)
     expect(services).toHaveLength(406)
+  })
+
+  // Хвост оракула выше, для второй таблицы ответов: `renderField` выгружает
+  // ровно `row.value`, и колонка группы `fields` на ключ — одна. Это честно,
+  // ПОКА `value` — единственный атрибут таблицы; проверка ниже делает это
+  // равенство утверждением по данным, а не молчаливой предпосылкой.
+  it('field_values хранит ровно один атрибут — value; новая колонка требует решения о выгрузке', () => {
+    expect(storedFieldAttributes).toEqual(['value'])
   })
 
   it('атрибуты одной позиции идут подряд', () => {
