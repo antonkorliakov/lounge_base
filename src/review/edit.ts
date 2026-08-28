@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import {
   fieldByKey,
@@ -11,12 +12,12 @@ import type { Db, Tx } from '@/db/types'
 import { events, fieldValues, serviceValues, submissions } from '@/db/schema'
 import { fail, type SaveResult } from '@/submissions/editable'
 import { serviceRowFromInput } from '@/submissions/values'
-import { lookupAirport } from '@/registry/directory'
 import {
-  DERIVED_FIELD_KEYS,
+  DERIVED_FIELDS_REFUSAL,
   DERIVED_PREFILL,
+  DERIVED_FIELD_KEYS,
   IATA_FIELD_KEY,
-  normalizeIata,
+  resolveDirectoryCode,
 } from '@/registry/manage'
 import { REVIEW_STATUSES } from './blocks'
 import { clearFlagsFor } from './flags'
@@ -27,7 +28,10 @@ import { clearFlagsFor } from './flags'
  * `PASSPORT_EDIT_EVENT` в `registry/manage.ts`. Payload: `{ key, old, new,
  * actor }` — старое значение читается ПОД БЛОКИРОВКОЙ той же транзакции, что
  * пишет новое, так что пара old→new не может описывать чужую промежуточную
- * запись.
+ * запись. Две гарантии формы, обе — свойства двери, а не удача входа:
+ * `new` присутствует ВСЕГДА (`undefined` нормализуется в `null` у входа —
+ * иначе jsonb молча выбросил бы ключ), и событий с `old`, равным `new`, не
+ * бывает (правка тем же значением — честный no-op, без записи и события).
  */
 export const TEAM_EDIT_EVENT = 'answer_edited_by_team'
 
@@ -101,12 +105,18 @@ export async function editAnswerDuringReview(
   db: Db,
   input: { submissionId: string; key: string; value: unknown; reviewer: string },
 ): Promise<SaveResult> {
+  // Сетевой вход: `undefined` нормализуется в `null` У ДВЕРИ, один раз на все
+  // ветки. Иначе drizzle выбрасывает `value` из SET вовсе — «успешная» правка
+  // оставляла бы СТАРОЕ значение под НОВЫМ провенансом и штампом, событие
+  // писалось бы без `new`, а замечание снималось бы ни за что. `null` — то,
+  // что вход и означает («ответа нет»), и его валидаторы судят по-настоящему.
+  const value: unknown = input.value === undefined ? null : input.value
+
   // ── Классификация ключа и всё, что можно отказать БЕЗ транзакции ─────────
   if (DERIVED_FIELD_KEYS.includes(input.key)) {
-    return fail(
-      'Country, city and airport are derived from the IATA code — correct the code instead',
-      'Страна, город и аэропорт выводятся из кода IATA — исправьте код',
-    )
+    // Тот же объект, что возвращает дверь оператора, — не копия текста
+    // (паритет закреплён тестом `toEqual(operator.error)`).
+    return { ok: false, error: DERIVED_FIELDS_REFUSAL }
   }
 
   if (photoSlotByKey(input.key)) {
@@ -117,25 +127,12 @@ export async function editAnswerDuringReview(
   }
 
   if (input.key === IATA_FIELD_KEY) {
-    const iata = typeof input.value === 'string' ? normalizeIata(input.value) : null
-    if (iata === null) {
-      return fail('IATA code must be 3 letters', 'Код IATA — три латинские буквы')
-    }
-
-    // Чтение справочника — вне транзакции, как у `resolveIdentity`/
-    // `saveOperatorField`: статичная таблица, гонки с импортом не стоят
-    // блокировки.
-    const directory = await lookupAirport(db, iata)
-    if (directory === null) {
-      return fail(
-        `Code ${iata} is not in the airport directory — country, city and airport ` +
-          'can only be derived from a directory code; new airports are added by ' +
-          'updating the directory',
-        `Код ${iata} не найден в справочнике аэропортов — страна, город и аэропорт ` +
-          'выводятся только из кода справочника; новый аэропорт добавляется ' +
-          'обновлением справочника',
-      )
-    }
+    // Нормализация и справочник — общей головой обеих дверей записи
+    // (`resolveDirectoryCode`, `src/registry/manage.ts`), вне транзакции:
+    // статичная таблица, гонки с импортом не стоят блокировки.
+    const resolved = await resolveDirectoryCode(db, value)
+    if (!resolved.ok) return resolved
+    const { iata, directory } = resolved
 
     // Четвёрка целиком: I.10 = код, тройка = значения справочника — тот же
     // источник и то же соответствие (`DERIVED_PREFILL`), что у двери
@@ -168,6 +165,17 @@ export async function editAnswerDuringReview(
           ),
         )
       const oldByKey = new Map(oldRows.map((row) => [row.fieldKey, row.value]))
+
+      // Выбор ТОГО ЖЕ аэропорта — не правка, а один клик до неё (у I.10
+      // выбор из списка и есть сохранение): вся четвёрка уже стоит ровно
+      // такой — честный no-op, без записи, события, снятого замечания и
+      // обесцененного подтверждения блока. Частичное совпадение (код тот же,
+      // тройка разошлась) правкой остаётся: четвёрку надо выровнять.
+      if (
+        quartet.every((entry) => isDeepStrictEqual(oldByKey.get(entry.key), entry.value))
+      ) {
+        return { ok: true }
+      }
 
       for (const entry of quartet) {
         await tx
@@ -215,7 +223,7 @@ export async function editAnswerDuringReview(
 
       // Тот же валидатор, что у двери оператора (`saveFieldValue`), — одно
       // правило: значение, отказанное оператору, отказывается и команде.
-      const validation = validateField(field, input.value)
+      const validation = validateField(field, value)
       if (!validation.ok) return { ok: false, error: validation.error }
 
       const oldRows = await tx
@@ -229,18 +237,27 @@ export async function editAnswerDuringReview(
         )
         .limit(1)
 
+      // То же значение, что уже стоит (сравнение старого, прочитанного под
+      // этой блокировкой, с новым; jsonb — глубоко), — честный no-op: ничего
+      // не записано, событие old===new не выдумано, замечание не снято ни за
+      // что, подтверждение блока не обесценено. Один клик до этого состояния
+      // есть: черновик редактора предзаполняется сохранённым значением.
+      if (oldRows.length > 0 && isDeepStrictEqual(oldRows[0]!.value, value)) {
+        return { ok: true }
+      }
+
       await tx
         .insert(fieldValues)
         .values({
           submissionId: input.submissionId,
           fieldKey: input.key,
-          value: input.value,
+          value,
           editedBy: input.reviewer,
           updatedAt: WRITTEN_AT,
         })
         .onConflictDoUpdate({
           target: [fieldValues.submissionId, fieldValues.fieldKey],
-          set: { value: input.value, editedBy: input.reviewer, updatedAt: WRITTEN_AT },
+          set: { value, editedBy: input.reviewer, updatedAt: WRITTEN_AT },
         })
 
       await tx.insert(events).values({
@@ -250,7 +267,7 @@ export async function editAnswerDuringReview(
         payload: {
           key: input.key,
           old: oldRows[0]?.value ?? null,
-          new: input.value,
+          new: value,
           actor: input.reviewer,
         },
       })
@@ -263,23 +280,27 @@ export async function editAnswerDuringReview(
 
   const item = serviceItemByKey(input.key)
   if (item) {
-    // Сетевой вход: `value` — произвольный JSON. Не-объект не роняет
-    // `validateServiceValue` доступом к полю на null, а честно доезжает до
-    // его же отказа (`available: undefined` → «Unknown option») — дверь
-    // оператора для того же мусора упала бы раньше типами клиента, отказ тот
-    // же по существу.
-    const value: ServiceValueInput =
-      typeof input.value === 'object' && input.value !== null
-        ? (input.value as ServiceValueInput)
-        : ({
-            available: null,
-            chargeType: null,
-            price: null,
-            currency: null,
-            slotMinutes: null,
-            bookingRequired: null,
-            details: null,
-          } satisfies ServiceValueInput)
+    // Сетевой вход: `value` — произвольный JSON, включая ЧАСТИЧНЫЙ объект.
+    // Каждый атрибут нормализуется по отдельности (`?? null` — отсутствующий
+    // и `undefined` становятся «нет ответа»), а не только весь не-объект
+    // целиком: частичный объект раньше проскакивал `typeof`-проверку и
+    // доезжал `price: undefined` до `String(undefined)` в numeric-колонке —
+    // краш вместо отказа. Дверь оператора тот же вход останавливает типами
+    // клиента; здесь ту же полноту формы гарантирует эта нормализация, а
+    // дальше судит ТОТ ЖЕ `validateServiceValue` (`available: undefined → null`
+    // честно доезжает до его отказа «Unknown option»). Сентинель `''` у
+    // `available` переживает `??` нетронутым — его гасит `serviceRowFromInput`.
+    const raw: Partial<ServiceValueInput> =
+      typeof value === 'object' && value !== null ? (value as Partial<ServiceValueInput>) : {}
+    const serviceValue: ServiceValueInput = {
+      available: raw.available ?? null,
+      chargeType: raw.chargeType ?? null,
+      price: raw.price ?? null,
+      currency: raw.currency ?? null,
+      slotMinutes: raw.slotMinutes ?? null,
+      bookingRequired: raw.bookingRequired ?? null,
+      details: raw.details ?? null,
+    }
 
     return db.transaction(async (tx) => {
       const gate = await lockForReview(tx, input.submissionId)
@@ -288,10 +309,10 @@ export async function editAnswerDuringReview(
       // Паритет с дверью оператора (`saveServiceValue`): тот же валидатор,
       // та же нормализация (`serviceRowFromInput` — сентинель `''`, гашение
       // offered-only атрибутов).
-      const validation = validateServiceValue(item, value)
+      const validation = validateServiceValue(item, serviceValue)
       if (!validation.ok) return { ok: false, error: validation.error }
 
-      const row = serviceRowFromInput(item, value)
+      const row = serviceRowFromInput(item, serviceValue)
 
       const oldRows = await tx
         .select({
@@ -311,6 +332,21 @@ export async function editAnswerDuringReview(
           ),
         )
         .limit(1)
+
+      // Тот же no-op, что у ветки поля, — сравниваются НОРМАЛИЗОВАННЫЕ строки
+      // (`serviceRowFromInput` с обеих сторон записи: старая уже лежит в этой
+      // форме). Цена — численно: numeric-колонка возвращает '50.00' там, где
+      // вход написал '50', и строковое сравнение считало бы равные цены
+      // разными — ошибка в безопасную сторону, но ровно на самом частом пути
+      // «открыл карточку, ничего не менял, нажал Сохранить».
+      const withNumericPrice = (r: typeof row): Omit<typeof row, 'price'> & { price: number | null } =>
+        ({ ...r, price: r.price === null ? null : Number(r.price) })
+      if (
+        oldRows.length > 0 &&
+        isDeepStrictEqual(withNumericPrice(oldRows[0]!), withNumericPrice(row))
+      ) {
+        return { ok: true }
+      }
 
       await tx
         .insert(serviceValues)

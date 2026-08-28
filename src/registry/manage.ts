@@ -6,7 +6,7 @@ import { issueFillToken, FILL_TOKEN_TTL_DAYS } from '@/access/tokens'
 import { saveFieldValue } from '@/submissions/values'
 import { EDITABLE_STATUSES } from '@/submissions/editable'
 import { normalizeIata } from './iata'
-import { lookupAirport } from './directory'
+import { lookupAirport, type DirectoryEntry } from './directory'
 import {
   IDENTITY_PREFILL,
   DERIVED_PREFILL,
@@ -231,6 +231,58 @@ export type OperatorSaveResult =
   | { ok: false; error: Localized }
 
 /**
+ * Отказ прямой правке производного поля (I.7/I.8/I.9) — ОДИН текст на обе
+ * двери записи ответов: оператора (`saveOperatorField` ниже) и команды
+ * (`editAnswerDuringReview`, `src/review/edit.ts`). Правило одно — тройка
+ * выводится из кода, правится код, — и раньше текст был скопирован в
+ * `edit.ts` от руки с комментарием, УТВЕРЖДАВШИМ паритет, которого ничто не
+ * проверяло; теперь обе двери возвращают этот объект, а паритет закреплён
+ * тестом (`src/review/__tests__/edit.test.ts`, `toEqual(operator.error)`).
+ */
+export const DERIVED_FIELDS_REFUSAL: Localized = {
+  en: 'Country, city and airport are derived from the IATA code — correct the code instead',
+  ru: 'Страна, город и аэропорт выводятся из кода IATA — исправьте код',
+}
+
+export type DirectoryCodeResolution =
+  | { ok: true; iata: string; directory: DirectoryEntry }
+  | { ok: false; error: Localized }
+
+/**
+ * Голова ворот кода IATA — нормализация и справочник, ЕДИНСТВЕННОЙ записью
+ * на обе двери записи ответов (та же пара, что у `DERIVED_FIELDS_REFUSAL`
+ * выше): «код — три латинские буквы» и «код есть в справочнике» с их
+ * текстами отказов. `resolveIdentity` НЕ ходит сюда намеренно: его промах
+ * справочника — про другой поступок («лаунж можно завести только…»), и слить
+ * тексты значило бы объяснять админу создание лаунжа словами про правку
+ * ответа. Чтение справочника — вне транзакций вызывающих, довод у
+ * `resolveIdentity`.
+ */
+export async function resolveDirectoryCode(
+  db: Db,
+  value: unknown,
+): Promise<DirectoryCodeResolution> {
+  const iata = typeof value === 'string' ? normalizeIata(value) : null
+  if (iata === null) {
+    return fail('IATA code must be 3 letters', 'Код IATA — три латинские буквы')
+  }
+
+  const directory = await lookupAirport(db, iata)
+  if (directory === null) {
+    return fail(
+      `Code ${iata} is not in the airport directory — country, city and airport ` +
+        'can only be derived from a directory code; new airports are added by ' +
+        'updating the directory',
+      `Код ${iata} не найден в справочнике аэропортов — страна, город и аэропорт ` +
+        'выводятся только из кода справочника; новый аэропорт добавляется ' +
+        'обновлением справочника',
+    )
+  }
+
+  return { ok: true, iata, directory }
+}
+
+/**
  * ЕДИНСТВЕННАЯ дверь оператора к записи ответа плоского поля — то, что
  * вызывает `saveFieldAction` (`src/app/f/[token]/actions.ts`) вместо голого
  * `saveFieldValue`. Ворота производных полей живут ЗДЕСЬ, в слое действия
@@ -249,9 +301,9 @@ export type OperatorSaveResult =
  *     Прежний замок был только в UI, а действие достижимо по сети напрямую —
  *     держатель токена мог записать любую страну поверх выведенной; теперь
  *     сервер отказывает сам (правило ветки: клиентская проверка — подсказка).
- *  2. Запись кода IATA (I.10) — через справочник: нормализация той же
- *     `normalizeIata`, промах справочника — отказ (тот же гейт, что у
- *     `resolveIdentity`: источник тройки один), попадание — В ОДНОЙ
+ *  2. Запись кода IATA (I.10) — через справочник: голова ворот (нормализация
+ *     + промах справочника с текстами отказов) — общий `resolveDirectoryCode`
+ *     с дверью команды (источник тройки один), попадание — В ОДНОЙ
  *     ТРАНЗАКЦИИ записываются код и вся выведенная тройка. Атомарность
  *     обязательна: код `ESB` с городом `Istanbul` — состояние, которого не
  *     должен уметь оставить ни один сбой между четырьмя записями. Приём тот
@@ -275,31 +327,16 @@ export async function saveOperatorField(
   input: { submissionId: string; fieldKey: string; value: unknown },
 ): Promise<OperatorSaveResult> {
   if (DERIVED_FIELD_KEYS.includes(input.fieldKey)) {
-    return fail(
-      'Country, city and airport are derived from the IATA code — correct the code instead',
-      'Страна, город и аэропорт выводятся из кода IATA — исправьте код',
-    )
+    return { ok: false, error: DERIVED_FIELDS_REFUSAL }
   }
 
   if (input.fieldKey === IATA_FIELD_KEY) {
-    const iata = typeof input.value === 'string' ? normalizeIata(input.value) : null
-    if (iata === null) {
-      return fail('IATA code must be 3 letters', 'Код IATA — три латинские буквы')
-    }
-
-    // Чтение справочника — вне транзакции, как у `resolveIdentity`: статичная
-    // таблица, гонки с импортом не стоят блокировки.
-    const directory = await lookupAirport(db, iata)
-    if (directory === null) {
-      return fail(
-        `Code ${iata} is not in the airport directory — country, city and airport ` +
-          'can only be derived from a directory code; new airports are added by ' +
-          'updating the directory',
-        `Код ${iata} не найден в справочнике аэропортов — страна, город и аэропорт ` +
-          'выводятся только из кода справочника; новый аэропорт добавляется ' +
-          'обновлением справочника',
-      )
-    }
+    // Нормализация и справочник — общей головой обеих дверей записи
+    // (`resolveDirectoryCode` выше), вне транзакции: статичная таблица,
+    // гонки с импортом не стоят блокировки.
+    const resolved = await resolveDirectoryCode(db, input.value)
+    if (!resolved.ok) return resolved
+    const { iata, directory } = resolved
 
     return db.transaction(async (tx) => {
       const code = await saveFieldValue(tx, {
