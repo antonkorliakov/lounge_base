@@ -269,9 +269,16 @@ const LOUNGE_WRITE_TABLES = [LOUNGES] as const
  *  - `lockForReview` (`src/review/edit.ts`, module-local) — locks, then only
  *    reads `submissions.status` against `REVIEW_STATUSES` (the reviewer's
  *    window, the exact complement of `assertEditable`'s); called with `tx`
- *    as the first statement of every write branch of
- *    `editAnswerDuringReview`, before its writes to
- *    `field_values`/`service_values`.
+ *    by the write branches of `editAnswerDuringReview`, before their writes
+ *    to `field_values`/`service_values`. That function opens THREE sibling
+ *    transactions, and "every branch calls it first" is not this note's
+ *    claim to keep true by hand — `lockOrderViolationsIn` checks each
+ *    `.transaction(` span on its own ledger (see its doc), so a branch that
+ *    loses its call is reported by span, not covered by a sibling's lock.
+ *    An earlier version of this note asserted the per-branch placement
+ *    while the guard only checked per function — i.e. it claimed exactly
+ *    the property the scan could not see; recorded so the next delegate
+ *    note states what is machine-checked, not what was once read.
  *
  * If a new delegate is added, add it here with the same kind of note —
  * this list is the guard's only way of knowing an indirect lock is real,
@@ -695,12 +702,60 @@ export function provenLockDelegatesIn(fileText: string): Set<string> {
 
 export type LockOrderViolation = { functionName: string; reason: string }
 
+type BodySpan = { start: number; end: number }
+
+/**
+ * Spans of every OUTERMOST `.transaction(` argument list in `body` — the
+ * `( … )` interior, callback included (`matchingClose` balances it). Inner
+ * `.transaction(` calls nested inside an already-found span are dropped: a
+ * nested call on a `tx` is a SAVEPOINT in the same transaction (the
+ * `clearFlagsFor`-on-`tx` pattern), so its lock and writes belong to the
+ * enclosing span's ledger, not to a separate one.
+ */
+function transactionSpans(body: string): BodySpan[] {
+  const all: BodySpan[] = []
+  const re = /\.transaction\s*\(/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(body))) {
+    const open = m.index + m[0].length - 1
+    const close = matchingClose(body, open)
+    if (close === null) continue
+    all.push({ start: open, end: close })
+  }
+  return all.filter(
+    (span) => !all.some((outer) => outer !== span && outer.start < span.start && span.end <= outer.end),
+  )
+}
+
+/** `body` with the given spans' interiors blanked to spaces — the "outside
+ *  every transaction" remainder, with every index preserved. */
+function blankSpans(body: string, spans: BodySpan[]): string {
+  let out = body
+  for (const span of spans) {
+    out = out.slice(0, span.start) + ' '.repeat(span.end + 1 - span.start) + out.slice(span.end + 1)
+  }
+  return out
+}
+
 /**
  * Family 1's guard: every exported function in `fileText` that writes to
  * one of `GUARDED_TABLES` must have a `submissions` lock (inline or via
  * `LOCK_DELEGATES`) positioned strictly before the *earliest* such write —
  * checking against the earliest is sufficient to guarantee it precedes
  * every later one too, since "before the minimum" implies "before all".
+ *
+ * The ledger is PER TRANSACTION, not per function: a function whose body
+ * opens several sibling `db.transaction(...)` calls (`editAnswerDuringReview`
+ * has three, one per kind of key) is checked span by span, because a lock
+ * taken inside one transaction serializes nothing in its siblings — the
+ * per-function version of this check stayed green with branch 2's or branch
+ * 3's lock deleted, as long as branch 1 kept its own (found by audit, and
+ * pinned by this file's synthetic two-transaction tests). Writes outside
+ * every span are checked against locks outside every span, by the same rule.
+ * A violation in a multi-transaction function names its span
+ * (`fn (transaction 2 of 3)`) so the finding points at the branch, not just
+ * the function.
+ *
  * There is no exemption list and no way to opt a function out — see this
  * file's header for why the one that existed was removed. Functions that
  * don't write to a guarded table at all are not this guard's concern and
@@ -711,26 +766,44 @@ export function lockOrderViolationsIn(fileText: string): LockOrderViolation[] {
   const violations: LockOrderViolation[] = []
 
   for (const fn of exportedFunctionSpans(text)) {
-    const writes = writeHitsIn(fn.body, GUARDED_TABLES)
-    if (writes.length === 0) continue
+    const spans = transactionSpans(fn.body)
 
-    const firstWrite = writes.reduce((a, b) => (b.index < a.index ? b : a))
-    const locks = lockPositionsIn(fn.body)
+    const units: { label: string; body: string }[] = spans.map((span, index) => ({
+      label:
+        spans.length > 1
+          ? `${fn.name} (transaction ${index + 1} of ${spans.length})`
+          : fn.name,
+      body: fn.body.slice(span.start, span.end + 1),
+    }))
+    // The remainder outside every transaction: a write there cannot be
+    // satisfied by a lock inside somebody's transaction, and vice versa.
+    units.push({
+      label: spans.length > 0 ? `${fn.name} (outside transactions)` : fn.name,
+      body: blankSpans(fn.body, spans),
+    })
 
-    if (locks.length === 0) {
-      violations.push({
-        functionName: fn.name,
-        reason: `writes to ${firstWrite.table} without ever locking submissions`,
-      })
-      continue
-    }
+    for (const unit of units) {
+      const writes = writeHitsIn(unit.body, GUARDED_TABLES)
+      if (writes.length === 0) continue
 
-    const earliestLock = Math.min(...locks)
-    if (earliestLock > firstWrite.index) {
-      violations.push({
-        functionName: fn.name,
-        reason: `locks submissions after its write to ${firstWrite.table}, not before`,
-      })
+      const firstWrite = writes.reduce((a, b) => (b.index < a.index ? b : a))
+      const locks = lockPositionsIn(unit.body)
+
+      if (locks.length === 0) {
+        violations.push({
+          functionName: unit.label,
+          reason: `writes to ${firstWrite.table} without ever locking submissions`,
+        })
+        continue
+      }
+
+      const earliestLock = Math.min(...locks)
+      if (earliestLock > firstWrite.index) {
+        violations.push({
+          functionName: unit.label,
+          reason: `locks submissions after its write to ${firstWrite.table}, not before`,
+        })
+      }
     }
   }
 

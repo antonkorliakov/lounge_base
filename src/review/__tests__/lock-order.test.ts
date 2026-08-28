@@ -402,6 +402,104 @@ describe('lockOrderViolationsIn', () => {
     expect(violations[0]?.reason).toMatch(/without ever locking submissions/)
   })
 
+  // Ведомость — ПО ТРАНЗАКЦИЯМ, не по функции (см. доводы у самой
+  // `lockOrderViolationsIn`): блокировка внутри одной транзакции ничего не
+  // сериализует в её сиблингах. Это ровно форма `editAnswerDuringReview` —
+  // три транзакции-сиблинга в одном теле, — и до этого набора guard,
+  // сверявший «самую раннюю блокировку функции» с «самой ранней записью
+  // функции», оставался зелёным при удалённой блокировке ветки 2 или 3,
+  // пока ветка 1 держала свою (нашёл аудит).
+  describe('несколько транзакций в одном теле — ведомость по каждой', () => {
+    it('пропускает функцию, у которой КАЖДАЯ транзакция лочит перед записью', () => {
+      const text = `
+        export async function ok(db, input) {
+          if (input.kind === 'a') {
+            return db.transaction(async (tx) => {
+              await tx.select().from(submissions).where(eq(submissions.id, id)).for('update')
+              await tx.insert(fieldValues).values({})
+            })
+          }
+          return db.transaction(async (tx) => {
+            await tx.select().from(submissions).where(eq(submissions.id, id)).for('update')
+            await tx.insert(serviceValues).values({})
+          })
+        }
+      `
+      expect(lockOrderViolationsIn(text)).toEqual([])
+    })
+
+    it('ловит вторую транзакцию без блокировки — и называет её по номеру', () => {
+      const text = `
+        export async function badSecondBranch(db, input) {
+          if (input.kind === 'a') {
+            return db.transaction(async (tx) => {
+              await tx.select().from(submissions).where(eq(submissions.id, id)).for('update')
+              await tx.insert(fieldValues).values({})
+            })
+          }
+          return db.transaction(async (tx) => {
+            await tx.insert(serviceValues).values({})
+          })
+        }
+      `
+      const violations = lockOrderViolationsIn(text)
+      expect(violations).toHaveLength(1)
+      expect(violations[0]?.functionName).toBe('badSecondBranch (transaction 2 of 2)')
+      expect(violations[0]?.reason).toMatch(/without ever locking submissions/)
+    })
+
+    it('делегированная блокировка тоже считается по своей транзакции, а не по чужой', () => {
+      const text = `
+        export async function badDelegateInWrongBranch(db, input) {
+          if (input.kind === 'a') {
+            return db.transaction(async (tx) => {
+              const gate = await lockForReview(tx, input.submissionId)
+              await tx.insert(fieldValues).values({})
+            })
+          }
+          return db.transaction(async (tx) => {
+            await tx.insert(serviceValues).values({})
+          })
+        }
+      `
+      const violations = lockOrderViolationsIn(text)
+      expect(violations).toHaveLength(1)
+      expect(violations[0]?.functionName).toBe('badDelegateInWrongBranch (transaction 2 of 2)')
+    })
+
+    it('запись ВНЕ транзакций не удовлетворяется блокировкой внутри одной из них', () => {
+      const text = `
+        export async function badOutsideWrite(db, input) {
+          await db.transaction(async (tx) => {
+            await tx.select().from(submissions).where(eq(submissions.id, id)).for('update')
+            await tx.insert(fieldValues).values({})
+          })
+          await db.insert(serviceValues).values({})
+        }
+      `
+      const violations = lockOrderViolationsIn(text)
+      expect(violations).toHaveLength(1)
+      expect(violations[0]?.functionName).toBe('badOutsideWrite (outside transactions)')
+      expect(violations[0]?.reason).toMatch(/without ever locking submissions/)
+    })
+
+    it('вложенный db.transaction на tx (SAVEPOINT-приём clearFlagsFor) не открывает второй ведомости', () => {
+      // Внутренний `.transaction(` внутри уже найденного спана — SAVEPOINT
+      // той же транзакции: его запись покрыта блокировкой внешнего спана.
+      const text = `
+        export async function okNested(db, input) {
+          return db.transaction(async (tx) => {
+            await tx.select().from(submissions).where(eq(submissions.id, id)).for('update')
+            await tx.transaction(async (inner) => {
+              await inner.insert(fieldFlags).values({})
+            })
+          })
+        }
+      `
+      expect(lockOrderViolationsIn(text)).toEqual([])
+    })
+  })
+
   it('ловит функцию, которая лочит submissions ПОСЛЕ записи', () => {
     const text = `
       export async function badLockAfter(db) {
