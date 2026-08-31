@@ -78,6 +78,15 @@ export const UI = {
   // aria-label списка шагов (<nav>) — сам список состоит из названий шагов и
   // собственного имени иначе не имеет.
   'form.steps': { en: 'Form steps', ru: 'Шаги анкеты' },
+  // aria-label сегмента полосы хода (теперь это кнопка прыжка на шаг — см.
+  // .shell-bar в FormShell.tsx): у кнопки нет текста, и озвучиваться она
+  // обязана полным адресом шага — номером, счётом и именем из stepTitle,
+  // дословно тем же, что стоит в заголовке шелла и в списке шагов.
+  // {n}/{total}/{title} подставляет FormShell.
+  'form.stepSegment': {
+    en: 'Step {n} of {total}: {title}',
+    ru: 'Шаг {n} из {total}: {title}',
+  },
   'form.submitted': {
     en: 'Sent for review. We will get back to you.',
     ru: 'Отправлено на проверку. Сообщим о результате.',

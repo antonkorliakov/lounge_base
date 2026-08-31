@@ -863,8 +863,14 @@ test('замечание на производном I.7: правится КО�
   await expect(filler.getByText(/derived from the IATA code/)).toHaveCount(3)
 
   // ── Повторная отправка — с основного прохода, через навигатор шагов ───────
+  // Кнопка ищется ВНУТРИ навигатора: с тех пор как сегменты полосы хода —
+  // кнопки с aria-label вида «Step 9 of 9: Review & submit», нестрогое имя
+  // на всей странице находило бы две кнопки (strict mode).
   await filler.locator('.shell-title-btn').click()
-  await filler.getByRole('button', { name: 'Review & submit' }).click()
+  await filler
+    .getByRole('navigation', { name: 'Form steps' })
+    .getByRole('button', { name: 'Review & submit' })
+    .click()
   await filler.getByRole('button', { name: 'Submit for review', exact: true }).click()
   await expect(filler.getByText('Sent for review. We will get back to you.')).toBeVisible()
 

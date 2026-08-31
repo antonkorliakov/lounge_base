@@ -181,13 +181,31 @@ export function FormShell(props: {
           </button>
         </div>
         {/* Ход по форме — 9 сегментов вместо сплошной полосы, чтобы полоса
-            читалась как шаги, а не как процент. По-прежнему aria-hidden и
-            НЕ кликается: сегмент 34×4px не может быть честной тап-целью
-            (44px-правило этого файла стилей); интерактивный путь к шагам —
-            список под заголовком, он и озвучивается. */}
-        <div className="shell-bar" aria-hidden="true">
+            читалась как шаги, а не как процент. Каждый сегмент — кнопка
+            прыжка на свой шаг, тем же goTo, что у списка шагов: путь
+            навигации один, различается только скорость. Прежний запрет
+            кликов (эпоха 19 сегментов) держался на ШИРИНЕ — слайвер ~15×4px
+            не мог быть честной целью; девятая часть полосы — ~38px на
+            телефоне, и по ширине цель честна. ВЫСОТА полосы остаётся 4px
+            только визуально: честную высоту цели даёт невидимый
+            ::before-хитбокс кнопки (24px у мыши, 44px у пальца — расклад и
+            границы соседей разобраны у .shell-seg::before в globals.css).
+            Пока открыт список шагов, хитбоксы съёживаются до видимых 4px
+            (shell-bar-nav-open): тап «мимо списка, чтобы его закрыть» не
+            должен уметь прыгать на шаг, которого никто не выбирал. */}
+        <div className={navOpen ? 'shell-bar shell-bar-nav-open' : 'shell-bar'}>
           {steps.map((s, i) => (
-            <div key={s.key} className={i <= index ? 'shell-seg shell-seg-done' : 'shell-seg'} />
+            <button
+              key={s.key}
+              type="button"
+              className={i <= index ? 'shell-seg shell-seg-done' : 'shell-seg'}
+              aria-label={t('form.stepSegment')
+                .replace('{n}', String(i + 1))
+                .replace('{total}', String(steps.length))
+                .replace('{title}', pick(stepTitle(s)))}
+              aria-current={i === index ? 'step' : undefined}
+              onClick={() => goTo(i)}
+            />
           ))}
         </div>
         {/* Заголовок шага и навигатор — одно целое, намеренно: `.shell-title`

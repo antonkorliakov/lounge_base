@@ -96,7 +96,10 @@ test('поле сохраняется автоматически, статус �
  * блок и ставит замечания. Проверяется на контактном шаге, всеми четырьмя
  * секциями и полем из КАЖДОГО блока: секция без своих полей была бы
  * декорацией. Плюс сам навигатор: 9 пунктов, слитые шаги — под своими
- * именами, и прыжок по имени открывает слитый шаг с его секциями.
+ * именами, и прыжок по имени открывает слитый шаг с его секциями. И вторые
+ * двери к тем же прыжкам — сегменты полосы хода (кнопки с тем же goTo, см.
+ * комментарий у .shell-bar в FormShell): клик мышью и клавиатурный путь
+ * Tab→Enter, оба до смены заголовка и счётчика.
  */
 test('слитый шаг «Contacts»: секции всех четырёх блоков с их полями, навигатор перечисляет 9 шагов', async ({ page }) => {
   const url = seed()
@@ -138,6 +141,30 @@ test('слитый шаг «Contacts»: секции всех четырёх б�
     'Lounge Signage',
     'Lounge Validity',
   ])
+
+  // Сегмент полосы хода — кнопка того же прыжка: клик по восьмому открывает
+  // «Фото», «вы здесь» переезжает на него. Гидрация уже доказана кликами по
+  // навигатору выше, так что повторов в духе openRowEditor тут не нужно.
+  await page.getByRole('button', { name: 'Step 8 of 9: Photos', exact: true }).click()
+  await expect(page.getByText('8 / 9')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Photos', exact: true, level: 1 })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Step 8 of 9: Photos', exact: true })).toHaveAttribute(
+    'aria-current',
+    'step',
+  )
+
+  // Клавиатурный путь: сегменты стоят в таб-порядке сразу за кнопкой локали,
+  // Enter на сфокусированном сегменте прыгает на его шаг.
+  await page.getByRole('button', { name: 'RU', exact: true }).focus()
+  await page.keyboard.press('Tab')
+  await expect(
+    page.getByRole('button', { name: 'Step 1 of 9: Lounge Profile & Commercial Details' }),
+  ).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page.getByText('1 / 9')).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'Lounge Profile & Commercial Details', level: 1 }),
+  ).toBeVisible()
 })
 
 test('два прохода по услугам: детали спрашиваются только по отмеченной позиции', async ({ page }) => {

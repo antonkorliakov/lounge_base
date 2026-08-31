@@ -57,22 +57,93 @@ body {
 .shell-status { margin-left: auto; font-size: 13px; opacity: .7; }
 .shell-body { padding: 16px 16px 28px; }
 
-/* The thin progress strip, now drawn as 9 discrete segments (one per step,
+/* The thin progress strip, drawn as 9 discrete segments (one per step,
    filled up to the current one) so it reads as steps, not a percentage.
-   Still aria-hidden and non-interactive — a 4px-tall sliver can't be an
-   honest 44px tap target; the interactive way to a step is the list under
-   the title (.shell-steps). */
+   Each segment is now a BUTTON that jumps to its step (same goTo as the
+   step list — see FormShell). The old "non-interactive" ruling was about
+   WIDTH in the 19-segment era (~15px slivers); at 9 segments a segment is
+   ~38px wide on a phone and the width is honest. The HEIGHT stays 4px
+   visually — the honest target height comes from an invisible ::before
+   hitbox on each button, so the strip's geometry in the header does not
+   move by a pixel (button boxes keep the exact flex layout the old divs
+   had; the global button floor/padding are zeroed out below). */
 .shell-bar { display: flex; gap: 3px; height: 4px; margin: 8px 16px 0; }
-.shell-seg { flex: 1; background: #e4e6ea; border-radius: 2px; transition: background-color .2s ease; }
+.shell-seg {
+  flex: 1;
+  position: relative; /* anchors the ::before hitbox */
+  min-height: 0;      /* the global button floor (44px) would inflate the strip */
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: #e4e6ea;
+  cursor: pointer;
+  transition: background-color .2s ease, transform .15s ease;
+}
 .shell-seg-done { background: #2563eb; }
+/* The hitbox. Horizontally each box annexes HALF of the 3px gap on either
+   side: hitboxes abut exactly, so there is no dead zone between segments and
+   no point of the strip is closer to one segment while belonging to another —
+   a gap click goes to the nearest segment, never a surprising one.
+   Vertically the strip lives in a 22px corridor of dead space (8px margin
+   above, up to the top row's own controls; 10px below, down to the step
+   title's 44px button), so honest heights have to borrow from neighbours:
+   -8px up stops EXACTLY at the top row (never stealing from the locale
+   button — the row is additionally lifted above the hitboxes, see
+   .shell-top-row below), and the rest extends DOWN, where the only
+   competitor is the step-title button, which wins its own box (positioned
+   later in the stacking order) — a tap there opens the step list, the other
+   navigation path, never a wrong step. Fine pointers: 4+8+12 = 24px. */
+.shell-seg::before {
+  content: '';
+  position: absolute;
+  left: -1.5px;
+  right: -1.5px;
+  top: -8px;
+  bottom: -12px;
+}
+/* Fingers get the full 44px rule of this stylesheet: 4+8+32. The extra
+   depth overlaps the title row's box, which is why .shell-nav below lets
+   pointer events THROUGH everywhere except its real controls. */
+@media (hover: none), (pointer: coarse) {
+  .shell-seg::before { bottom: -32px; }
+}
+/* While the step list is open, the expanded hitboxes retract to the visible
+   4px strip: a tap beside the list (a common "dismiss" gesture) must not be
+   able to jump to a step nobody chose. FormShell toggles the class. */
+.shell-bar-nav-open .shell-seg::before { display: none; }
+/* Keyboard focus: an outline OUTSIDE the 4px strip (offset ring), so the
+   segment itself never changes shape. Same accent in both schemes — it
+   reads on #fff and on #111317 alike. */
+.shell-seg:focus-visible { outline: 2px solid #2563eb; outline-offset: 4px; }
+/* Mouse-only affordance so pointer users discover the segments are buttons:
+   the hovered segment thickens (a centered scaleY leaves layout untouched).
+   Deliberately absent on touch — there is no hover to discover with, and a
+   sticky :hover state after a tap would read as a second "current" mark. */
+@media (hover: hover) and (pointer: fine) {
+  .shell-seg:hover { transform: scaleY(1.75); }
+}
+/* The top row must WIN hit-testing over the segment hitboxes below it: the
+   row's controls (the locale button) end exactly 8px above the strip, and
+   the coarse-pointer hitbox reaches right up to that line — without this
+   lift the positioned segments would paint over the row and a tap on the
+   locale button's bottom edge would jump to the LAST step instead. */
+.shell-top-row { position: relative; z-index: 1; }
 
 /* Step title = step navigator. The title names the current step (as it
    always did) and is the disclosure button for the all-steps list — one
    element, so the step is named exactly once. The wrapper is the positioning
    context for the dropdown panel. */
-.shell-nav { position: relative; margin: 0 16px; }
+/* pointer-events: none is part of the segment-hitbox deal above: .shell-nav
+   is a full-width block whose box starts only 10px under the progress strip,
+   and being positioned LATER in the document it would swallow the strip's
+   coarse-pointer hitboxes into a dead band. The wrapper and the (equally
+   full-width) h1 let clicks through; the two real controls opt back in
+   below (.shell-title-btn, .shell-steps) and, painting above the segments,
+   still win their own boxes. */
+.shell-nav { position: relative; margin: 0 16px; pointer-events: none; }
 .shell-title { font-size: 18px; margin: 10px 0 0; }
 .shell-title-btn {
+  pointer-events: auto;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -91,6 +162,7 @@ body {
    a short phone viewport. Opaque background in both schemes — form content sits
    right underneath. */
 .shell-steps {
+  pointer-events: auto; /* opts back out of .shell-nav's passthrough */
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
