@@ -2,8 +2,8 @@
 
 import {
   OPTION_LISTS,
+  attributeApplies,
   isBinaryAvailability,
-  isOfferedAvailability,
   requiresPrice,
   type ServiceItem,
   type ServiceValueInput,
@@ -177,8 +177,22 @@ export function ServiceAvailabilityInput(props: {
 }
 
 /**
- * One service item's full detail set: charge type, price/currency when the
- * charge type needs them, slot minutes, booking, free-text details.
+ * One service item's detail set — the attributes its PROFILE asks
+ * (`PROFILE_ATTRIBUTES` in `form-schema/services.ts`), and nothing else: a
+ * `charge` item shows charge type (plus price/currency when the charge type
+ * needs them), a `full` item adds slot minutes, booking and details, a
+ * `detail` item shows only the textarea. Each control is gated on the
+ * schema's own `attributeApplies`, the same predicate the writer blanks by
+ * (`serviceRowFromInput`) and the review screen shows by (`renderValues`), so
+ * the three cannot disagree about which attributes exist for an item. The
+ * three screens that render this card (`ServicesPass2`, `FixesOnly`, the
+ * review screen's team-edit row in `FieldRow`) inherit the profile from here
+ * without a switch of their own.
+ *
+ * A `none` item renders no detail control at all — pass 1's yes/no is its
+ * whole answer. It only ever reaches this card on the fixes screen or the
+ * team-edit row (with `withAvailability`), where the availability control
+ * is exactly what there is to fix.
  *
  * `withAvailability` is what differs between the two screens that render
  * this card, and it is a difference in what the screen can REACH, not a
@@ -195,9 +209,10 @@ export function ServiceAvailabilityInput(props: {
  *    about one attribute is carried by the comment text, so the whole item
  *    is what the fixes screen must open.
  *
- * The detail attributes are gated on `isOfferedAvailability`, not rendered
+ * The detail attributes are gated on availability too (`attributeApplies`
+ * is false for every attribute of a non-offered item), not rendered
  * unconditionally: answering "no" here must collapse them exactly as it does
- * on the main form, where `offeredKeys` would have dropped the item from
+ * on the main form, where `pass2Keys` would have dropped the item from
  * Pass 2 entirely. For Pass 2 the gate is a no-op (its caller already
  * filtered to offered items and it renders no control that could change
  * availability), so this is one rule for both screens rather than a second
@@ -217,7 +232,8 @@ export function ServiceItemCard(props: {
   const { pick, t } = useLocale()
   const { item } = props
   const value = serviceValueOrEmpty(props.value)
-  const offered = isOfferedAvailability(item, value.available)
+  const asks = (attribute: keyof ServiceValueInput): boolean =>
+    attributeApplies(item, attribute, value.available)
   const needsPrice = requiresPrice(value.chargeType)
 
   return (
@@ -238,7 +254,7 @@ export function ServiceItemCard(props: {
         </>
       )}
 
-      {offered && (
+      {asks('chargeType') && (
         <>
           <label>{t('services.charge')}</label>
           <select
@@ -255,27 +271,37 @@ export function ServiceItemCard(props: {
               <option key={option.id} value={option.id}>{pick(option.label)}</option>
             ))}
           </select>
+        </>
+      )}
 
-          {needsPrice && (
-            <>
-              <label>{t('services.price')}</label>
-              <input
-                type="number" min={0}
-                value={value.price ?? ''}
-                onChange={(e) =>
-                  props.onChange({
-                    ...value, price: e.target.value === '' ? null : Number(e.target.value),
-                  })
-                }
-              />
-              <label>{t('services.currency')}</label>
-              <input
-                value={value.currency ?? ''}
-                onChange={(e) => props.onChange({ ...value, currency: e.target.value })}
-              />
-            </>
-          )}
+      {/* Price/currency: asked by the profile AND needed by the chosen charge
+          type — the profile says whether the question exists, `requiresPrice`
+          whether it is open right now. Every profile that asks chargeType
+          asks price/currency too (see PROFILE_ATTRIBUTES), so the `asks`
+          half is not decorative: it is what keeps this in step if that ever
+          changes. */}
+      {asks('price') && needsPrice && (
+        <>
+          <label>{t('services.price')}</label>
+          <input
+            type="number" min={0}
+            value={value.price ?? ''}
+            onChange={(e) =>
+              props.onChange({
+                ...value, price: e.target.value === '' ? null : Number(e.target.value),
+              })
+            }
+          />
+          <label>{t('services.currency')}</label>
+          <input
+            value={value.currency ?? ''}
+            onChange={(e) => props.onChange({ ...value, currency: e.target.value })}
+          />
+        </>
+      )}
 
+      {asks('slotMinutes') && (
+        <>
           <label>{t('services.slot')}</label>
           <input
             type="number" min={0}
@@ -286,16 +312,22 @@ export function ServiceItemCard(props: {
               })
             }
           />
+        </>
+      )}
 
-          <label className="field-check">
-            <input
-              type="checkbox"
-              checked={value.bookingRequired ?? false}
-              onChange={(e) => props.onChange({ ...value, bookingRequired: e.target.checked })}
-            />
-            {t('services.booking')}
-          </label>
+      {asks('bookingRequired') && (
+        <label className="field-check">
+          <input
+            type="checkbox"
+            checked={value.bookingRequired ?? false}
+            onChange={(e) => props.onChange({ ...value, bookingRequired: e.target.checked })}
+          />
+          {t('services.booking')}
+        </label>
+      )}
 
+      {asks('details') && (
+        <>
           <label>{t('services.details')}</label>
           <textarea
             value={value.details ?? ''}

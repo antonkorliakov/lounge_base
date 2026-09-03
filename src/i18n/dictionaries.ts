@@ -139,6 +139,14 @@ export const UI = {
     en: 'No services marked as available yet — pick them on the previous step, and their details will be asked here.',
     ru: 'Пока ни одна услуга не отмечена как доступная — отметьте их на предыдущем шаге, и здесь появятся вопросы по деталям.',
   },
+  // Второй проход, когда «есть» отмечено, но у всего отмеченного профиль
+  // `none` (`PROFILE_ATTRIBUTES` в `form-schema/services.ts`): уточнять
+  // нечего, шаг пройден. Отдельная строка, а не `pass2Empty`: та отправляет
+  // назад, а здесь назад не нужно — нужно дальше.
+  'services.pass2NothingToDetail': {
+    en: 'None of the services you marked as available need further details — continue to the next step.',
+    ru: 'Все предложенные услуги не требуют уточнений — переходите к следующему шагу.',
+  },
   // Подпись к контролу наличия внутри карточки позиции. На первом проходе
   // такой подписи нет и не нужно — там сам вопрос это название позиции в
   // строке. На экране правок название позиции — заголовок карточки, так что

@@ -5,7 +5,7 @@ import {
   serviceItemByKey,
   validateField,
   validateServiceValue,
-  isOfferedAvailability,
+  attributeApplies,
 } from '@/form-schema'
 import { fieldValues, serviceValues } from '@/db/schema'
 import type { Db, Tx } from '@/db/types'
@@ -118,37 +118,43 @@ export function serviceRowFromInput(
   // round).
   const available = value.available === '' ? null : value.available
 
-  // Whenever the item is not offered — cleared, or a closing "no"/
-  // "not_allowed" answer — none of the offered-only attributes are
-  // meaningful, so they're blanked here rather than carried over from
-  // whatever they were before. Without this, un-checking (or reverting)
-  // a previously-chargeable item would leave its old chargeType/price/
-  // currency/slotMinutes/bookingRequired/details sitting in the row for
-  // plan 3's export to read as if they still applied to an item the
-  // operator just said the lounge doesn't have.
+  // An attribute that does not APPLY to this item right now — because the
+  // item is not offered (cleared, or a closing "no"/"not_allowed" answer),
+  // or because the item's PROFILE never asks it (`PROFILE_ATTRIBUTES` in
+  // `form-schema/services.ts`) — is blanked here rather than carried over
+  // from whatever the client still held. The predicate is the schema's
+  // `attributeApplies`, the same one `ServiceItemCard` renders controls by
+  // and `renderValues` shows the reviewer by: what the operator cannot see
+  // or edit is exactly what the row must not keep.
   //
-  // The list is EVERY attribute besides `available` — i.e. exactly
-  // `EMPTY_SERVICE_ATTRS` (`src/web/ServiceItemCard.tsx`), which is also
-  // exactly the set `ServiceItemCard` renders behind its own
-  // `isOfferedAvailability` gate. Naming the rule that way rather than
-  // listing attributes is what keeps the two from drifting: `details` was
-  // left out of the blanking below while being offered-only in the UI, so
-  // flipping a flagged item from "yes" to "no" on the fixes screen kept
-  // `details: 'Free for 4h, then chargeable'` against `available: 'no'` —
-  // and `renderValues` shows `details` to the reviewer, so the review
-  // screen displayed that contradiction verbatim. A new offered-only
-  // attribute must be added here too; if it ever isn't, the same silent
-  // staleness returns for it alone.
-  const offered = isOfferedAvailability(item, available)
+  // History, in two steps. First, the rule was "offered-only": un-checking
+  // a previously-chargeable item used to leave its old chargeType/price/
+  // currency/slotMinutes/bookingRequired/details in the row for the export
+  // to read as if they still applied — and `details` was once left out of
+  // that blanking, so flipping a flagged item to "no" on the fixes screen
+  // kept `details: 'Free for 4h, then chargeable'` against `available: 'no'`
+  // and the review screen displayed the contradiction verbatim. Naming the
+  // rule (rather than listing attributes) fixed that class. Second, profiles
+  // narrowed "offered-only" to "applicable": a `charge` item never stores a
+  // slot, a `none` item stores nothing beyond `available`.
+  //
+  // Rows written BEFORE profiles existed keep their now-inapplicable
+  // attributes as they are — nothing rewrites stored rows — until the item
+  // is next saved through either door (operator or team), when this
+  // blanking applies. Until then the export prints them (it is the source's
+  // 488-column structure and reads storage as-is) and the review screen
+  // hides them (it reads the profile).
+  const keep = (attribute: keyof ServiceValueInput): boolean =>
+    attributeApplies(item, attribute, available)
 
   return {
     available,
-    chargeType: offered ? value.chargeType : null,
-    price: offered && value.price !== null ? String(value.price) : null,
-    currency: offered ? value.currency : null,
-    slotMinutes: offered ? value.slotMinutes : null,
-    bookingRequired: offered ? value.bookingRequired : null,
-    details: offered ? value.details : null,
+    chargeType: keep('chargeType') ? value.chargeType : null,
+    price: keep('price') && value.price !== null ? String(value.price) : null,
+    currency: keep('currency') ? value.currency : null,
+    slotMinutes: keep('slotMinutes') ? value.slotMinutes : null,
+    bookingRequired: keep('bookingRequired') ? value.bookingRequired : null,
+    details: keep('details') ? value.details : null,
   }
 }
 

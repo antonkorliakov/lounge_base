@@ -120,6 +120,65 @@ describe('полнота анкеты', () => {
     expect((await missingItems(db, submissionId)).serviceKeys).not.toContain('2.1')
   })
 
+  /**
+   * Профили (`PROFILE_ATTRIBUTES` / `requiredAttributesFor`): что нужно
+   * предложенной позиции для полноты, решает её профиль. `none` закрывается
+   * первым проходом; `detail` с подсказкой требует details; `full` с
+   * подсказкой — chargeType И details; `full` без подсказки — только
+   * chargeType. Каждый случай — через настоящую запись и настоящий
+   * `missingItems`, а не через предикат напрямую (тот пришпилен в
+   * `services.test.ts`): здесь проверяется, что полнота его действительно
+   * читает.
+   */
+  it('none (1.1): предложена без chargeType — и всё равно заполнена', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+
+    await saveServiceValue(db, {
+      submissionId,
+      itemKey: '1.1',
+      value: {
+        available: 'yes', chargeType: null, price: null, currency: null,
+        slotMinutes: null, bookingRequired: null, details: null,
+      },
+    })
+
+    expect((await missingItems(db, submissionId)).serviceKeys).not.toContain('1.1')
+  })
+
+  it('detail с подсказкой (fb.3.4): предложена без details — недостаёт; с details — заполнена', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+    const base = {
+      available: 'yes', chargeType: null, price: null, currency: null,
+      slotMinutes: null, bookingRequired: null,
+    }
+
+    await saveServiceValue(db, { submissionId, itemKey: 'fb.3.4', value: { ...base, details: null } })
+    expect((await missingItems(db, submissionId)).serviceKeys).toContain('fb.3.4')
+
+    await saveServiceValue(db, { submissionId, itemKey: 'fb.3.4', value: { ...base, details: '10:00–22:00' } })
+    expect((await missingItems(db, submissionId)).serviceKeys).not.toContain('fb.3.4')
+  })
+
+  it('full с подсказкой (2.3): chargeType без details — недостаёт; full без подсказки (5.4) — заполнена', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+    const free = {
+      available: 'yes', chargeType: 'complimentary', price: null, currency: null,
+      slotMinutes: null, bookingRequired: null, details: null,
+    }
+
+    await saveServiceValue(db, { submissionId, itemKey: '2.3', value: free })
+    await saveServiceValue(db, { submissionId, itemKey: '5.4', value: free })
+    const missing = (await missingItems(db, submissionId)).serviceKeys
+    expect(missing).toContain('2.3')
+    expect(missing).not.toContain('5.4')
+
+    await saveServiceValue(db, { submissionId, itemKey: '2.3', value: { ...free, details: '12 seats' } })
+    expect((await missingItems(db, submissionId)).serviceKeys).not.toContain('2.3')
+  })
+
   it('необязательные поля не попадают в список недостающих', async () => {
     const db = await createTestDb()
     const submissionId = await seedDraft(db)

@@ -183,6 +183,47 @@ describe('валидация позиции услуг', () => {
   })
 })
 
+/**
+ * Профили (`PROFILE_ATTRIBUTES`): атрибут, которого профиль позиции не
+ * спрашивает, у двери НЕ судится — ни на обязательность, ни на форму. Клиент
+ * может честно держать такое значение (строка, записанная до профилей;
+ * карточка, у которой только что переключили наличие), а писатель его
+ * обнуляет (`serviceRowFromInput`). Отказ здесь заблокировал бы сохранение
+ * видимых атрибутов из-за невидимого.
+ */
+describe('валидация позиции услуг — по профилю', () => {
+  it('none: платный chargeType без цены и даже неизвестный chargeType — терпимо, атрибут не применим', () => {
+    const air = item('1.1')
+    expect(validateServiceValue(air, serviceValue({ chargeType: 'chargeable', price: null })).ok).toBe(true)
+    expect(validateServiceValue(air, serviceValue({ chargeType: 'nonsense' })).ok).toBe(true)
+    expect(validateServiceValue(air, serviceValue({ slotMinutes: -5 })).ok).toBe(true)
+  })
+
+  it('detail: chargeable без цены терпимо (цены у профиля нет); текст деталей не обязателен у двери', () => {
+    const hours = item('fb.3.4')
+    expect(validateServiceValue(hours, serviceValue({ chargeType: 'chargeable', price: null })).ok).toBe(true)
+    expect(validateServiceValue(hours, serviceValue({ chargeType: null, details: null })).ok).toBe(true)
+  })
+
+  it('charge: chargeable без цены — по-прежнему отказ; отрицательный слот терпим (слота у профиля нет)', () => {
+    const wifi = item('2.1')
+    expect(validateServiceValue(wifi, serviceValue({ chargeType: 'chargeable', price: null })).ok).toBe(false)
+    expect(validateServiceValue(wifi, serviceValue({ slotMinutes: -5 })).ok).toBe(true)
+  })
+
+  it('full: отрицательный слот — отказ, слот применим', () => {
+    expect(validateServiceValue(item('5.4'), serviceValue({ slotMinutes: -5 })).ok).toBe(false)
+    expect(validateServiceValue(item('5.4'), serviceValue({ slotMinutes: 30 })).ok).toBe(true)
+  })
+
+  // Обязательность details — полнота (`serviceItemAnswered`), не дверь: тот же
+  // довод, что у chargeType (R1) — первый проход пишет `available` без всего
+  // остального, и его ответ обязан сохраняться.
+  it('chargeDetail с подсказкой: предложено без details — сохраняется (неполно, но валидно)', () => {
+    expect(validateServiceValue(item('fb.3.3'), serviceValue({ details: null })).ok).toBe(true)
+  })
+})
+
 // Fix round 1: the brief's own transcribed code threw instead of failing on
 // several kinds of malformed client JSON, and let two forms of bad data
 // (whitespace-as-zero, unknown/duplicate multi-select ids) through as valid.

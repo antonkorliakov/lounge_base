@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { FIELDS, PHOTO_SLOTS } from '@/form-schema'
+import { FIELDS, PHOTO_SLOTS, type ServiceValueInput } from '@/form-schema'
 import { renderValues } from '../renderValues'
 
 const render = (
@@ -7,6 +7,56 @@ const render = (
   locale: 'en' | 'ru' = 'en',
 ): Record<string, { label: string; value?: string }> =>
   renderValues({ fields, services: {}, locale })
+
+const renderService = (
+  key: string,
+  value: ServiceValueInput,
+  locale: 'en' | 'ru' = 'en',
+): string | undefined => renderValues({ fields: {}, services: { [key]: value }, locale })[key]?.value
+
+/**
+ * Профили на экране проверки: показываются только атрибуты, ПРИМЕНИМЫЕ к
+ * позиции (`attributeApplies`). Строка, записанная до появления профилей,
+ * может хранить у `charge`-позиции слот и details — они СКРЫВАЮТСЯ, а не
+ * показываются серым: профиль теперь и есть правило, ревьюеру с таким
+ * значением нечего делать (карточка правки его не откроет), а следующая
+ * запись позиции его обнулит.
+ */
+describe('показ позиции услуг — по профилю', () => {
+  const legacy: ServiceValueInput = {
+    available: 'yes', chargeType: 'chargeable', price: 15, currency: 'EUR',
+    slotMinutes: 30, bookingRequired: true, details: 'Towels provided',
+  }
+
+  it('full (5.4): все атрибуты видны', () => {
+    expect(renderService('5.4', legacy)).toBe(
+      'yes · chargeable · 15 EUR · 30 min · booking required · Towels provided',
+    )
+    expect(renderService('5.4', legacy, 'ru')).toBe(
+      'yes · chargeable · 15 EUR · 30 мин · нужна запись · Towels provided',
+    )
+  })
+
+  it('charge (7.2): унаследованные слот, бронь и details скрыты', () => {
+    expect(renderService('7.2', legacy)).toBe('yes · chargeable · 15 EUR')
+  })
+
+  it('none (1.1): виден только ответ о наличии', () => {
+    expect(renderService('1.1', legacy)).toBe('yes')
+  })
+
+  it('detail (fb.3.4): только наличие и details', () => {
+    expect(renderService('fb.3.4', legacy)).toBe('yes · Towels provided')
+  })
+
+  it('непредложенная позиция любого профиля — только её «нет»', () => {
+    expect(renderService('5.4', { ...legacy, available: 'no' })).toBe('no')
+  })
+
+  it('неотвеченная позиция — прочерк', () => {
+    expect(renderValues({ fields: {}, services: {}, locale: 'en' })['5.4']?.value).toBe('—')
+  })
+})
 
 /**
  * Ключи берутся из живой схемы, а не вписываются строками: тест должен падать,

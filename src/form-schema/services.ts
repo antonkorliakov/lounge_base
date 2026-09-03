@@ -26,6 +26,45 @@ export type ServiceGroup = {
   block: string
 }
 
+/**
+ * Профиль позиции — КАКИЕ атрибуты второго прохода к ней вообще относятся.
+ *
+ * Исходный лист несёт шесть одинаковых колонок на каждую из 58 позиций, и
+ * второй проход долго спрашивал их все у каждой предложенной позиции — тип
+ * оплаты, цену, длительность слота, бронь и детали у «Кондиционирования»
+ * (пользователь: «Air Conditioning точно не требует детализации»). Для
+ * большинства позиций единственный настоящий вопрос — «есть или нет»; для
+ * многих других — «бесплатно или платно»; и лишь у спа/переговорных есть
+ * слот, бронь и вместимость.
+ *
+ *  - `none` — «да/нет» первого прохода закрывает позицию; во втором проходе
+ *    она не появляется вовсе.
+ *  - `charge` — тип оплаты (+ цена и валюта, когда тип их требует —
+ *    `requiresPrice`).
+ *  - `chargeDetail` — `charge` плюс свободный текст.
+ *  - `full` — все шесть: тип оплаты, цена/валюта, длительность, бронь, детали.
+ *  - `detail` — только свободный текст (fb.3.4 «Часы подачи алкоголя»: сам
+ *    ответ — это часы).
+ *
+ * Распределение по позициям подтверждено пользователем позиция за позицией
+ * и закреплено буквально в `__tests__/services.test.ts` (тот же приём, что у
+ * `MERGED_FIELD_GROUPS` в `FormShell.tsx`): новая позиция обязана уронить
+ * пин громко и заставить решить её профиль, а не молча получить полный набор.
+ *
+ * Профиль — ЕДИНСТВЕННОЕ место, где решается состав атрибутов. Из него
+ * выводится всё остальное: какие контролы рисует карточка
+ * (`ServiceItemCard`), какие позиции попадают во второй проход
+ * (`ServicesPass2`'s `pass2Keys`), что писатель обнуляет
+ * (`serviceRowFromInput` через `attributeApplies`), что нужно для полноты
+ * (`serviceItemAnswered` через `requiredAttributesFor`), что показывает
+ * ревьюер (`renderValues`). Плоская выгрузка профиль НЕ читает — 488 колонок
+ * остаются структурой исходника, неприменимая ячейка просто пуста.
+ *
+ * Форма записи (`ServiceValueInput`) и таблица `service_values` от профиля
+ * не зависят — семь колонок на всякую позицию, миграции нет.
+ */
+export type ServiceProfile = 'none' | 'charge' | 'chargeDetail' | 'full' | 'detail'
+
 export type ServiceItem = {
   key: string
   group: string
@@ -35,6 +74,8 @@ export type ServiceItem = {
   hint: Localized | null
   /** Список для колонки «наличие». По умолчанию да/нет. */
   availabilityList: OptionListId
+  /** Какие атрибуты второго прохода относятся к позиции — см. `ServiceProfile`. */
+  profile: ServiceProfile
 }
 
 /**
@@ -84,6 +125,29 @@ export const SERVICE_ATTRIBUTES: readonly ServiceAttribute[] = Object.keys(
   ATTRIBUTE_ORDER,
 ) as (keyof typeof ATTRIBUTE_ORDER)[]
 
+/**
+ * Атрибут второго прохода — любой, кроме `available` (тот всегда спрашивается
+ * первым проходом и в профили не входит).
+ */
+export type DetailAttribute = Exclude<ServiceAttribute, 'available'>
+
+/**
+ * Единственное отображение профиль → атрибуты. `satisfies` держит два
+ * свойства типом: ключи — ровно `ServiceProfile` (профиль без строки или
+ * строка без профиля не компилируется), значения — подмножества
+ * `SERVICE_ATTRIBUTES` без `available` (опечатка в имени атрибута — ошибка
+ * типа, не молчаливо пустой контрол). Порядок внутри списка — порядок
+ * `SERVICE_ATTRIBUTES`, чтобы карточка и показ ревьюеру шли в том же порядке,
+ * что и выгрузка; закреплено тестом, а не только дисциплиной.
+ */
+export const PROFILE_ATTRIBUTES = {
+  none: [],
+  charge: ['chargeType', 'price', 'currency'],
+  chargeDetail: ['chargeType', 'price', 'currency', 'details'],
+  full: ['chargeType', 'price', 'currency', 'slotMinutes', 'bookingRequired', 'details'],
+  detail: ['details'],
+} as const satisfies Record<ServiceProfile, readonly DetailAttribute[]>
+
 export const SERVICE_GROUPS: ServiceGroup[] = [
   { key: 'a1', kind: 'amenity', block: 'svc.a1', label: { en: 'Comfort & Environment', ru: 'Комфорт и обстановка' } },
   { key: 'a2', kind: 'amenity', block: 'svc.a2', label: { en: 'Connectivity & Business', ru: 'Связь и работа' } },
@@ -98,9 +162,14 @@ export const SERVICE_GROUPS: ServiceGroup[] = [
   { key: 'f3', kind: 'food', block: 'svc.f3', label: { en: 'Beverages', ru: 'Напитки' } },
 ]
 
+// Профиль — третьим позиционным аргументом у обоих конструкторов, не в
+// `extra` с умолчанием: у каждой из 58 позиций профиль решён отдельно, и
+// умолчание вернуло бы ровно тот молчаливый «полный набор для всех», от
+// которого профили и уходят.
 const amenity = (
   key: string,
   group: string,
+  profile: ServiceProfile,
   en: string,
   ru: string,
   extra: Partial<Pick<ServiceItem, 'hint' | 'availabilityList'>> = {},
@@ -111,11 +180,13 @@ const amenity = (
   label: { en, ru },
   hint: extra.hint ?? null,
   availabilityList: extra.availabilityList ?? 'yesNo',
+  profile,
 })
 
 const food = (
   key: string,
   group: string,
+  profile: ServiceProfile,
   en: string,
   ru: string,
   hint: Localized | null = null,
@@ -126,6 +197,7 @@ const food = (
   label: { en, ru },
   hint,
   availabilityList: 'yesNo',
+  profile,
 })
 
 const specifyCapacity: Localized = {
@@ -135,89 +207,89 @@ const specifyCapacity: Localized = {
 
 export const SERVICE_ITEMS: ServiceItem[] = [
   // 1. Comfort & Environment
-  amenity('1.1', 'a1', 'Air Conditioning', 'Кондиционирование'),
-  amenity('1.2', 'a1', 'Runway View', 'Вид на взлётную полосу'),
-  amenity('1.3', 'a1', 'Grand View Area', 'Панорамная зона'),
-  amenity('1.4', 'a1', 'Quiet Zone / Silent Area', 'Тихая зона'),
-  amenity('1.5', 'a1', 'Television', 'Телевизор'),
-  amenity('1.6', 'a1', 'Cinema / Media Room', 'Кинозал / медиакомната'),
-  amenity('1.7', 'a1', 'Newspaper/Magazines', 'Газеты и журналы'),
+  amenity('1.1', 'a1', 'none', 'Air Conditioning', 'Кондиционирование'),
+  amenity('1.2', 'a1', 'none', 'Runway View', 'Вид на взлётную полосу'),
+  amenity('1.3', 'a1', 'none', 'Grand View Area', 'Панорамная зона'),
+  amenity('1.4', 'a1', 'none', 'Quiet Zone / Silent Area', 'Тихая зона'),
+  amenity('1.5', 'a1', 'none', 'Television', 'Телевизор'),
+  amenity('1.6', 'a1', 'none', 'Cinema / Media Room', 'Кинозал / медиакомната'),
+  amenity('1.7', 'a1', 'none', 'Newspaper/Magazines', 'Газеты и журналы'),
 
   // 2. Connectivity & Business
-  amenity('2.1', 'a2', 'Wifi Access', 'Доступ к Wi-Fi'),
-  amenity('2.2', 'a2', 'Workstations / Work Area', 'Рабочие места / зона для работы'),
-  amenity('2.3', 'a2', 'Conference Room', 'Конференц-зал', { hint: specifyCapacity }),
-  amenity('2.4', 'a2', 'VIP / Private Meeting Room', 'VIP / приватная переговорная', { hint: specifyCapacity }),
-  amenity('2.5', 'a2', 'Charging Stations', 'Зарядные станции'),
-  amenity('2.6', 'a2', 'USB Ports Available', 'USB-разъёмы'),
-  amenity('2.7', 'a2', 'Telephone Calls', 'Телефонные звонки'),
-  amenity('2.8', 'a2', 'Fax Services', 'Факс'),
-  amenity('2.9', 'a2', 'Printers & Copiers', 'Принтеры и копиры'),
+  amenity('2.1', 'a2', 'charge', 'Wifi Access', 'Доступ к Wi-Fi'),
+  amenity('2.2', 'a2', 'none', 'Workstations / Work Area', 'Рабочие места / зона для работы'),
+  amenity('2.3', 'a2', 'full', 'Conference Room', 'Конференц-зал', { hint: specifyCapacity }),
+  amenity('2.4', 'a2', 'full', 'VIP / Private Meeting Room', 'VIP / приватная переговорная', { hint: specifyCapacity }),
+  amenity('2.5', 'a2', 'none', 'Charging Stations', 'Зарядные станции'),
+  amenity('2.6', 'a2', 'none', 'USB Ports Available', 'USB-разъёмы'),
+  amenity('2.7', 'a2', 'charge', 'Telephone Calls', 'Телефонные звонки'),
+  amenity('2.8', 'a2', 'charge', 'Fax Services', 'Факс'),
+  amenity('2.9', 'a2', 'charge', 'Printers & Copiers', 'Принтеры и копиры'),
 
   // 3. Information & Announcements
-  amenity('3.1', 'a3', 'Flight information Monitor', 'Табло информации о рейсах'),
-  amenity('3.2', 'a3', 'Boarding Announcements / Reminder', 'Объявления о посадке / напоминания'),
-  amenity('3.3', 'a3', 'Train Boarding Reminder', 'Напоминание о посадке на поезд'),
+  amenity('3.1', 'a3', 'none', 'Flight information Monitor', 'Табло информации о рейсах'),
+  amenity('3.2', 'a3', 'none', 'Boarding Announcements / Reminder', 'Объявления о посадке / напоминания'),
+  amenity('3.3', 'a3', 'none', 'Train Boarding Reminder', 'Напоминание о посадке на поезд'),
 
   // 4. Special Assistance
-  amenity('4.1', 'a4', 'Disabled Access', 'Доступ для людей с инвалидностью'),
-  amenity('4.2', 'a4', 'Wheelchair Assistance Available', 'Помощь с инвалидной коляской'),
-  amenity('4.3', 'a4', 'Disabled Shower', 'Душ для людей с инвалидностью'),
-  amenity('4.4', 'a4', 'Disabled Toilet', 'Туалет для людей с инвалидностью'),
+  amenity('4.1', 'a4', 'none', 'Disabled Access', 'Доступ для людей с инвалидностью'),
+  amenity('4.2', 'a4', 'chargeDetail', 'Wheelchair Assistance Available', 'Помощь с инвалидной коляской'),
+  amenity('4.3', 'a4', 'none', 'Disabled Shower', 'Душ для людей с инвалидностью'),
+  amenity('4.4', 'a4', 'none', 'Disabled Toilet', 'Туалет для людей с инвалидностью'),
 
   // 5. Rest & Relaxation / Spa
-  amenity('5.1', 'a5', 'Sleeping Area / Pods', 'Зона сна / капсулы', { hint: specifyCapacity }),
-  amenity('5.2', 'a5', 'Private Sleep Suite / Cabin', 'Приватная спальная сьют-кабина', { hint: specifyCapacity }),
-  amenity('5.3', 'a5', 'Private Resting Room', 'Приватная комната отдыха', { hint: specifyCapacity }),
-  amenity('5.4', 'a5', 'Massage', 'Массаж'),
-  amenity('5.5', 'a5', 'Massage Chairs', 'Массажные кресла'),
-  amenity('5.6', 'a5', 'SPA Treatment', 'SPA-процедуры'),
-  amenity('5.7', 'a5', 'Nail Care Treatment', 'Маникюр / уход за ногтями'),
+  amenity('5.1', 'a5', 'full', 'Sleeping Area / Pods', 'Зона сна / капсулы', { hint: specifyCapacity }),
+  amenity('5.2', 'a5', 'full', 'Private Sleep Suite / Cabin', 'Приватная спальная сьют-кабина', { hint: specifyCapacity }),
+  amenity('5.3', 'a5', 'full', 'Private Resting Room', 'Приватная комната отдыха', { hint: specifyCapacity }),
+  amenity('5.4', 'a5', 'full', 'Massage', 'Массаж'),
+  amenity('5.5', 'a5', 'charge', 'Massage Chairs', 'Массажные кресла'),
+  amenity('5.6', 'a5', 'full', 'SPA Treatment', 'SPA-процедуры'),
+  amenity('5.7', 'a5', 'full', 'Nail Care Treatment', 'Маникюр / уход за ногтями'),
 
   // 6. Family & Children Facilities
-  amenity('6.1', 'a6', 'Family Room', 'Семейная комната'),
-  amenity('6.2', 'a6', 'Nursing Room', 'Комната для кормления'),
-  amenity('6.3', 'a6', 'Baby Changing Facilities', 'Пеленальный столик'),
-  amenity('6.4', 'a6', "Children's Play Area", 'Детская игровая зона'),
+  amenity('6.1', 'a6', 'none', 'Family Room', 'Семейная комната'),
+  amenity('6.2', 'a6', 'none', 'Nursing Room', 'Комната для кормления'),
+  amenity('6.3', 'a6', 'none', 'Baby Changing Facilities', 'Пеленальный столик'),
+  amenity('6.4', 'a6', 'none', "Children's Play Area", 'Детская игровая зона'),
 
   // 7. Hygiene & Sanitary
-  amenity('7.1', 'a7', 'Toilets (within the Premises)', 'Туалеты (в помещении)'),
-  amenity('7.2', 'a7', 'Shower Facilities', 'Душевые'),
-  amenity('7.3', 'a7', 'Washing Room', 'Умывальная комната'),
+  amenity('7.1', 'a7', 'none', 'Toilets (within the Premises)', 'Туалеты (в помещении)'),
+  amenity('7.2', 'a7', 'charge', 'Shower Facilities', 'Душевые'),
+  amenity('7.3', 'a7', 'none', 'Washing Room', 'Умывальная комната'),
 
   // 8. Additional Facilities
-  amenity('8.1', 'a8', 'Prayer Room', 'Молитвенная комната'),
-  amenity('8.2', 'a8', 'Smoking Area / Room', 'Зона / комната для курения'),
-  amenity('8.3', 'a8', 'Vaping / E-Cigarette Use Policy', 'Политика использования вейпов и электронных сигарет', {
+  amenity('8.1', 'a8', 'none', 'Prayer Room', 'Молитвенная комната'),
+  amenity('8.2', 'a8', 'none', 'Smoking Area / Room', 'Зона / комната для курения'),
+  amenity('8.3', 'a8', 'none', 'Vaping / E-Cigarette Use Policy', 'Политика использования вейпов и электронных сигарет', {
     availabilityList: 'vaping',
   }),
-  amenity('8.4', 'a8', 'No Smoking Lounge', 'Лаунж без курения'),
-  amenity('8.5', 'a8', 'Game Room', 'Игровая комната'),
-  amenity('8.6', 'a8', 'Luggage Storage', 'Хранение багажа'),
-  amenity('8.7', 'a8', 'Digital Card Accepted', 'Приём цифровых карт'),
+  amenity('8.4', 'a8', 'none', 'No Smoking Lounge', 'Лаунж без курения'),
+  amenity('8.5', 'a8', 'charge', 'Game Room', 'Игровая комната'),
+  amenity('8.6', 'a8', 'charge', 'Luggage Storage', 'Хранение багажа'),
+  amenity('8.7', 'a8', 'none', 'Digital Card Accepted', 'Приём цифровых карт'),
 
   // F&B 1. Meal Types
-  food('1.1', 'f1', 'Hot Meals', 'Горячие блюда'),
-  food('1.2', 'f1', 'Cold Meals', 'Холодные блюда'),
-  food('1.3', 'f1', 'Snacks', 'Снеки'),
-  food('1.4', 'f1', 'A La Carte Menu', 'Меню а-ля карт'),
-  food('1.5', 'f1', 'Fresh Fruits', 'Свежие фрукты'),
+  food('1.1', 'f1', 'charge', 'Hot Meals', 'Горячие блюда'),
+  food('1.2', 'f1', 'charge', 'Cold Meals', 'Холодные блюда'),
+  food('1.3', 'f1', 'charge', 'Snacks', 'Снеки'),
+  food('1.4', 'f1', 'charge', 'A La Carte Menu', 'Меню а-ля карт'),
+  food('1.5', 'f1', 'charge', 'Fresh Fruits', 'Свежие фрукты'),
 
   // F&B 2. Special Meal Options
-  food('2.1', 'f2', 'Halal Options', 'Халяльные блюда'),
-  food('2.2', 'f2', 'Vegetarian Options', 'Вегетарианские блюда'),
-  food('2.3', 'f2', 'Vegan Options', 'Веганские блюда'),
-  food('2.4', 'f2', 'Special Dietary Meals', 'Специальное диетическое питание'),
-  food('2.5', 'f2', 'Allergen Information Available', 'Информация об аллергенах'),
+  food('2.1', 'f2', 'none', 'Halal Options', 'Халяльные блюда'),
+  food('2.2', 'f2', 'none', 'Vegetarian Options', 'Вегетарианские блюда'),
+  food('2.3', 'f2', 'none', 'Vegan Options', 'Веганские блюда'),
+  food('2.4', 'f2', 'charge', 'Special Dietary Meals', 'Специальное диетическое питание'),
+  food('2.5', 'f2', 'none', 'Allergen Information Available', 'Информация об аллергенах'),
 
   // F&B 3. Beverages
-  food('3.1', 'f3', 'Non-Alcoholic Beverages (Hot/Cold)', 'Безалкогольные напитки (горячие/холодные)'),
-  food('3.2', 'f3', 'Alcoholic Beverages', 'Алкогольные напитки'),
-  food('3.3', 'f3', 'Premium Alcohol (e.g. Champagne)', 'Премиальный алкоголь (например, шампанское)', {
+  food('3.1', 'f3', 'charge', 'Non-Alcoholic Beverages (Hot/Cold)', 'Безалкогольные напитки (горячие/холодные)'),
+  food('3.2', 'f3', 'charge', 'Alcoholic Beverages', 'Алкогольные напитки'),
+  food('3.3', 'f3', 'chargeDetail', 'Premium Alcohol (e.g. Champagne)', 'Премиальный алкоголь (например, шампанское)', {
     en: 'If yes, please specify drinks',
     ru: 'Если да, укажите напитки',
   }),
-  food('3.4', 'f3', 'Alcohol Service Hours', 'Часы подачи алкоголя', {
+  food('3.4', 'f3', 'detail', 'Alcohol Service Hours', 'Часы подачи алкоголя', {
     en: 'If yes, please specify hours',
     ru: 'Если да, укажите часы',
   }),
@@ -295,6 +367,103 @@ export function requiresPrice(chargeType: string | null | undefined): boolean {
 }
 
 /**
+ * True when `attribute` is a real question for this item RIGHT NOW: it is
+ * `available` itself (always asked, by pass 1), or the item is offered AND
+ * the attribute is in the item's profile. The one predicate behind:
+ *  - which controls `ServiceItemCard` renders,
+ *  - which stored attributes `serviceRowFromInput` keeps (everything else is
+ *    blanked at the write boundary — legacy rows written before profiles
+ *    existed keep their extra attributes until their next save),
+ *  - which attributes `renderValues` shows the reviewer,
+ *  - which attributes `validateServiceValue` bothers to check.
+ * Before profiles, "offered" alone played this role, so the old
+ * offered-only blanking (`EMPTY_SERVICE_ATTRS`) is the `profile: full` case
+ * of this rule, not a second rule beside it.
+ */
+export function attributeApplies(
+  item: ServiceItem,
+  attribute: ServiceAttribute,
+  available: string | null | undefined,
+): boolean {
+  if (attribute === 'available') return true
+  if (!isOfferedAvailability(item, available)) return false
+  return (PROFILE_ATTRIBUTES[item.profile] as readonly ServiceAttribute[]).includes(attribute)
+}
+
+/**
+ * The pass-2 attributes that apply to this item given its availability — in
+ * `SERVICE_ATTRIBUTES` order (the same order the export walks). Empty for a
+ * non-offered item and for every `profile: none` item.
+ */
+export function applicableAttributes(
+  item: ServiceItem,
+  available: string | null | undefined,
+): DetailAttribute[] {
+  return SERVICE_ATTRIBUTES.filter(
+    (attribute): attribute is DetailAttribute =>
+      attribute !== 'available' && attributeApplies(item, attribute, available),
+  )
+}
+
+/**
+ * True when the item has anything to ask beyond pass 1's yes/no — i.e. its
+ * profile is not `none`. `ServicesPass2` lists offered items that pass this;
+ * an offered `none` item is closed by pass 1 alone and never appears there.
+ */
+export function needsPass2(item: ServiceItem): boolean {
+  return PROFILE_ATTRIBUTES[item.profile].length > 0
+}
+
+/**
+ * The pass-2 attributes this item's answer MUST carry to count as answered —
+ * the completeness rule (`serviceItemAnswered` → `missingItems`) and the one
+ * consistency rule the save door enforces (`validateServiceValue`: a
+ * chargeType that needs a price cannot be saved without one) both read it
+ * here, so neither can drift from the other. Empty for a non-offered item.
+ *
+ *  - `chargeType` — whenever the profile asks it (charge/chargeDetail/full).
+ *  - `price` + `currency` — when the profile asks them AND the chosen
+ *    chargeType needs them (`requiresPrice`); "complimentary" or no
+ *    chargeType yet needs neither.
+ *  - `details` — when the profile asks it AND the item carries a `hint`.
+ *    The hint IS the question the textarea answers ("If yes, please specify
+ *    the capacity / drinks / hours"), and "please specify" reads as
+ *    required-when-yes. Without a hint the textarea is "Other details" —
+ *    a demanded answer to no stated question — so it stays optional. Today
+ *    that makes `details` required for 2.3, 2.4, 5.1–5.3 (`full`, capacity
+ *    hint), fb.3.3 (`chargeDetail`, drinks) and fb.3.4 (`detail`, hours),
+ *    and optional for 4.2 (`chargeDetail`, no hint) and 5.4/5.6/5.7
+ *    (`full`, no hint). To demand details of an item, give it a hint: that
+ *    puts the question on screen and the requirement in place with one
+ *    change — the schema-consistency test (hint ⇒ `details` in profile)
+ *    guarantees the field to answer it in exists.
+ *
+ * Only the price/currency line is a SAVE-time rule; the rest is completeness
+ * only. Requiring chargeType/details at the door would re-create R1 (pass 1
+ * has no control for them, so its own answer could never be saved).
+ */
+export function requiredAttributesFor(
+  item: ServiceItem,
+  value: { available: string | null | undefined; chargeType?: string | null },
+): DetailAttribute[] {
+  const applicable = applicableAttributes(item, value.available)
+  if (applicable.length === 0) return []
+
+  const required: DetailAttribute[] = []
+  if (applicable.includes('chargeType')) required.push('chargeType')
+  if (applicable.includes('price') && requiresPrice(value.chargeType)) {
+    required.push('price', 'currency')
+  }
+  if (applicable.includes('details') && item.hint !== null) required.push('details')
+  return required
+}
+
+/** True for the three ways a stored attribute can mean "nothing answered". */
+function attributeBlank(value: unknown): boolean {
+  return value === null || value === undefined || (typeof value === 'string' && value.trim() === '')
+}
+
+/**
  * Whether a service item counts as "answered" for completeness purposes —
  * used by both `missingItems` (`src/submissions/completeness.ts`) and the
  * contract test, so the two can never quietly disagree the way
@@ -303,16 +472,23 @@ export function requiresPrice(chargeType: string | null | undefined): boolean {
  * review second round).
  *
  * An item is answered once its availability is set at all; if it's also
- * *offered*, its `chargeType` must be set too. An offered item with no
- * chargeType yet is a well-formed, saveable, but INCOMPLETE answer — that
- * split (shape vs. readiness) is exactly `validateServiceValue` vs.
+ * *offered*, every attribute `requiredAttributesFor` names must be present
+ * too. A `profile: none` item is therefore answered by pass 1 alone; a
+ * `charge` item needs its chargeType (and price/currency if that chargeType
+ * needs them); a hint-bearing item needs its `details`. An offered item
+ * missing one of those is a well-formed, saveable, but INCOMPLETE answer —
+ * that split (shape vs. readiness) is exactly `validateServiceValue` vs.
  * `missingItems`.
+ *
+ * Existing drafts written before profiles are judged by this rule too: a
+ * hint-bearing item offered without details becomes incomplete, a `none`
+ * item offered without chargeType becomes complete. Intended — the profile
+ * is the rule now.
  */
 export function serviceItemAnswered(
   item: ServiceItem,
-  value: { available: string | null; chargeType: string | null } | null | undefined,
+  value: ({ available: string | null } & Partial<Omit<ServiceValueInput, 'available'>>) | null | undefined,
 ): boolean {
   if (value == null || value.available == null || value.available === '') return false
-  if (!isOfferedAvailability(item, value.available)) return true
-  return value.chargeType != null && value.chargeType !== ''
+  return requiredAttributesFor(item, value).every((attribute) => !attributeBlank(value[attribute]))
 }

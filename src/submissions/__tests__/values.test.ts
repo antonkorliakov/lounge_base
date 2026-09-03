@@ -65,23 +65,66 @@ describe('сохранение значений', () => {
     expect(loaded.fields['III.5.2']).toBeUndefined()
   })
 
-  it('пишет позицию услуги со всеми атрибутами', async () => {
+  // '5.4' (Massage) — позиция с профилем `full`: единственный профиль, у
+  // которого применимы все семь атрибутов, так что «со всеми атрибутами»
+  // здесь буквально. Раньше стояла '7.2' (Shower, теперь `charge`): у неё
+  // слот и бронь с появлением профилей обнуляются — см. тест ниже.
+  it('пишет позицию услуги со всеми атрибутами (профиль full)', async () => {
     const db = await createTestDb()
     const submissionId = await seedDraft(db)
 
     const result = await saveServiceValue(db, {
       submissionId,
-      itemKey: '7.2',
+      itemKey: '5.4',
       value: {
         available: 'yes', chargeType: 'chargeable', price: 15,
-        currency: 'EUR', slotMinutes: 30, bookingRequired: true, details: null,
+        currency: 'EUR', slotMinutes: 30, bookingRequired: true, details: 'Back and neck',
       },
     })
 
     expect(result.ok).toBe(true)
     const loaded = await loadSubmissionValues(db, submissionId)
-    expect(loaded.services['7.2']?.price).toBe(15)
-    expect(loaded.services['7.2']?.currency).toBe('EUR')
+    expect(loaded.services['5.4']).toEqual({
+      available: 'yes', chargeType: 'chargeable', price: 15,
+      currency: 'EUR', slotMinutes: 30, bookingRequired: true, details: 'Back and neck',
+    })
+  })
+
+  /**
+   * Профили: писатель обнуляет НЕПРИМЕНИМЫЕ атрибуты, а не только атрибуты
+   * непредложенной позиции. `charge` (Shower) хранит chargeType/цену/валюту и
+   * ничего больше; `none` (Air Conditioning) — только `available`; `detail`
+   * (Alcohol Service Hours) — только details. Вход при этом несёт все семь —
+   * как клиент, у которого в состоянии лежит строка, записанная до профилей.
+   * Утверждается через `toEqual` по всему значению (а не по атрибуту), чтобы
+   * новый атрибут, добавленный в строку и забытый в правиле, упал здесь.
+   */
+  it('обнуляет атрибуты, которых не спрашивает профиль позиции', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedDraft(db)
+    const everything = {
+      available: 'yes', chargeType: 'chargeable', price: 15,
+      currency: 'EUR', slotMinutes: 30, bookingRequired: true, details: 'stale',
+    }
+
+    for (const itemKey of ['7.2', '1.1', 'fb.3.4']) {
+      const result = await saveServiceValue(db, { submissionId, itemKey, value: everything })
+      expect(result.ok, itemKey).toBe(true)
+    }
+    const loaded = await loadSubmissionValues(db, submissionId)
+
+    expect(loaded.services['7.2']).toEqual({
+      available: 'yes', chargeType: 'chargeable', price: 15, currency: 'EUR',
+      slotMinutes: null, bookingRequired: null, details: null,
+    })
+    expect(loaded.services['1.1']).toEqual({
+      available: 'yes', chargeType: null, price: null, currency: null,
+      slotMinutes: null, bookingRequired: null, details: null,
+    })
+    expect(loaded.services['fb.3.4']).toEqual({
+      available: 'yes', chargeType: null, price: null, currency: null,
+      slotMinutes: null, bookingRequired: null, details: 'stale',
+    })
   })
 
   it('пишет предложенную позицию без chargeType — неполный, но валидный ответ (R1)', async () => {
@@ -180,22 +223,24 @@ describe('сохранение значений', () => {
     const db = await createTestDb()
     const submissionId = await seedDraft(db)
 
+    // '5.4' (Massage, `full`) — details у неё применим, так что первая запись
+    // его действительно сохраняет, и второй записи есть что стирать.
     await saveServiceValue(db, {
       submissionId,
-      itemKey: '7.2',
+      itemKey: '5.4',
       value: {
         available: 'yes', chargeType: 'chargeable', price: 15,
         currency: 'EUR', slotMinutes: 30, bookingRequired: true,
         details: 'Free for 4h, then chargeable',
       },
     })
-    expect((await loadSubmissionValues(db, submissionId)).services['7.2']?.details).toBe(
+    expect((await loadSubmissionValues(db, submissionId)).services['5.4']?.details).toBe(
       'Free for 4h, then chargeable',
     )
 
     const result = await saveServiceValue(db, {
       submissionId,
-      itemKey: '7.2',
+      itemKey: '5.4',
       // Exactly what the card emits on that click: `onChange` merges the new
       // `available` over the value it is holding, so every stale attribute
       // still arrives — the client blanks nothing.
@@ -208,7 +253,7 @@ describe('сохранение значений', () => {
 
     expect(result.ok).toBe(true)
     const loaded = await loadSubmissionValues(db, submissionId)
-    expect(loaded.services['7.2']).toEqual({
+    expect(loaded.services['5.4']).toEqual({
       available: 'no', chargeType: null, price: null,
       currency: null, slotMinutes: null, bookingRequired: null, details: null,
     })

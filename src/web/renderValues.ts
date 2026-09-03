@@ -1,6 +1,6 @@
 import {
-  FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, formatFieldValue,
-  type ServiceValueInput,
+  FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, attributeApplies, formatFieldValue,
+  type ServiceItem, type ServiceValueInput,
 } from '@/form-schema'
 
 /**
@@ -44,24 +44,37 @@ export type RenderedCell = { label: string; value?: string; editedByTeam?: boole
  * и просит уточнить. `slotMinutes`/`bookingRequired` — тот же случай для
  * позиций с записью на слот (массаж, спа). Все шесть атрибутов показаны
  * здесь ради этого — не ради полноты как таковой.
+ *
+ * Показываются только атрибуты, ПРИМЕНИМЫЕ к позиции (`attributeApplies` —
+ * профиль позиции плюс её наличие, тот же предикат, по которому карточка
+ * рисует контролы, а писатель обнуляет строку). Хранимое значение
+ * неприменимого атрибута — такое бывает у строк, записанных до появления
+ * профилей: у «Душевых» (`charge`) мог остаться слот 30 минут — НЕ
+ * показывается, а не показывается серым: профиль теперь и есть правило,
+ * ревьюеру нечего с этим значением делать (карточка правки его не откроет),
+ * а при следующей записи позиции писатель его обнулит. Выгрузка его при
+ * этом печатает — она читает хранилище как есть, это её договор.
  */
 function formatServiceValue(
+  item: ServiceItem,
   value: ServiceValueInput | undefined,
   locale: 'en' | 'ru',
 ): string {
+  const shown = (attribute: keyof ServiceValueInput): boolean =>
+    attributeApplies(item, attribute, value?.available)
   const parts = [
     value?.available ?? '—',
-    value?.chargeType ?? null,
-    value?.price !== null && value?.price !== undefined
-      ? `${value.price} ${value.currency ?? ''}`.trim()
+    shown('chargeType') ? value?.chargeType ?? null : null,
+    shown('price') && value?.price !== null && value?.price !== undefined
+      ? `${value.price} ${(shown('currency') && value.currency) || ''}`.trim()
       : null,
-    value?.slotMinutes !== null && value?.slotMinutes !== undefined
+    shown('slotMinutes') && value?.slotMinutes !== null && value?.slotMinutes !== undefined
       ? `${value.slotMinutes} ${locale === 'ru' ? 'мин' : 'min'}`
       : null,
-    value?.bookingRequired === true
+    shown('bookingRequired') && value?.bookingRequired === true
       ? (locale === 'ru' ? 'нужна запись' : 'booking required')
       : null,
-    value?.details ? value.details : null,
+    shown('details') && value?.details ? value.details : null,
   ]
   return parts.filter(Boolean).join(' · ')
 }
@@ -118,7 +131,7 @@ export function renderValues(input: {
   for (const item of SERVICE_ITEMS) {
     out[item.key] = {
       label: item.label[input.locale],
-      value: formatServiceValue(input.services[item.key], input.locale),
+      value: formatServiceValue(item, input.services[item.key], input.locale),
       ...(teamEdited.has(item.key) ? { editedByTeam: true } : {}),
     }
   }

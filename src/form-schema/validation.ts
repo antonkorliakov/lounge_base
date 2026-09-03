@@ -1,7 +1,7 @@
 import type { Localized } from './types'
 import type { Field } from './fields'
 import type { ServiceItem } from './services'
-import { isOfferedAvailability, requiresPrice } from './services'
+import { attributeApplies, isOfferedAvailability, requiredAttributesFor } from './services'
 import { OPTION_LISTS } from './option-lists'
 
 export type ValidationResult = { ok: true } | { ok: false; error: Localized }
@@ -267,27 +267,46 @@ export function validateServiceValue(
   // null` on an offered item is now a valid, well-formed, INCOMPLETE
   // answer; `serviceItemAnswered`/`missingItems` is what later requires it
   // before the questionnaire can be submitted.
-  if (value.chargeType !== null && value.chargeType !== undefined) {
+  //
+  // Every check is gated on the item's PROFILE (`attributeApplies`): an
+  // attribute the profile excludes is not judged here at all — not even for
+  // shape. A value carrying one is tolerated, not refused, because the
+  // client may legitimately still hold it (a legacy row loaded into the
+  // form, a card whose availability was just flipped) and the writer blanks
+  // it at the boundary (`serviceRowFromInput`). Refusing it would make a
+  // stale attribute nobody can see or edit block the save of the ones they
+  // can.
+  const applies = (attribute: keyof ServiceValueInput): boolean =>
+    attributeApplies(item, attribute, value.available)
+
+  if (applies('chargeType') && value.chargeType !== null && value.chargeType !== undefined) {
     const charge = OPTION_LISTS.chargeType.find((o) => o.id === value.chargeType)
     if (!charge) return UNKNOWN_OPTION
+  }
 
-    if (requiresPrice(charge.id)) {
-      if (!isNonNegativeNumber(value.price)) {
-        return fail('Price is required for a chargeable service', 'Для платной услуги нужна цена')
-      }
-
-      if (value.currency === null || value.currency === undefined) {
-        return fail('Specify the currency', 'Укажите валюту')
-      }
-      const currency = asText(value.currency)
-      if (currency === null) return EXPECTED_TEXT
-      if (currency === '') {
-        return fail('Specify the currency', 'Укажите валюту')
-      }
+  // Price and currency are required exactly when `requiredAttributesFor`
+  // says so — the same rule completeness reads (`serviceItemAnswered`), so
+  // the door and the readiness check cannot name different conditions. Of
+  // everything that rule can return, only these two are enforced HERE:
+  // chargeType and details being absent is incompleteness (see above), while
+  // "chargeable, but no price" is a self-contradictory answer.
+  const required = requiredAttributesFor(item, value)
+  if (required.includes('price') && !isNonNegativeNumber(value.price)) {
+    return fail('Price is required for a chargeable service', 'Для платной услуги нужна цена')
+  }
+  if (required.includes('currency')) {
+    if (value.currency === null || value.currency === undefined) {
+      return fail('Specify the currency', 'Укажите валюту')
+    }
+    const currency = asText(value.currency)
+    if (currency === null) return EXPECTED_TEXT
+    if (currency === '') {
+      return fail('Specify the currency', 'Укажите валюту')
     }
   }
 
   if (
+    applies('slotMinutes') &&
     value.slotMinutes !== null &&
     value.slotMinutes !== undefined &&
     !isNonNegativeNumber(value.slotMinutes)

@@ -78,6 +78,15 @@ const OFFERED_FREE: ServiceValueInput = {
 }
 
 /**
+ * Позиция, у которой применим `details`: '5.4' (Massage, профиль `full`).
+ * Тесты, правящие details командой, стояли на '2.1' (Wifi) — с появлением
+ * профилей Wifi стал `charge`, и details у него обнуляется писателем, так
+ * что «правка details» на нём была бы правкой в никуда. '2.1' остаётся там,
+ * где правится chargeType/наличие — они у `charge` применимы.
+ */
+const WITH_DETAILS = '5.4'
+
+/**
  * Матрица гейтов — по ВСЕМ ТРЁМ веткам записи (`'I.2'` поле, `'2.1'` позиция
  * услуг, `'I.10'` код IATA), а не по одной: у `editAnswerDuringReview` три
  * РАЗНЫЕ транзакции-сиблинга, у каждой свой `lockForReview`, и гейт,
@@ -303,21 +312,21 @@ describe('провенанс: значок следует за последне�
 
   it('то же для позиции услуг — в обе стороны', async () => {
     const db = await createTestDb()
-    const submissionId = await seedSubmission(db, 'submitted', { services: { '2.1': OFFERED_FREE } })
+    const submissionId = await seedSubmission(db, 'submitted', { services: { [WITH_DETAILS]: OFFERED_FREE } })
 
     await editAnswerDuringReview(db, {
-      submissionId, key: '2.1', value: { ...OFFERED_FREE, details: 'от команды' }, reviewer: REVIEWER,
+      submissionId, key: WITH_DETAILS, value: { ...OFFERED_FREE, details: 'от команды' }, reviewer: REVIEWER,
     })
     const edited = await db.select().from(serviceValues)
       .where(eq(serviceValues.submissionId, submissionId))
     expect(edited[0]?.editedBy).toBe(REVIEWER)
     expect(edited[0]?.details).toBe('от команды')
-    expect((await loadSubmissionValues(db, submissionId)).teamEditedKeys).toEqual(['2.1'])
+    expect((await loadSubmissionValues(db, submissionId)).teamEditedKeys).toEqual([WITH_DETAILS])
 
     await db.update(submissions).set({ status: 'changes_requested' })
       .where(eq(submissions.id, submissionId))
     const operator = await saveServiceValue(db, {
-      submissionId, itemKey: '2.1', value: OFFERED_FREE,
+      submissionId, itemKey: WITH_DETAILS, value: OFFERED_FREE,
     })
     expect(operator.ok).toBe(true)
     const reset = await db.select().from(serviceValues)
@@ -382,10 +391,10 @@ describe('событие, замечания, подтверждение бло�
   // было удалить, не уронив ни одного теста).
   it('услуга: событие несёт точную пару old→new (нормализованные строки) и актёра', async () => {
     const db = await createTestDb()
-    const submissionId = await seedSubmission(db, 'submitted', { services: { '2.1': OFFERED_FREE } })
+    const submissionId = await seedSubmission(db, 'submitted', { services: { [WITH_DETAILS]: OFFERED_FREE } })
 
     await editAnswerDuringReview(db, {
-      submissionId, key: '2.1', value: { ...OFFERED_FREE, details: 'от команды' }, reviewer: REVIEWER,
+      submissionId, key: WITH_DETAILS, value: { ...OFFERED_FREE, details: 'от команды' }, reviewer: REVIEWER,
     })
 
     const recorded = await teamEditEvents(db, submissionId)
@@ -397,7 +406,7 @@ describe('событие, замечания, подтверждение бло�
       {
         actor: REVIEWER,
         payload: {
-          key: '2.1',
+          key: WITH_DETAILS,
           old: storedShape,
           new: { ...storedShape, details: 'от команды' },
           actor: REVIEWER,
@@ -408,16 +417,16 @@ describe('событие, замечания, подтверждение бло�
 
   it('услуга: замечание правленой позиции снимается, замечание другого ключа переживает', async () => {
     const db = await createTestDb()
-    const submissionId = await seedSubmission(db, 'submitted', { services: { '2.1': OFFERED_FREE } })
+    const submissionId = await seedSubmission(db, 'submitted', { services: { [WITH_DETAILS]: OFFERED_FREE } })
     await raiseFlag(db, {
-      submissionId, fieldKey: '2.1', reason: 'needs_detail', comment: 'какой wifi?', reviewer: REVIEWER,
+      submissionId, fieldKey: WITH_DETAILS, reason: 'needs_detail', comment: 'какой массаж?', reviewer: REVIEWER,
     })
     await raiseFlag(db, {
       submissionId, fieldKey: 'I.4', reason: 'empty', comment: '', reviewer: REVIEWER,
     })
 
     await editAnswerDuringReview(db, {
-      submissionId, key: '2.1', value: { ...OFFERED_FREE, details: 'от команды' }, reviewer: REVIEWER,
+      submissionId, key: WITH_DETAILS, value: { ...OFFERED_FREE, details: 'от команды' }, reviewer: REVIEWER,
     })
 
     const open = await openFlags(db, submissionId)
@@ -603,11 +612,11 @@ describe('граница записи: no-op и недоопределённый
 
   it('частичный объект услуги не роняет транзакцию и не пишет «undefined» в цену', async () => {
     const db = await createTestDb()
-    const submissionId = await seedSubmission(db, 'submitted', { services: { '2.1': OFFERED_FREE } })
+    const submissionId = await seedSubmission(db, 'submitted', { services: { [WITH_DETAILS]: OFFERED_FREE } })
 
     // Только два ключа из семи — остальное дополняется null у двери.
     const result = await editAnswerDuringReview(db, {
-      submissionId, key: '2.1',
+      submissionId, key: WITH_DETAILS,
       value: { available: 'yes', chargeType: 'complimentary' },
       reviewer: REVIEWER,
     })
@@ -621,7 +630,7 @@ describe('граница записи: no-op и недоопределённый
 
     // А частичный объект с настоящим изменением — пишется, с null в дырах.
     const changed = await editAnswerDuringReview(db, {
-      submissionId, key: '2.1',
+      submissionId, key: WITH_DETAILS,
       value: { available: 'yes', chargeType: 'complimentary', details: 'от команды' },
       reviewer: REVIEWER,
     })
@@ -732,6 +741,38 @@ describe('четвёрка паспорта', () => {
 })
 
 describe('услуги: нормализация — тем же правилом, что у оператора', () => {
+  /**
+   * Паритет профилей: обе двери ходят через один `serviceRowFromInput`, так
+   * что атрибут, которого профиль позиции не спрашивает, обнуляется у команды
+   * ровно так же, как у оператора. Проверяется как РАВЕНСТВО двух строк,
+   * записанных одним входом через разные двери (а не как два списка null):
+   * если правило разойдётся, разойдутся и строки.
+   */
+  it('неприменимые по профилю атрибуты обнуляются обеими дверями одинаково', async () => {
+    const db = await createTestDb()
+    const operatorSide = await seedSubmission(db, 'draft')
+    const teamSide = await seedSubmission(db, 'submitted')
+    // '7.2' (Shower) — `charge`: слот, бронь и details у неё не применимы.
+    const everything: ServiceValueInput = {
+      available: 'yes', chargeType: 'chargeable', price: 15, currency: 'EUR',
+      slotMinutes: 30, bookingRequired: true, details: 'stale',
+    }
+
+    const operator = await saveServiceValue(db, { submissionId: operatorSide, itemKey: '7.2', value: everything })
+    const team = await editAnswerDuringReview(db, {
+      submissionId: teamSide, key: '7.2', value: everything, reviewer: REVIEWER,
+    })
+    expect(operator).toEqual({ ok: true })
+    expect(team).toEqual({ ok: true })
+
+    const stored = (await loadSubmissionValues(db, operatorSide)).services['7.2']
+    expect((await loadSubmissionValues(db, teamSide)).services['7.2']).toEqual(stored)
+    expect(stored).toEqual({
+      available: 'yes', chargeType: 'chargeable', price: 15, currency: 'EUR',
+      slotMinutes: null, bookingRequired: null, details: null,
+    })
+  })
+
   it('ответ «нет» гасит offered-only атрибуты', async () => {
     const db = await createTestDb()
     const submissionId = await seedSubmission(db, 'submitted', {

@@ -10,6 +10,8 @@ import {
   PHOTO_SLOTS,
   SERVICE_ATTRIBUTES,
   SERVICE_ITEMS,
+  applicableAttributes,
+  attributeApplies,
   isOfferedAvailability,
   needsDetail,
   type Field,
@@ -129,10 +131,15 @@ function enteredFieldValue(field: Field, position: number): unknown {
   }
 }
 
-/** Предлагаемая позиция со всеми семью атрибутами: только у предлагаемой
- *  они переживают запись (`saveServiceValue` обнуляет атрибуты закрытой), и
- *  только заполненные все семь дают прогону что терять. Первый НЕ
- *  закрывающий вариант списка — «yes» у yesNo, «throughout» у vaping. */
+/** Предлагаемая позиция со всеми семью атрибутами заполненными: только у
+ *  предлагаемой они переживают запись (`saveServiceValue` обнуляет атрибуты
+ *  закрытой), и только заполненные дают прогону что терять. Первый НЕ
+ *  закрывающий вариант списка — «yes» у yesNo, «throughout» у vaping.
+ *
+ *  Все семь заполняются у КАЖДОЙ позиции нарочно, профиль не читается: то,
+ *  что писатель обнуляет неприменимые по профилю (`attributeApplies`), — само
+ *  утверждение прогона ниже, а не допущение сида. Так прогон видит правило
+ *  обнуления сквозь файл: применимая ячейка непуста, неприменимая пуста. */
 function enteredServiceValue(item: ServiceItem): ServiceValueInput {
   const offered = OPTION_LISTS[item.availabilityList].find((option) =>
     isOfferedAvailability(item, option.id),
@@ -270,8 +277,11 @@ describe('обратный прогон: введённое возвращает
     for (const field of FIELDS) {
       expect(cellUnder(field.key), field.key).not.toBeNull()
     }
+    // У позиции — каждый ПРИМЕНИМЫЙ атрибут (`available` плюс профиль):
+    // сид ввёл все семь, и до файла доехали ровно те, что профиль спрашивает.
     for (const item of SERVICE_ITEMS) {
-      for (const attribute of SERVICE_ATTRIBUTES) {
+      expect(cellUnder(`${item.key}.available`), `${item.key}.available`).not.toBeNull()
+      for (const attribute of applicableAttributes(item, 'yes')) {
         expect(cellUnder(`${item.key}.${attribute}`), `${item.key}.${attribute}`).not.toBeNull()
       }
     }
@@ -308,7 +318,32 @@ describe('обратный прогон: введённое возвращает
     expect(cellUnder('5.1.details')).toBe('Details 5.1')
     // Позиция с собственным списком наличия: её «предлагается» — не «yes».
     expect(cellUnder('8.3.available')).toBe('throughout')
-    expect(cellUnder('7.2.bookingRequired')).toBe('no')
+    // Бронь — у `full`-позиции (5.1): у `charge` (7.2, прежний ключ этой
+    // строки) её больше не бывает — см. следующий тест.
+    expect(cellUnder('5.1.bookingRequired')).toBe('no')
+  })
+
+  /**
+   * Профили сквозь выгрузку: колонок по-прежнему 488 — по семь на каждую
+   * позицию, структура исходника (`columns.test.ts` держит счёт) — но ячейка
+   * атрибута, которого профиль позиции не спрашивает, ПУСТА, хотя сид ввёл
+   * все семь: писатель обнулил её на границе записи (`serviceRowFromInput`
+   * через `attributeApplies`). Выгрузка сама профиль не читает — она печатает
+   * хранилище как есть; пустота здесь — свидетельство писателя, не выгрузки.
+   */
+  it('неприменимая по профилю ячейка пуста, хотя сид её ввёл', () => {
+    for (const item of SERVICE_ITEMS) {
+      for (const attribute of SERVICE_ATTRIBUTES) {
+        if (attributeApplies(item, attribute, 'yes')) continue
+        expect(cellUnder(`${item.key}.${attribute}`), `${item.key}.${attribute}`).toBeNull()
+      }
+    }
+    // Ветка не пуста: у Wifi (`charge`) слот введён и не доехал; у
+    // Air Conditioning (`none`) не доехало ничего, кроме наличия.
+    expect(cellUnder('2.1.slotMinutes')).toBeNull()
+    expect(cellUnder('2.1.price')).toBe(12.5)
+    expect(cellUnder('1.1.chargeType')).toBeNull()
+    expect(cellUnder('1.1.available')).toBe('yes')
   })
 
   it('накопительный слот фото возвращает обе ссылки', () => {

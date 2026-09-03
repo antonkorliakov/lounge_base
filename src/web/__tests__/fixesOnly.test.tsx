@@ -223,19 +223,68 @@ describe('контрол отмеченной позиции услуг', () => 
     expect(stated).not.toBe(silent)
   })
 
-  it('у предлагаемой позиции открыт весь набор атрибутов, а не только наличие', () => {
-    const html = renderFixes([flagFor(WIFI)], {
-      services: {
-        [WIFI]: {
-          available: 'yes', chargeType: null, price: null,
-          currency: null, slotMinutes: null, bookingRequired: null, details: null,
-        },
-      },
-    })
+  /**
+   * Профили (`PROFILE_ATTRIBUTES`): карточка рисует контролы по профилю
+   * позиции, и экран правок наследует это от `ServiceItemCard`, а не решает
+   * сам — поэтому здесь по одной предложенной позиции на профиль, и у каждой
+   * утверждается И что открыто, И что закрыто. Wifi (`charge`) раньше стоял
+   * в этом тесте с ожиданием «весь набор» — теперь весь набор есть только у
+   * `full`.
+   */
+  const offered = (key: string) => ({
+    services: {
+      [key]: {
+        available: 'yes', chargeType: null, price: null,
+        currency: null, slotMinutes: null, bookingRequired: null, details: null,
+      } as ServiceValueInput,
+    },
+  })
+  const CHARGE_LABELS = [UI['services.charge'].en]
+  const FULL_ONLY_LABELS = [UI['services.slot'].en, UI['services.booking'].en]
+  const DETAILS_LABEL = UI['services.details'].en
+
+  it('full (5.4 Massage): весь набор атрибутов', () => {
+    const html = renderFixes([flagFor('5.4')], offered('5.4'))
+    for (const label of [...CHARGE_LABELS, ...FULL_ONLY_LABELS, DETAILS_LABEL]) {
+      expect(html).toContain(label)
+    }
+  })
+
+  it('charge (2.1 Wifi): только платность — ни слота, ни брони, ни деталей', () => {
+    const html = renderFixes([flagFor(WIFI)], offered(WIFI))
     expect(html).toContain(UI['services.charge'].en)
-    expect(html).toContain(UI['services.slot'].en)
-    expect(html).toContain(UI['services.booking'].en)
-    expect(html).toContain(UI['services.details'].en)
+    for (const label of [...FULL_ONLY_LABELS, DETAILS_LABEL]) {
+      expect(html).not.toContain(label)
+    }
+    expect(html).not.toContain('<textarea')
+  })
+
+  it('chargeDetail (fb.3.3 Premium Alcohol): платность и детали, без слота и брони', () => {
+    const html = renderFixes([flagFor('fb.3.3')], offered('fb.3.3'))
+    expect(html).toContain(UI['services.charge'].en)
+    expect(html).toContain(DETAILS_LABEL)
+    for (const label of FULL_ONLY_LABELS) expect(html).not.toContain(label)
+  })
+
+  it('detail (fb.3.4 Alcohol Service Hours): только детали — даже без платности', () => {
+    const html = renderFixes([flagFor('fb.3.4')], offered('fb.3.4'))
+    expect(html).toContain(DETAILS_LABEL)
+    expect(html).not.toContain(UI['services.charge'].en)
+    expect(html).not.toContain('<select')
+    for (const label of FULL_ONLY_LABELS) expect(html).not.toContain(label)
+  })
+
+  it('none (1.1 Air Conditioning): предложена — и всё равно только наличие', () => {
+    const html = renderFixes([flagFor('1.1')], offered('1.1'))
+    expect(html).toContain(UI['services.available'].en)
+    for (const label of [...CHARGE_LABELS, ...FULL_ONLY_LABELS, DETAILS_LABEL]) {
+      expect(html).not.toContain(label)
+    }
+    // Контрол наличия — единственный контрол карточки: пара кнопок, и ничего
+    // вводимого. Именно его и правят, если ревьюер спорит с «да».
+    expect(html).not.toContain('<select')
+    expect(html).not.toContain('<input')
+    expect(html).not.toContain('<textarea')
   })
 
   it('«платно» открывает цену и валюту — то же правило, что на основной форме', () => {
