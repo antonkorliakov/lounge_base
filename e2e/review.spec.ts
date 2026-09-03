@@ -1246,13 +1246,18 @@ test('правка ответа командой: карандаш, значок
   await expect(derivedNote).toHaveCount(0)
 
   // ── Позиция услуг правится тем же карандашом ─────────────────────────────
-  const wifi = serviceItemByKey('2.1')!
-  const SERVICES_BLOCK = 'Connectivity & Business'
+  // Massage (5.4) — позиция с профилем `full` (`PROFILE_ATTRIBUTES`): у неё
+  // применим `details`, который ниже и правит команда. Раньше сценарий шёл на
+  // Wifi (2.1) — с появлением профилей он `charge`, карточка не рисует
+  // textarea, а писатель обнулил бы details при записи; правка «в никуда» не
+  // доказывала бы видимость правки оператору.
+  const massage = serviceItemByKey('5.4')!
+  const SERVICES_BLOCK = 'Rest & Relaxation / Spa'
   await page.getByRole('button', { name: SERVICES_BLOCK }).click()
-  const wifiRow = row(page, wifi.label.en)
+  const massageRow = row(page, massage.label.en)
   // Сид закрывает все 58 позиций ответом «нет» (`closingServiceValue`) —
   // отсюда и видно, что правка изменила именно её.
-  await expect(wifiRow.locator('.frow-value')).toHaveText('no')
+  await expect(massageRow.locator('.frow-value')).toHaveText('no')
 
   // Подтверждаем блок услуг ДО правки — и здесь это утверждение сильнее, чем
   // на блоке I: позиция, которую сейчас поправят, НЕ отмечена, значит
@@ -1264,19 +1269,19 @@ test('правка ответа командой: карандаш, значок
   await page.getByRole('button', { name: CONFIRM_BLOCK }).click()
   await expect(navItem(page, SERVICES_BLOCK)).toHaveClass(/nav-confirmed/)
 
-  const WIFI_DETAILS = 'Free, no password — corrected by the reviewer'
-  const wifiEditor = await openRowEditor(
-    wifiRow,
-    wifiRow.getByRole('heading', { name: wifi.label.en }),
+  const MASSAGE_DETAILS = 'Back and neck, 20 minutes — corrected by the reviewer'
+  const massageEditor = await openRowEditor(
+    massageRow,
+    massageRow.getByRole('heading', { name: massage.label.en }),
   )
   // Карточка позиции целиком, с контролом наличия (`withAvailability`):
   // замечание адресует позицию целиком, и правка команды тоже. Атрибуты
   // (тип оплаты, «Details» и остальные) появляются только после «Yes» — их
   // показывает сама карточка, тем же правилом, что у оператора.
-  await wifiEditor.getByRole('button', { name: 'Yes', exact: true }).click()
+  await massageEditor.getByRole('button', { name: 'Yes', exact: true }).click()
   // Тип оплаты выбирается НЕ для полноты картинки, и это выяснилось прогоном:
   // у ПРЕДЛОЖЕННОЙ позиции без него анкета неполна (`serviceItemAnswered`), и
-  // повторная отправка ниже отказывала — «1 item(s) still need an answer: Wifi
+  // повторная отправка ниже отказывала — «1 item(s) still need an answer: Massage
   // Access». Ревьюер по-прежнему МОЖЕТ, оставив «yes» без типа оплаты,
   // вернуть анкету незаполненной — продукт этого не запрещает, — но тупика
   // это больше не создаёт: экран правок теперь показывает и правленные
@@ -1287,13 +1292,13 @@ test('правка ответа командой: карандаш, значок
   // бы ревьюер, доводящий ответ до отправляемого.
   // Единственный `<select>` карточки — как раз тип оплаты (остальные контролы
   // «предложенной» позиции — числа, чекбокс и текст), поэтому локатор такой.
-  await wifiEditor.locator('select').selectOption('complimentary')
-  await wifiEditor.locator('textarea').fill(WIFI_DETAILS)
-  await clickAndAwaitAction(page, wifiEditor.locator('.bt-save'))
+  await massageEditor.locator('select').selectOption('complimentary')
+  await massageEditor.locator('textarea').fill(MASSAGE_DETAILS)
+  await clickAndAwaitAction(page, massageEditor.locator('.bt-save'))
 
-  await expect(wifiRow).toContainText(WIFI_DETAILS)
-  await expect(wifiRow).toContainText('yes · complimentary')
-  await expect(wifiRow.locator('.team-badge')).toHaveText(TEAM_BADGE)
+  await expect(massageRow).toContainText(MASSAGE_DETAILS)
+  await expect(massageRow).toContainText('yes · complimentary')
+  await expect(massageRow.locator('.team-badge')).toHaveText(TEAM_BADGE)
   // И подтверждение блока услуг обесценилось правкой, при которой снимать
   // было нечего.
   await expect(navItem(page, SERVICES_BLOCK)).toHaveClass(/nav-untouched/)
@@ -1316,9 +1321,9 @@ test('правка ответа командой: карандаш, значок
 
   await expect(filler.getByRole('heading', { name: 'Changes requested' })).toBeVisible()
   // Карточек ДВЕ, и это разные карточки (перепинато сознательно: прежняя
-  // версия утверждала count 1 — то есть закрепляла невидимость правки wifi):
+  // версия утверждала count 1 — то есть закрепляла невидимость правки massage):
   // отмеченная I.2 — и карточка группы «команда исправила эти ответы» для
-  // wifi, чью правку команда внесла БЕЗ замечания. Вступление оговаривает
+  // massage, чью правку команда внесла БЕЗ замечания. Вступление оговаривает
   // группу, а не утверждает «остальное принято» без оговорки.
   await expect(filler.locator('.fix-card:not(.fix-card-team)')).toHaveCount(1)
   await expect(filler.locator('.fix-card-team')).toHaveCount(1)
@@ -1328,11 +1333,11 @@ test('правка ответа командой: карандаш, значок
   await expect(filler.locator('.subtitle').first()).toContainText(
     'the team corrected some others',
   )
-  // Карточка группы — РАБОЧАЯ: значение wifi, значок, и настоящий контрол
+  // Карточка группы — РАБОЧАЯ: значение massage, значок, и настоящий контрол
   // (несогласие или незаполненность исправимы здесь же).
   const teamCard = filler.locator('.fix-card-team')
-  await expect(teamCard).toContainText(wifi.label.en)
-  await expect(teamCard.locator('textarea')).toHaveValue(WIFI_DETAILS)
+  await expect(teamCard).toContainText(massage.label.en)
+  await expect(teamCard.locator('textarea')).toHaveValue(MASSAGE_DETAILS)
   await expect(teamCard.locator('.team-badge')).toHaveText(TEAM_BADGE)
 
   const operatorInput = filler.getByLabel(/Lounge Full Name/)
@@ -1347,9 +1352,9 @@ test('правка ответа командой: карандаш, значок
   // Значок снимается сразу, без перезагрузки: он следует за ПОСЛЕДНЕЙ рукой,
   // и ждать перезагрузки значило бы какое-то время показывать оператору
   // «исправлено командой» над его собственным, только что набранным ответом.
-  // ИЗБИРАТЕЛЬНО: значок карточки wifi, которой оператор не касался, ОСТАЁТСЯ
+  // ИЗБИРАТЕЛЬНО: значок карточки massage, которой оператор не касался, ОСТАЁТСЯ
   // (перепинато: прежний count 0 по всему экрану был верен только пока правка
-  // wifi была невидима вовсе).
+  // massage была невидима вовсе).
   await expect(filler.locator('.fix-card:not(.fix-card-team) .team-badge')).toHaveCount(0)
   await expect(teamCard.locator('.team-badge')).toHaveText(TEAM_BADGE)
 
@@ -1374,9 +1379,9 @@ test('правка ответа командой: карандаш, значок
   // …а позиция услуг, которой оператор не касался, значок СОХРАНИЛА: провенанс
   // следует за последней рукой по ответу, а не сбрасывается отправкой анкеты.
   await page.getByRole('button', { name: SERVICES_BLOCK }).click()
-  const wifiAgain = row(page, wifi.label.en)
-  await expect(wifiAgain).toContainText(WIFI_DETAILS)
-  await expect(wifiAgain.locator('.team-badge')).toHaveText(TEAM_BADGE)
+  const massageAgain = row(page, massage.label.en)
+  await expect(massageAgain).toContainText(MASSAGE_DETAILS)
+  await expect(massageAgain.locator('.team-badge')).toHaveText(TEAM_BADGE)
 })
 
 /**

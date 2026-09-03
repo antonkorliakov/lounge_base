@@ -183,6 +183,47 @@ test('два прохода по услугам: детали спрашиваю
   await expect(page.getByRole('heading', { name: 'Runway View' })).toHaveCount(0)
 })
 
+/**
+ * Профили (`PROFILE_ATTRIBUTES`, `src/form-schema/services.ts`): второй проход
+ * спрашивает только то, что применимо к позиции. Wifi (`charge`) получает одну
+ * карточку с одним контролом — «платно/бесплатно»; Air Conditioning (`none`),
+ * хотя и отмечен как «есть», карточки не получает вовсе — его закрывает «да»
+ * первого прохода. А когда «есть» отмечено ТОЛЬКО у `none`-позиций, второй
+ * проход честно говорит, что уточнять нечего, — не «отметьте на предыдущем
+ * шаге», потому что отмечено уже.
+ */
+test('второй проход по профилю: charge — только платность, none — без карточки, только none — «уточнять нечего»', async ({ page }) => {
+  const url = seed()
+  await page.goto(url)
+
+  await clickNext(page, FIELD_STEP_COUNT)
+  await availability(page, 'Air Conditioning', 'Yes').click()
+  await expect(page.getByText('Saved')).toBeVisible()
+  await clickNext(page)
+
+  await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Air Conditioning' })).toHaveCount(0)
+  await expect(page.getByText('None of the services you marked as available need further details')).toBeVisible()
+  await expect(page.locator('.pass2-card')).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Back to service selection' }).click()
+  await availability(page, 'Wifi Access', 'Yes').click()
+  await expect(page.getByText('Saved')).toBeVisible()
+  await clickNext(page)
+
+  const wifiCard = page.locator('.pass2-card').filter({
+    has: page.getByRole('heading', { name: 'Wifi Access' }),
+  })
+  await expect(page.locator('.pass2-card')).toHaveCount(1)
+  await expect(page.getByRole('heading', { name: 'Air Conditioning' })).toHaveCount(0)
+  // Один контрол — тип оплаты. Ни слота (число), ни брони (чекбокс), ни
+  // деталей (textarea): у `charge` их нет. Цена и валюта появятся только
+  // после «платно» — это проверяет тест про отказ сервера ниже.
+  await expect(wifiCard.getByRole('combobox')).toHaveCount(1)
+  await expect(wifiCard.locator('input')).toHaveCount(0)
+  await expect(wifiCard.locator('textarea')).toHaveCount(0)
+})
+
 // R1, whole-branch review second round: checking a service in Pass 1 used
 // to be refused outright (`validateServiceValue` required a `chargeType`
 // that Pass 1 has no control to set), so the answer survived only in React
@@ -617,7 +658,7 @@ test('экран правок: у каждой категории есть ра�
 
   const fieldCard = page.locator('.fix-card').filter({ has: page.getByLabel(/Lounge Full Name/) })
   const serviceCard = page.locator('.fix-card').filter({
-    has: page.getByRole('heading', { name: 'Wifi Access' }),
+    has: page.getByRole('heading', { name: 'Massage' }),
   })
   const photoCard = page.locator('.fix-card').filter({
     has: page.getByRole('heading', { name: 'Entrance' }),
@@ -627,15 +668,19 @@ test('экран правок: у каждой категории есть ра�
   })
 
   // Позиция услуг: наличие (то, что раньше жило только в первом проходе и на
-  // этот экран не попадало вовсе) плюс весь набор атрибутов. Wifi — бинарная
+  // этот экран не попадало вовсе) плюс весь набор атрибутов — Massage (5.4)
+  // с профилем `full`, единственным, у которого набор действительно весь
+  // (см. `PROFILE_ATTRIBUTES`; сид отмечает именно её — `SERVICE_FLAG_KEY`).
+  // Раньше здесь стоял Wifi: он `charge`, и слота с деталями у его карточки
+  // теперь нет. Massage — бинарная
   // позиция, так что наличие здесь — пара кнопок Да|Нет с нажатым «Yes»
   // (`aria-pressed` — тот же атрибут, по которому красится нажатая кнопка),
   // а единственный дропдаун карточки — «платно/бесплатно» (см.
   // `ServiceItemCard`). Нажатость читается как СОСТОЯНИЕ с тремя исходами:
   // именно этого чекбокс и не мог показать — «нет» у него выглядел так же,
   // как «ничего не сказано».
-  await expect(availability(page, 'Wifi Access', 'Yes')).toHaveAttribute('aria-pressed', 'true')
-  await expect(availability(page, 'Wifi Access', 'No')).toHaveAttribute('aria-pressed', 'false')
+  await expect(availability(page, 'Massage', 'Yes')).toHaveAttribute('aria-pressed', 'true')
+  await expect(availability(page, 'Massage', 'No')).toHaveAttribute('aria-pressed', 'false')
   await expect(serviceCard.getByRole('combobox')).toHaveCount(1)
   await expect(serviceCard.getByRole('combobox')).toHaveValue('complimentary')
   await expect(serviceCard.locator('input[type="number"]')).toHaveCount(1)
@@ -671,7 +716,7 @@ test('экран правок: у каждой категории есть ра�
   await page.reload()
   await expect(page.locator('.fix-card')).toHaveCount(3)
   await expect(page.getByLabel(/Lounge Full Name/)).toHaveCount(0)
-  await expect(page.getByRole('heading', { name: 'Wifi Access' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Massage' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
 
   // ── Правка позиции услуг ──────────────────────────────────────────────────
@@ -680,7 +725,7 @@ test('экран правок: у каждой категории есть ра�
 
   await page.reload()
   await expect(page.locator('.fix-card')).toHaveCount(2)
-  await expect(page.getByRole('heading', { name: 'Wifi Access' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Massage' })).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Additional Photos' })).toBeVisible()
   await expect(page.getByText('Flagged answers you have not changed yet: 2 / 2')).toBeVisible()

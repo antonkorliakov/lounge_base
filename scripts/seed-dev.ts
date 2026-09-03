@@ -93,6 +93,8 @@ import {
   PHOTO_SLOTS,
   MIN_PHOTOS,
   OPTION_LISTS,
+  isOfferedAvailability,
+  requiredAttributesFor,
 } from '../src/form-schema'
 import type {
   Field,
@@ -190,20 +192,48 @@ function valueForField(field: Field): unknown {
   }
 }
 
+/** Пустой набор атрибутов второго прохода — то, что несёт закрывающий ответ
+ *  и то, поверх чего `offeredServiceValue` кладёт применимое. */
+const NO_ATTRIBUTES: Omit<ServiceValueInput, 'available'> = {
+  chargeType: null,
+  price: null,
+  currency: null,
+  slotMinutes: null,
+  bookingRequired: null,
+  details: null,
+}
+
 /** Закрывающий («не предлагается») ответ по позиции услуг — этого достаточно
  *  для полноты, доп. атрибуты (цена, время слота и т.п.) не нужны. */
 function closingServiceValue(item: ServiceItem): ServiceValueInput {
   const options = OPTION_LISTS[item.availabilityList]
   const closing = options.find((o) => o.id === 'no' || o.id === 'not_allowed') ?? options[0]!
-  return {
-    available: closing.id,
-    chargeType: null,
-    price: null,
-    currency: null,
-    slotMinutes: null,
-    bookingRequired: null,
-    details: null,
+  return { ...NO_ATTRIBUTES, available: closing.id }
+}
+
+/**
+ * Предлагаемый («есть») ответ по позиции, ПОЛНЫЙ по её профилю — и ни атрибутом
+ * больше. Что именно нужно, решает сама схема (`requiredAttributesFor`,
+ * `src/form-schema/services.ts`): `none` — ничего сверх наличия; `charge`/
+ * `full` — chargeType (берём «бесплатно», цена не нужна); позиции с подсказкой
+ * «уточните» — ещё и `details`. Сид не перечисляет атрибуты сам: раньше он
+ * писал chargeType каждой предлагаемой позиции, и писатель молча обнулял его у
+ * `none`/`detail` — безвредно, но нечестно: сид утверждал бы про анкету то, чего
+ * в ней нет. Необязательное (слот, бронь, details без подсказки) не пишется —
+ * сид отвечает минимумом, которого требует полнота, как и закрывающий ответ.
+ */
+function offeredServiceValue(item: ServiceItem): ServiceValueInput {
+  const offered = OPTION_LISTS[item.availabilityList].find((o) =>
+    isOfferedAvailability(item, o.id),
+  )
+  if (!offered) throw new Error(`seed-dev: у позиции ${item.key} нет предлагающего варианта`)
+
+  const value: ServiceValueInput = { ...NO_ATTRIBUTES, available: offered.id }
+  if (requiredAttributesFor(item, value).includes('chargeType')) value.chargeType = 'complimentary'
+  if (requiredAttributesFor(item, value).includes('details')) {
+    value.details = `Seed details for ${item.label.en}`
   }
+  return value
 }
 
 /** Куда сид кладёт синтетические снимки. Не в репозитории (см. `.gitignore`):
@@ -319,8 +349,12 @@ async function fillComplete(db: Db, submissionId: string): Promise<void> {
  * чтобы экран правок открывался сразу со всеми контролами.
  *
  * `I.2` (Lounge Full Name) — плоское текстовое поле, самое простое для правки
- * руками; `2.1` (Wifi Access) — реальная позиция услуг из списка `yesNo`, та
- * же, на которой стоят e2e-тесты услуг; `entrance` — обязательный
+ * руками; `5.4` (Massage) — позиция услуг с профилем `full`
+ * (`PROFILE_ATTRIBUTES`): единственный профиль, у которого карточка правок
+ * несёт весь набор контролов (тип оплаты, слот, бронь, детали), так что
+ * замечание «укажите длительность и детали» здесь исправимо буквально. Раньше
+ * стояла `2.1` (Wifi) — с появлением профилей она `charge`, и у её карточки
+ * ни слота, ни деталей больше нет; `entrance` — обязательный
  * именованный слот фото, то есть тот случай, где новая загрузка ЗАМЕНЯЕТ
  * снимок; `additional` — накопительный слот, где она НЕ заменяет, а добавляет.
  *
@@ -330,7 +364,7 @@ async function fillComplete(db: Db, submissionId: string): Promise<void> {
  * (см. `PhotoSlots`). Пока замечания на нём не было, эту разницу нельзя было
  * увидеть на засеянной анкете вообще — а именно на ней её и проверяют руками.
  */
-const SERVICE_FLAG_KEY = '2.1'
+const SERVICE_FLAG_KEY = '5.4'
 const EXTRA_PHOTO_FLAG_KEY = PHOTO_SLOTS.find((slot) => slot.extra)!.key
 
 // `FlagReason` импортируется, а не переписывается здесь объединением строк:
@@ -338,7 +372,7 @@ const EXTRA_PHOTO_FLAG_KEY = PHOTO_SLOTS.find((slot) => slot.extra)!.key
 // правки ещё и сида, а локальный union молча разошёлся бы с настоящим.
 const SEEDED_FLAGS: { key: string; reason: FlagReason; comment: string }[] = [
   { key: 'I.2', reason: 'wrong_format', comment: 'Field flag: give the full legal name, not the short one.' },
-  { key: SERVICE_FLAG_KEY, reason: 'needs_detail', comment: 'Service flag: Wifi is marked available — state the time limit and any details.' },
+  { key: SERVICE_FLAG_KEY, reason: 'needs_detail', comment: 'Service flag: Massage is marked available — state the session length and any details.' },
   // `wrong_format`, а не `empty`: снимок в слоте есть, претензия к тому, ЧТО на
   // нём видно. `empty` («не заполнено») противоречил бы и самому замечанию, и
   // тому, что сид кладёт в этот слот настоящую картинку.
@@ -350,27 +384,22 @@ const SEEDED_FLAGS: { key: string; reason: FlagReason; comment: string }[] = [
  * Переспрашивает отмечаемую позицию услуг как ПРЕДЛАГАЕМУЮ — иначе на экране
  * правок у неё честно не будет ни цены, ни слота, ни деталей:
  * `ServiceItemCard` спрашивает их только у предлагаемой позиции, то же
- * правило, по которому `offeredKeys` не пускает закрытую позицию во второй
+ * правило, по которому `pass2Keys` не пускает закрытую позицию во второй
  * проход. `fillComplete` отвечает «нет» по всем позициям (этого достаточно для
  * полноты), так что одну из них здесь переспрашиваем как «есть».
  *
- * Обязательно ДО отправки: `chargeType` у предлагаемой позиции — часть
- * полноты (`serviceItemAnswered`), а `saveServiceValue` после отправки уже
- * откажет (`assertEditable`). `complimentary` не требует цены.
+ * Обязательно ДО отправки: атрибуты, которых требует профиль предлагаемой
+ * позиции, — часть полноты (`serviceItemAnswered`), а `saveServiceValue` после
+ * отправки уже откажет (`assertEditable`). Что писать — решает
+ * `offeredServiceValue` по профилю.
  */
 async function offerFlaggedServiceItem(db: Db, submissionId: string): Promise<void> {
+  const item = SERVICE_ITEMS.find((i) => i.key === SERVICE_FLAG_KEY)
+  if (!item) throw new Error(`seed-dev: нет позиции ${SERVICE_FLAG_KEY}`)
   const offered = await saveServiceValue(db, {
     submissionId,
     itemKey: SERVICE_FLAG_KEY,
-    value: {
-      available: 'yes',
-      chargeType: 'complimentary',
-      price: null,
-      currency: null,
-      slotMinutes: null,
-      bookingRequired: null,
-      details: null,
-    },
+    value: offeredServiceValue(item),
   })
   if (!offered.ok) {
     throw new Error(`seed-dev: позиция ${SERVICE_FLAG_KEY} отклонена — ${offered.error.ru}`)
