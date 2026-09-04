@@ -147,6 +147,17 @@ describe('контактные поля — сервер как ворота', (
   it('не-строка (произвольный JSON клиента) — отказ, не исключение', () => {
     expect(validateField(field('II.1.2'), 12345678).ok).toBe(false)
     expect(validateField(field('II.1.3'), { email: 'x@y.z' }).ok).toBe(false)
+
+    // Тот же отказ обязан сработать и у НЕобязательного поля: пустая строка
+    // разрешена required:false, но не-строка — это не пустота, а
+    // рассинхронизация формата, и должна отказывать независимо от required.
+    const optionalPhone = validateField(field('II.4.1'), 12345)
+    expect(optionalPhone.ok).toBe(false)
+    if (!optionalPhone.ok) expect(optionalPhone.error.en).toBe('Expected text')
+
+    const optionalPhone2 = validateField(field('II.4.2'), ['+90'])
+    expect(optionalPhone2.ok).toBe(false)
+    if (!optionalPhone2.ok) expect(optionalPhone2.error.en).toBe('Expected text')
   })
 
   it('смешанное поле II.2.2 осталось текстом: любой непустой ввод принимается', () => {

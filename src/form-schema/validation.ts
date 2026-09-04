@@ -238,16 +238,20 @@ export function validateField(field: Field, value: unknown): ValidationResult {
         : fail('Use the date picker', 'Выберите дату в календаре')
     }
 
-    // Пустота — вопрос `required`, формат — вопрос `contact.ts`; не-строка
-    // (`asText` → null) — отказ формата, как у даты, а не исключение.
+    // Три разных отказа, не два: не-строка — `EXPECTED_TEXT`, всегда, вне
+    // зависимости от `required` (12345 не становится «пустым» только потому,
+    // что поле необязательно); пустая строка — вопрос `required`; непустая
+    // строка неверного формата — вопрос `contact.ts`.
     case 'phone': {
-      const text = asText(value) ?? ''
+      const text = asText(value)
+      if (text === null) return EXPECTED_TEXT
       if (text === '') return field.required ? REQUIRED : ok
       return isValidPhone(text) ? ok : INVALID_PHONE
     }
 
     case 'email': {
-      const text = asText(value) ?? ''
+      const text = asText(value)
+      if (text === null) return EXPECTED_TEXT
       if (text === '') return field.required ? REQUIRED : ok
       return isValidEmail(text) ? ok : INVALID_EMAIL
     }
