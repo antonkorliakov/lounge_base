@@ -590,23 +590,28 @@ describe('граница записи: no-op и недоопределённый
 
   it('undefined на необязательном поле пишет null, а не старое значение под новым провенансом', async () => {
     const db = await createTestDb()
-    // II.4.2 (факс) — необязательное текстовое поле: null для него валиден.
-    const submissionId = await seedSubmission(db, 'submitted', { fields: { 'II.4.2': '+90 123' } })
+    // III.5.3 (зал/галерея) — необязательное поле типа text: null для него
+    // валиден. II.4.2 сюда больше не годится — оно теперь типа phone, а
+    // `validateField` отказывает НЕ-строке (в том числе null) в ветках
+    // phone/email всегда, до проверки `required` (см. `form-schema/validation.ts`,
+    // комментарий над `case 'phone'`), так что очистить его в null через эту
+    // дверь нельзя вовсе — это не следствие старого значения фикстуры.
+    const submissionId = await seedSubmission(db, 'submitted', { fields: { 'III.5.3': 'Concourse B' } })
 
     const result = await editAnswerDuringReview(db, {
-      submissionId, key: 'II.4.2', value: undefined, reviewer: REVIEWER,
+      submissionId, key: 'III.5.3', value: undefined, reviewer: REVIEWER,
     })
 
     expect(result).toEqual({ ok: true })
-    const row = (await fieldRow(db, submissionId, 'II.4.2'))!
-    // Именно null, а НЕ уцелевшее '+90 123': drizzle выбрасывает undefined из
-    // SET, и без нормализации у двери «стёртый» ответ оставался бы прежним —
+    const row = (await fieldRow(db, submissionId, 'III.5.3'))!
+    // Именно null, а НЕ уцелевшее 'Concourse B': drizzle выбрасывает undefined
+    // из SET, и без нормализации у двери «стёртый» ответ оставался бы прежним —
     // с провенансом команды и снятым замечанием поверх нетронутого значения.
     expect(row.value).toBeNull()
     expect(row.editedBy).toBe(REVIEWER)
     const recorded = await teamEditEvents(db, submissionId)
     expect(recorded[0]?.payload).toEqual({
-      key: 'II.4.2', old: '+90 123', new: null, actor: REVIEWER,
+      key: 'III.5.3', old: 'Concourse B', new: null, actor: REVIEWER,
     })
   })
 

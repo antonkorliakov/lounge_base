@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { createTestDb } from '@/db/__tests__/harness'
 import type { Db } from '@/db/types'
 import { lounges, submissions, photos, events } from '@/db/schema'
-import { FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, OPTION_LISTS, MIN_PHOTOS } from '@/form-schema'
+import { FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, OPTION_LISTS, MIN_PHOTOS, PHONE_PLACEHOLDER } from '@/form-schema'
 import { saveFieldValue, saveServiceValue } from '../values'
 import { submitSubmission } from '../transitions'
 
@@ -23,6 +23,8 @@ async function seedComplete(db: Db): Promise<string> {
     .insert(submissions).values({ loungeId: lounge!.id }).returning()
   const submissionId = submission!.id
 
+  // Контактные поля проходят проверку только в своём формате (см.
+  // `form-schema/contact.ts`) — общий фолбэк `'заполнено'` их не устроит.
   for (const field of FIELDS.filter((f) => f.required)) {
     const value =
       field.type === 'date' ? '2026-03-01'
@@ -36,6 +38,8 @@ async function seedComplete(db: Db): Promise<string> {
             detail: 'подробности',
             ...(field.key === 'III.3.2' ? { slots: { age: 10 } } : {}),
           }
+        : field.type === 'phone' ? PHONE_PLACEHOLDER
+        : field.type === 'email' ? 'ops@example.com'
         : 'заполнено'
 
     await saveFieldValue(db, { submissionId, fieldKey: field.key, value })
