@@ -223,6 +223,10 @@ body {
 .field-required { margin-left: 6px; font-size: 12px; opacity: .6; font-weight: 400; }
 .field-hint,
 .field-example { font-size: 13px; opacity: .7; margin: 4px 0 0; }
+/* Inherits the input's own text colour in both themes, so nothing to pair in
+   the dark block; .55 sits visibly below the .7 of hints so an empty field
+   reads as empty. */
+.field input::placeholder { color: inherit; opacity: .55; }
 /* min-height: 44px everywhere a finger has to hit something — the pass-1
    list, checkboxes, and the photo upload control below all rely on this
    same floor. */

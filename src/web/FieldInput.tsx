@@ -1,7 +1,14 @@
 'use client'
 
 import type { Field, SelectValue } from '@/form-schema'
-import { OPTION_LISTS, needsDetail } from '@/form-schema'
+import {
+  OPTION_LISTS,
+  needsDetail,
+  PHONE_PLACEHOLDER,
+  EMAIL_PLACEHOLDER,
+  sanitizePhoneInput,
+  sanitizeEmailInput,
+} from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 
 /**
@@ -295,6 +302,34 @@ export function FieldInput(props: {
               {pick(slot.unit)}
             </span>
           ))}
+          {errorNode}
+        </div>
+      )
+    }
+
+    // Контактные поля: тип инпута даёт нужную клавиатуру на мобильном,
+    // плейсхолдер — пример формата (тот же, что в тексте серверного отказа,
+    // см. `contact.ts`), а onChange пропускает через фильтр символов — буква в
+    // телефоне не появляется, пробел в почте тоже. Фильтр — подсказка, а не
+    // ворота: сохранить всё равно можно только то, что примет `validateField`.
+    // `field.example` здесь не рисуется: пример уже в плейсхолдере.
+    case 'phone':
+    case 'email': {
+      const phone = field.type === 'phone'
+      const sanitize = phone ? sanitizePhoneInput : sanitizeEmailInput
+      return (
+        <div className="field">
+          {label}
+          {hint}
+          <input
+            id={field.key}
+            type={phone ? 'tel' : 'email'}
+            inputMode={phone ? 'tel' : 'email'}
+            autoComplete={phone ? 'tel' : 'email'}
+            placeholder={phone ? PHONE_PLACEHOLDER : EMAIL_PLACEHOLDER}
+            value={typeof value === 'string' ? value : ''}
+            onChange={(e) => onChange(sanitize(e.target.value))}
+          />
           {errorNode}
         </div>
       )
