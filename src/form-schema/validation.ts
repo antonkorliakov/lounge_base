@@ -238,11 +238,16 @@ export function validateField(field: Field, value: unknown): ValidationResult {
         : fail('Use the date picker', 'Выберите дату в календаре')
     }
 
-    // Три разных отказа, не два: не-строка — `EXPECTED_TEXT`, всегда, вне
-    // зависимости от `required` (12345 не становится «пустым» только потому,
-    // что поле необязательно); пустая строка — вопрос `required`; непустая
-    // строка неверного формата — вопрос `contact.ts`.
+    // Четыре случая, не три: `null` — то, во что редактор обзора превращает
+    // снятый ответ (`undefined` на входе становится `null`, см.
+    // `review/edit.ts`), так что пустота здесь — дело `required`, ровно как
+    // у `text`/`date` ниже, а не формата. Не-строка, которая при этом НЕ
+    // `null` (число, булево, массив, объект — произвольный JSON клиента) —
+    // это уже не пустота, а рассинхронизация формата: `EXPECTED_TEXT`, вне
+    // зависимости от `required`. Непустая строка неверного формата — вопрос
+    // `contact.ts`.
     case 'phone': {
+      if (value === null || value === undefined) return field.required ? REQUIRED : ok
       const text = asText(value)
       if (text === null) return EXPECTED_TEXT
       if (text === '') return field.required ? REQUIRED : ok
@@ -250,6 +255,7 @@ export function validateField(field: Field, value: unknown): ValidationResult {
     }
 
     case 'email': {
+      if (value === null || value === undefined) return field.required ? REQUIRED : ok
       const text = asText(value)
       if (text === null) return EXPECTED_TEXT
       if (text === '') return field.required ? REQUIRED : ok

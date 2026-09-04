@@ -590,12 +590,39 @@ describe('граница записи: no-op и недоопределённый
 
   it('undefined на необязательном поле пишет null, а не старое значение под новым провенансом', async () => {
     const db = await createTestDb()
-    // III.5.3 (зал/галерея) — необязательное поле типа text: null для него
-    // валиден. II.4.2 сюда больше не годится — оно теперь типа phone, а
-    // `validateField` отказывает НЕ-строке (в том числе null) в ветках
-    // phone/email всегда, до проверки `required` (см. `form-schema/validation.ts`,
-    // комментарий над `case 'phone'`), так что очистить его в null через эту
-    // дверь нельзя вовсе — это не следствие старого значения фикстуры.
+    // II.4.2 (факс) — необязательное поле типа phone: null для него валиден.
+    // Это ровно тот случай, ради которого проверка существует — у зала
+    // больше нет факса, и ревьюер должен уметь снять ответ, а не только
+    // заменить его на другой номер. Пин закрывает регресс, из-за которого
+    // `validateField` когда-то отказывала NOT-строке (в т.ч. null) в ветке
+    // phone раньше проверки `required` — очистить поле было нельзя вовсе.
+    const submissionId = await seedSubmission(db, 'submitted', { fields: { 'II.4.2': '+90 123 456' } })
+
+    const result = await editAnswerDuringReview(db, {
+      submissionId, key: 'II.4.2', value: undefined, reviewer: REVIEWER,
+    })
+
+    expect(result).toEqual({ ok: true })
+    const row = (await fieldRow(db, submissionId, 'II.4.2'))!
+    // Именно null, а НЕ уцелевшее '+90 123 456': drizzle выбрасывает undefined
+    // из SET, и без нормализации у двери «стёртый» ответ оставался бы прежним —
+    // с провенансом команды и снятым замечанием поверх нетронутого значения.
+    expect(row.value).toBeNull()
+    expect(row.editedBy).toBe(REVIEWER)
+    const recorded = await teamEditEvents(db, submissionId)
+    expect(recorded[0]?.payload).toEqual({
+      key: 'II.4.2', old: '+90 123 456', new: null, actor: REVIEWER,
+    })
+  })
+
+  it('undefined на необязательном текстовом поле (не контактном) тоже пишет null', async () => {
+    const db = await createTestDb()
+    // III.5.3 (зал/галерея) — необязательное поле типа text, а не phone/
+    // email: держим этот случай отдельно от II.4.2 выше, потому что он бьёт
+    // по другому пути `validateField` (ветка `text`, где `null` всегда был
+    // допустимой пустотой) — регресс в контактных ветках его не задевал, и
+    // он подтверждает, что дверь одинаково стирает ответ независимо от типа
+    // поля, а не только для phone/email.
     const submissionId = await seedSubmission(db, 'submitted', { fields: { 'III.5.3': 'Concourse B' } })
 
     const result = await editAnswerDuringReview(db, {
@@ -604,9 +631,6 @@ describe('граница записи: no-op и недоопределённый
 
     expect(result).toEqual({ ok: true })
     const row = (await fieldRow(db, submissionId, 'III.5.3'))!
-    // Именно null, а НЕ уцелевшее 'Concourse B': drizzle выбрасывает undefined
-    // из SET, и без нормализации у двери «стёртый» ответ оставался бы прежним —
-    // с провенансом команды и снятым замечанием поверх нетронутого значения.
     expect(row.value).toBeNull()
     expect(row.editedBy).toBe(REVIEWER)
     const recorded = await teamEditEvents(db, submissionId)

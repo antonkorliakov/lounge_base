@@ -160,6 +160,23 @@ describe('контактные поля — сервер как ворота', (
     if (!optionalPhone2.ok) expect(optionalPhone2.error.en).toBe('Expected text')
   })
 
+  it('null/undefined в контактном поле — очищенный ответ, не «ожидается текст»', () => {
+    // null — это то, во что редактор обзора превращает снятый ответ (см.
+    // review/edit.ts): очищенное необязательное поле обязано пройти.
+    expect(validateField(field('II.4.1'), null).ok).toBe(true)
+    expect(validateField(field('II.4.2'), undefined).ok).toBe(true)
+
+    // На обязательном поле та же пустота — дело `required`, а не формата:
+    // отказ должен звучать «Поле обязательно», а не «Ожидается текст».
+    const requiredPhone = validateField(field('II.1.2'), null)
+    expect(requiredPhone.ok).toBe(false)
+    if (!requiredPhone.ok) expect(requiredPhone.error.ru).toBe('Поле обязательно')
+
+    const requiredEmail = validateField(field('II.1.3'), null)
+    expect(requiredEmail.ok).toBe(false)
+    if (!requiredEmail.ok) expect(requiredEmail.error.ru).toBe('Поле обязательно')
+  })
+
   it('смешанное поле II.2.2 осталось текстом: любой непустой ввод принимается', () => {
     expect(validateField(field('II.2.2'), 'Ali, ali@x.y, +90 1').ok).toBe(true)
   })
