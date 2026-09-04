@@ -93,6 +93,7 @@ import {
   PHOTO_SLOTS,
   MIN_PHOTOS,
   OPTION_LISTS,
+  PHONE_PLACEHOLDER,
   isOfferedAvailability,
   requiredAttributesFor,
 } from '../src/form-schema'
@@ -104,36 +105,21 @@ import type {
 } from '../src/form-schema'
 import type { Db } from '../src/db/types'
 
-/**
- * Поля, у которых ответом должна быть настоящая по форме почта, а не
- * `Test value <ключ>`. Решается по подписи поля, а не списком ключей: список
- * пришлось бы помнить править при появлении третьего адреса в анкете, а
- * подпись — то же самое условие, по которому это поле и опознаёт человек.
- *
- * Это не косметика. `II.1.3` (Email Address - Lounge Operations Manager) —
- * единственный адрес, куда система пишет оператору: `contactEmail`
- * (`src/app/admin/s/[submissionId]/actions.ts`) читает именно его и считает
- * почтой всё, что содержит `@`. Пока сид писал туда `Test value II.1.3`, на
- * засеянной анкете НЕ РАБОТАЛ ни один почтовый путь проверяющего: «Переслать
- * ссылку» отказывала целиком («У анкеты нет контактной почты»), а «Вернуть на
- * правку» всегда возвращала уведомление «оператор не уведомлён». То есть
- * успешную ветку этих двух действий нельзя было увидеть ни руками, ни тестом
- * — ровно тот же класс, что и «снимок не отдаётся картинкой» у `seedPhotoUrl`
- * выше. Проверяется это соответствие снаружи, `e2e/review.spec.ts`: он ждёт
- * в уведомлении «Ссылка отправлена на …» именно засеянный адрес, так что
- * подпись, перестань она попадать под условие ниже, уронит тест по имени, а
- * не тихо вернёт прежнюю дыру.
- */
-const EMAIL_LABEL = /e-?mail/i
-
 /** Возвращает валидное значение для плоского поля — с учётом составного III.3.2. */
 function valueForField(field: Field): unknown {
   switch (field.type) {
     case 'text':
     case 'textarea':
-      return EMAIL_LABEL.test(field.label.en)
-        ? seedEmailFor(field.key)
-        : `Test value ${field.key}`
+      return `Test value ${field.key}`
+
+    // Контактные поля отвечают в своём формате — иначе `saveFieldValue`
+    // откажет, и сид упадёт. Почта — через `seedEmailFor`: e2e ждёт именно
+    // этот адрес в уведомлении «Ссылка отправлена на …» (II.1.3). Раньше
+    // почту угадывал регэксп по подписи поля; теперь тип поля говорит сам.
+    case 'phone':
+      return PHONE_PLACEHOLDER
+    case 'email':
+      return seedEmailFor(field.key)
 
     case 'date':
       return '2020-01-01'
