@@ -3,6 +3,7 @@ import type { Field } from './fields'
 import type { ServiceItem } from './services'
 import { attributeApplies, isOfferedAvailability, requiredAttributesFor } from './services'
 import { OPTION_LISTS } from './option-lists'
+import { EMAIL_PLACEHOLDER, PHONE_PLACEHOLDER, isValidEmail, isValidPhone } from './contact'
 
 export type ValidationResult = { ok: true } | { ok: false; error: Localized }
 
@@ -39,6 +40,16 @@ const DETAIL_REQUIRED = fail(
 const NOT_A_NUMBER = fail(
   'Enter a non-negative number',
   'Введите неотрицательное число',
+)
+// Пример в отказе — тот же плейсхолдер, что стоит в поле (`contact.ts`):
+// подсказка и пример под полем не могут разойтись.
+const INVALID_PHONE = fail(
+  `Enter the number in international format, e.g. ${PHONE_PLACEHOLDER}`,
+  `Введите номер в международном формате, например ${PHONE_PLACEHOLDER}`,
+)
+const INVALID_EMAIL = fail(
+  `Enter a valid email address, e.g. ${EMAIL_PLACEHOLDER}`,
+  `Введите адрес почты, например ${EMAIL_PLACEHOLDER}`,
 )
 /**
  * Reserved for a value that is expected to be text (a select's clarifying
@@ -225,6 +236,20 @@ export function validateField(field: Field, value: unknown): ValidationResult {
       return ISO_DATE.test(text)
         ? ok
         : fail('Use the date picker', 'Выберите дату в календаре')
+    }
+
+    // Пустота — вопрос `required`, формат — вопрос `contact.ts`; не-строка
+    // (`asText` → null) — отказ формата, как у даты, а не исключение.
+    case 'phone': {
+      const text = asText(value) ?? ''
+      if (text === '') return field.required ? REQUIRED : ok
+      return isValidPhone(text) ? ok : INVALID_PHONE
+    }
+
+    case 'email': {
+      const text = asText(value) ?? ''
+      if (text === '') return field.required ? REQUIRED : ok
+      return isValidEmail(text) ? ok : INVALID_EMAIL
     }
 
     case 'text':

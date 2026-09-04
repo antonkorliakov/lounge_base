@@ -81,6 +81,14 @@ function enteredFieldValue(field: Field, position: number): unknown {
     case 'textarea':
       return `Answer ${field.key}`
 
+    // Контактные поля проходят валидацию только в своём формате; ключ поля
+    // всё равно должен читаться из значения, чтобы ячейка, уехавшая в чужую
+    // колонку, не совпала со «своим» значением случайно.
+    case 'phone':
+      return `+90 212 ${String(100 + position).padStart(3, '0')} 00 00`
+    case 'email':
+      return `answer-${field.key.toLowerCase().replaceAll('.', '-')}@example.com`
+
     case 'date':
       return '2026-03-01'
 

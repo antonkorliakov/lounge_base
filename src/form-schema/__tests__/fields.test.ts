@@ -135,4 +135,21 @@ describe('плоские поля', () => {
       expect(field.label.en, field.key).toBe(sourceLabels[field.key])
     }
   })
+
+  /**
+   * Контактные поля закреплены БУКВАЛЬНО, по ключам, а не «все поля, в чьей
+   * подписи есть phone/email»: смешанные II.2.2 («name/email/phone») и II.2.3
+   * («phone/email/whatsApp…») подпись такую несут, но остаются свободным
+   * текстом — решение пользователя, одно правило к ним не подходит. Тест,
+   * выведенный из подписей, эти два поля отнёс бы к типизированным.
+   */
+  it('контактные поля: пять телефонов и две почты закреплены по ключам, смешанные — text', () => {
+    const typeOf = (key: string) => FIELDS.find((f) => f.key === key)!.type
+    for (const key of ['II.1.2', 'II.2.1', 'II.3.2', 'II.4.1', 'II.4.2']) {
+      expect(typeOf(key), key).toBe('phone')
+    }
+    for (const key of ['II.1.3', 'II.3.3']) expect(typeOf(key), key).toBe('email')
+    for (const key of ['II.2.2', 'II.2.3']) expect(typeOf(key), key).toBe('text')
+    expect(FIELDS.filter((f) => f.type === 'phone' || f.type === 'email')).toHaveLength(7)
+  })
 })

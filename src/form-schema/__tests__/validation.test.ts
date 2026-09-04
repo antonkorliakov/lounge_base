@@ -110,6 +110,50 @@ describe('валидация полей', () => {
   })
 })
 
+describe('контактные поля — сервер как ворота', () => {
+  it('телефон: допустимый формат принимается, недопустимый — отказ с примером', () => {
+    expect(validateField(field('II.1.2'), '+90 (212) 000-00-00').ok).toBe(true)
+    const refused = validateField(field('II.1.2'), '+90 212 ABC')
+    expect(refused.ok).toBe(false)
+    if (!refused.ok) {
+      expect(refused.error.en).toBe(
+        'Enter the number in international format, e.g. +90 212 000 00 00',
+      )
+      expect(refused.error.ru).toBe(
+        'Введите номер в международном формате, например +90 212 000 00 00',
+      )
+    }
+  })
+
+  it('почта: допустимый адрес принимается, без домена с точкой — отказ с примером', () => {
+    expect(validateField(field('II.1.3'), 'ops@lounge.example').ok).toBe(true)
+    const refused = validateField(field('II.1.3'), 'ops@lounge')
+    expect(refused.ok).toBe(false)
+    if (!refused.ok) {
+      expect(refused.error.en).toBe('Enter a valid email address, e.g. name@company.com')
+      expect(refused.error.ru).toBe('Введите адрес почты, например name@company.com')
+    }
+  })
+
+  it('пустое значение: у обязательного — «Поле обязательно», у необязательного — допустимо', () => {
+    // II.1.2 required, II.4.1 (стационарный, «если есть») — нет.
+    const required = validateField(field('II.1.2'), '')
+    expect(required.ok).toBe(false)
+    if (!required.ok) expect(required.error.ru).toBe('Поле обязательно')
+    expect(validateField(field('II.4.1'), '').ok).toBe(true)
+    expect(validateField(field('II.4.1'), '   ').ok).toBe(true)
+  })
+
+  it('не-строка (произвольный JSON клиента) — отказ, не исключение', () => {
+    expect(validateField(field('II.1.2'), 12345678).ok).toBe(false)
+    expect(validateField(field('II.1.3'), { email: 'x@y.z' }).ok).toBe(false)
+  })
+
+  it('смешанное поле II.2.2 осталось текстом: любой непустой ввод принимается', () => {
+    expect(validateField(field('II.2.2'), 'Ali, ali@x.y, +90 1').ok).toBe(true)
+  })
+})
+
 // `needsDetail` is the one place `validateSelect` and `FieldInput.tsx` now
 // both read to decide whether an option needs a detail — see its own doc
 // comment. Tested directly here so a future edit to either consumer can't

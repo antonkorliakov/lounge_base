@@ -10,6 +10,10 @@ export type FieldType =
   | 'select_with_detail'
   | 'multi_select'
   | 'template'
+  // Контактные поля: правила ввода и формата — `contact.ts`, проверка —
+  // `validateField`, ввод — `FieldInput`. Значение в базе остаётся текстом.
+  | 'phone'
+  | 'email'
 
 export type TemplateSlot = { key: string; unit: Localized }
 
@@ -217,7 +221,7 @@ export const FIELDS: Field[] = [
     key: 'II.1.2',
     section: 'II',
     block: 'II.1',
-    type: 'text',
+    type: 'phone',
     label: {
       en: 'Contact Number - Lounge Operations Manager',
       ru: 'Контактный номер — менеджер по операциям лаунжа',
@@ -229,7 +233,7 @@ export const FIELDS: Field[] = [
     key: 'II.1.3',
     section: 'II',
     block: 'II.1',
-    type: 'text',
+    type: 'email',
     label: {
       en: 'Email Address - Lounge Operations Manager',
       ru: 'Электронная почта — менеджер по операциям лаунжа',
@@ -241,7 +245,7 @@ export const FIELDS: Field[] = [
     key: 'II.2.1',
     section: 'II',
     block: 'II.2',
-    type: 'text',
+    type: 'phone',
     label: {
       en: 'Shift Mobile / Duty Phone Number',
       ru: 'Мобильный/дежурный номер смены',
@@ -286,7 +290,7 @@ export const FIELDS: Field[] = [
     key: 'II.3.2',
     section: 'II',
     block: 'II.3',
-    type: 'text',
+    type: 'phone',
     label: { en: 'Finance SPOC- Contact No', ru: 'Финансовый SPOC — контактный номер' },
     required: true,
   },
@@ -295,7 +299,7 @@ export const FIELDS: Field[] = [
     key: 'II.3.3',
     section: 'II',
     block: 'II.3',
-    type: 'text',
+    type: 'email',
     label: {
       en: 'Finance SPOC- Email address',
       ru: 'Финансовый SPOC — электронная почта',
@@ -307,7 +311,7 @@ export const FIELDS: Field[] = [
     key: 'II.4.1',
     section: 'II',
     block: 'II.4',
-    type: 'text',
+    type: 'phone',
     label: {
       en: 'Telephone- Landline/Fixline No -Lounge (If Any)',
       ru: 'Телефон — стационарный номер лаунжа (если есть)',
@@ -319,7 +323,7 @@ export const FIELDS: Field[] = [
     key: 'II.4.2',
     section: 'II',
     block: 'II.4',
-    type: 'text',
+    type: 'phone',
     label: { en: 'Fax Number (If Any)', ru: 'Номер факса (если есть)' },
     required: false,
   },
