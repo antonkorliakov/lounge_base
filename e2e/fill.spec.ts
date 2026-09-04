@@ -374,6 +374,59 @@ test('отказ сервера показывает ошибку у позиц�
   await expect(wifiCard.getByText('Price is required for a chargeable service')).toHaveCount(0)
 })
 
+/**
+ * Контактные поля (spec 2026-09-04): фильтр при наборе — подсказка, отказ
+ * сервера — ворота, и оба видны оператору. Телефон: буквы не появляются,
+ * `+` не в начале исчезает. Почта: адрес без домена с точкой ДОХОДИТ до
+ * сервера (фильтр пропускает всё, кроме пробелов) и возвращается отказом под
+ * полем; исправление снимает отказ и даёт «Saved». Реальный путь целиком —
+ * автосохранение с задержкой 600 мс, ответ сервера, перерисовка.
+ */
+test('контактные поля: телефон отфильтрован при наборе, почта без домена отвергнута сервером с примером', async ({ page }) => {
+  const url = seed()
+  await page.goto(url)
+
+  await clickNext(page)
+  // `level: 1` — иначе строгий режим падает: `.step-section-title` внутри
+  // этого шага называется «Lounge Direct Contacts» и тоже содержит подстроку
+  // «Contacts» (тот же приём уже используется выше, строка 110).
+  await expect(page.getByRole('heading', { name: 'Contacts', level: 1 })).toBeVisible()
+
+  const phone = page.getByLabel(/Contact Number - Lounge Operations Manager/)
+  // pressSequentially — посимвольно, как набирает человек: fill() подставил бы
+  // строку одним событием и проверил бы только вставку.
+  await phone.click()
+  await phone.pressSequentially('ab+90 (212)x 00+0-00-00')
+  await expect(phone).toHaveValue('+90 (212) 000-00-00')
+  await expect(page.getByText('Saved')).toBeVisible()
+  await expect(phone).toHaveAttribute('placeholder', '+90 212 000 00 00')
+
+  const email = page.getByLabel(/Email Address - Lounge Operations Manager/)
+  await email.fill('ops@lounge')
+  await expect(page.getByText('Some answers were not accepted')).toBeVisible()
+  await expect(
+    page.getByText('Enter a valid email address, e.g. name@company.com'),
+  ).toBeVisible()
+  await expect(page.getByText('Saved')).toHaveCount(0)
+
+  // Пробел при наборе не появляется — фильтр почты.
+  await email.pressSequentially(' .example')
+  await expect(email).toHaveValue('ops@lounge.example')
+  await expect(page.getByText('Saved')).toBeVisible()
+  await expect(page.getByText('Enter a valid email address')).toHaveCount(0)
+  await expect(page.getByText('Some answers were not accepted')).toHaveCount(0)
+
+  // Перечитываем с сервера: сохранилось исправленное, а не отвергнутое.
+  await page.reload()
+  await clickNext(page)
+  await expect(page.getByLabel(/Email Address - Lounge Operations Manager/)).toHaveValue(
+    'ops@lounge.example',
+  )
+  await expect(page.getByLabel(/Contact Number - Lounge Operations Manager/)).toHaveValue(
+    '+90 (212) 000-00-00',
+  )
+})
+
 test('перезагрузка сохраняет значение, введённое до срабатывания автосохранения', async ({ page }) => {
   const url = seed()
   await page.goto(url)
