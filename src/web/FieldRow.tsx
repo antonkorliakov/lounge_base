@@ -309,6 +309,10 @@ export function FieldRow(props: {
           value={fieldDraft}
           onChange={setFieldDraft}
           error={editError ? pick(editError) : undefined}
+          // Это ответ ЛАУНЖА, а не проверяющего — браузер не должен
+          // предлагать свои сохранённые контакты поверх него (см.
+          // `noAutofill`'s WHY comment in FieldInput.tsx).
+          noAutofill
         />
       )}
       {props.edit.kind === 'iata' && (

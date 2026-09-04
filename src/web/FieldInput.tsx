@@ -129,6 +129,18 @@ export function FieldInput(props: {
    * оператором снимает его (см. `FillForm`'s `teamEdited`).
    */
   teamEdited?: boolean
+  /**
+   * Гасит браузерное автозаполнение контактной ветки (`autoComplete="off"`
+   * вместо `"tel"`/`"email"`). На операторских экранах (`FillForm`,
+   * `FixesOnly`) автозаполнение подставляет данные ОПЕРАТОРА в ЕГО ЖЕ анкету
+   * — это помощь, проп там не передаётся. В редакторе команды (`FieldRow`)
+   * то же поле показывает ответ ЛАУНЖА, а браузер по-прежнему предложит
+   * данные ПРОВЕРЯЮЩЕГО: для `II.1.3` это адрес, на который сервер шлёт
+   * уведомления, и один принятый автозаполнением вариант молча переносит их
+   * получателя на реального человека, никак не связанного с лаунжем.
+   * `FieldRow` — единственное место, которое ставит `noAutofill`.
+   */
+  noAutofill?: boolean
 }): React.JSX.Element {
   const { field, value, onChange, error } = props
   const { pick, t } = useLocale()
@@ -312,7 +324,9 @@ export function FieldInput(props: {
     // см. `contact.ts`), а onChange пропускает через фильтр символов — буква в
     // телефоне не появляется, пробел в почте тоже. Фильтр — подсказка, а не
     // ворота: сохранить всё равно можно только то, что примет `validateField`.
-    // `field.example` здесь не рисуется: пример уже в плейсхолдере.
+    // `field.example` здесь не рисуется: пример уже в плейсхолдере. (Что этот
+    // рендер и что он НЕ доказывает про фильтр — см. верхний комментарий
+    // `fieldInputContact.test.tsx`.)
     case 'phone':
     case 'email': {
       const phone = field.type === 'phone'
@@ -325,9 +339,13 @@ export function FieldInput(props: {
             id={field.key}
             type={phone ? 'tel' : 'email'}
             inputMode={phone ? 'tel' : 'email'}
-            autoComplete={phone ? 'tel' : 'email'}
+            autoComplete={props.noAutofill ? 'off' : phone ? 'tel' : 'email'}
             placeholder={phone ? PHONE_PLACEHOLDER : EMAIL_PLACEHOLDER}
-            value={typeof value === 'string' ? value : ''}
+            // Зеркалит ветку `default` ниже: значение могло быть записано до
+            // появления этой ветки (число на тогда ещё текстовом поле) — не
+            // переписывать старые ответы значит и не подменять число пустой
+            // строкой при показе.
+            value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''}
             onChange={(e) => onChange(sanitize(e.target.value))}
           />
           {errorNode}
