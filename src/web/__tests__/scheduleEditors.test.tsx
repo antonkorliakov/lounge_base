@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { WEEKDAYS, type HoursOptions } from '@/form-schema'
+import { WEEKDAYS, fieldByKey, type HoursOptions } from '@/form-schema'
 import { LocaleProvider } from '@/i18n/context'
 import { UI } from '@/i18n/dictionaries'
 import { WeekHoursEditor } from '../WeekHoursEditor'
+import { FieldInput } from '../FieldInput'
+import { CleaningScheduleEditor } from '../CleaningScheduleEditor'
 
 const OPEN: HoursOptions = { allDay: true, noneLabel: { en: 'Closed', ru: 'Закрыто' } }
 const PEAK: HoursOptions = { allDay: false, noneLabel: { en: 'No peak', ru: 'Нет пика' } }
@@ -132,5 +134,83 @@ describe('WeekHoursEditor', () => {
     // пустой-windows ветку `dayCopyable`.
     const bulk = html.match(/<div class="wh-bulk">[\s\S]*?<\/div>/)![0]
     expect(bulk.match(/disabled=""/g)).toHaveLength(3)
+  })
+})
+
+function renderCleaning(value: unknown): string {
+  return renderToStaticMarkup(
+    <LocaleProvider initial="en">
+      <CleaningScheduleEditor value={value} onChange={() => {}} idPrefix="III.1.4" />
+    </LocaleProvider>,
+  )
+}
+
+describe('CleaningScheduleEditor', () => {
+  it('четыре периодичности кнопками, выбранная помечена', () => {
+    const html = renderCleaning({ cadence: 'daily', windows: [{ from: '02:00', to: '04:00' }] })
+    for (const label of ['Daily', 'Weekly', 'Monthly', 'Quarterly']) expect(html).toContain(label)
+    expect(html).toContain('aria-pressed="true"')
+  })
+
+  it('ежедневно — один список интервалов, без сетки дней', () => {
+    const html = renderCleaning({ cadence: 'daily', windows: [{ from: '14:30', to: '15:00' }] })
+    expect(html).toContain('value="14:30"')
+    expect(html).not.toContain('class="wh-row"')
+  })
+
+  it('еженедельно — недельная сетка без «24 часа», пустое читается «No cleaning»', () => {
+    const html = renderCleaning({ cadence: 'weekly', days: {} })
+    expect(html.match(/class="wh-row"/g)).toHaveLength(7)
+    expect(html).toContain('No cleaning')
+    expect(html).not.toContain(UI['schedule.allDay'].en)
+  })
+
+  it('ежемесячно — выбор «какой по счёту» и дня недели плюс интервалы', () => {
+    const html = renderCleaning({ cadence: 'monthly', nth: 1, weekday: 'mon', windows: [{ from: '22:00', to: '23:30' }] })
+    expect(html).toContain(UI['schedule.nth'].en)
+    expect(html).toContain(UI['schedule.weekday'].en)
+    expect(html).toContain('value="22:00"')
+  })
+
+  it('старый текст показан с пометкой', () => {
+    const html = renderCleaning('Every day: 14:30 – 15:00')
+    expect(html).toContain('Every day: 14:30 – 15:00')
+    expect(html).toContain(UI['form.freeFormAnswer'].en)
+  })
+})
+
+describe('FieldInput отдаёт расписания своим редакторам', () => {
+  const render = (key: string, value: unknown) =>
+    renderToStaticMarkup(
+      <LocaleProvider initial="en">
+        <FieldInput field={fieldByKey(key)!} value={value} onChange={() => {}} />
+      </LocaleProvider>,
+    )
+
+  it('III.1.1 — сетка с «24 часа» и «Closed»', () => {
+    const html = render('III.1.1', {})
+    expect(html).toContain(UI['schedule.allDay'].en)
+    expect(html).toContain('Closed')
+    expect(html).toContain('Lounge Operating Hours')
+  })
+
+  it('III.1.3 — та же сетка без «24 часа», пустое «No peak»', () => {
+    const html = render('III.1.3', {})
+    expect(html).not.toContain(UI['schedule.allDay'].en)
+    expect(html).toContain('No peak')
+  })
+
+  it('III.1.4 — редактор уборки', () => {
+    expect(render('III.1.4', { cadence: 'daily', windows: [] })).toContain(UI['schedule.cadence'].en)
+  })
+
+  it('отказ сервера рисуется тем же .fix-comment, что у остальных полей', () => {
+    const html = renderToStaticMarkup(
+      <LocaleProvider initial="en">
+        <FieldInput field={fieldByKey('III.1.1')!} value={{}} onChange={() => {}} error="Check the schedule" />
+      </LocaleProvider>,
+    )
+    expect(html).toContain('class="fix-comment"')
+    expect(html).toContain('Check the schedule')
   })
 })

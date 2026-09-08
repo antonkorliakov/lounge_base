@@ -10,6 +10,8 @@ import {
   sanitizeEmailInput,
 } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
+import { WeekHoursEditor } from './WeekHoursEditor'
+import { CleaningScheduleEditor } from './CleaningScheduleEditor'
 
 /**
  * Merges a partial change into a select-family value (`{ option, detail,
@@ -352,6 +354,37 @@ export function FieldInput(props: {
         </div>
       )
     }
+
+    // Расписания: свой редактор на каждый из двух типов, обёртка та же, что у
+    // всех полей (подпись, подсказка, значок провенанса, отказ сервера).
+    // `field.example` здесь не рисуется: сетка и есть пример, а текстовый
+    // пример рядом с ней противоречил бы ей.
+    case 'weekHours':
+      return (
+        <div className="field">
+          {label}
+          {hint}
+          {field.hoursOptions && (
+            <WeekHoursEditor
+              value={value}
+              options={field.hoursOptions}
+              idPrefix={field.key}
+              onChange={onChange}
+            />
+          )}
+          {errorNode}
+        </div>
+      )
+
+    case 'cleaningSchedule':
+      return (
+        <div className="field">
+          {label}
+          {hint}
+          <CleaningScheduleEditor value={value} idPrefix={field.key} onChange={onChange} />
+          {errorNode}
+        </div>
+      )
 
     case 'textarea':
       return (
