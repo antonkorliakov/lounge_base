@@ -475,12 +475,18 @@ test('расписание: неделя одним нажатием, разры
   // Уборка: ежемесячно, первый понедельник, 22:00–23:30.
   const cleaning = page.locator('.field').filter({ hasText: 'Deep Cleaning Schedule' })
   await cleaning.getByRole('button', { name: 'Monthly' }).click()
+  // Черновик (seed() без флагов) приходит без графика уборки, поэтому
+  // «Monthly» даёт `windows: []`, а «+ interval» создаёт ПЕРВЫЙ интервал —
+  // его же поля правят .first()/.nth(1) ниже. При засеянном графике
+  // (seed({ complete: true })) в списке уже было бы окно из фикстуры, и
+  // индексы указывали бы на него, а не на добавляемое.
   await cleaning.getByRole('button', { name: '+ interval' }).click()
   await cleaning.locator('input[type="time"]').first().fill('22:00')
   await cleaning.locator('input[type="time"]').nth(1).fill('23:30')
   await expect(page.getByText('Saved')).toBeVisible()
 
-  // Перечитываем с сервера — структура сохранилась целиком.
+  // Перечитываем с сервера: часы понедельника, закрытое воскресенье и график
+  // уборки с временем читаются с сервера после перезагрузки.
   await page.reload()
   await clickNext(page, 2)
   const monAgain = page.locator('.field').filter({ hasText: 'Lounge Operating Hours' }).locator('.wh-row').filter({ hasText: 'Monday' })
@@ -490,9 +496,17 @@ test('расписание: неделя одним нажатием, разры
     page.locator('.field').filter({ hasText: 'Lounge Operating Hours' }).locator('.wh-row').filter({ hasText: 'Sunday' })
       .getByRole('button', { name: 'Closed' }),
   ).toHaveAttribute('aria-pressed', 'true')
-  await expect(
-    page.locator('.field').filter({ hasText: 'Deep Cleaning Schedule' }).getByRole('button', { name: 'Monthly' }),
-  ).toHaveAttribute('aria-pressed', 'true')
+  const cleaningAgain = page.locator('.field').filter({ hasText: 'Deep Cleaning Schedule' })
+  await expect(cleaningAgain.getByRole('button', { name: 'Monthly' })).toHaveAttribute('aria-pressed', 'true')
+  // Периодичность одна не доказывает, что интервал уборки пережил
+  // перезагрузку — только сами поля времени это доказывают.
+  await expect(cleaningAgain.locator('input[type="time"]')).toHaveCount(2)
+  await expect(cleaningAgain.locator('input[type="time"]').first()).toHaveValue('22:00')
+  await expect(cleaningAgain.locator('input[type="time"]').nth(1)).toHaveValue('23:30')
+  // Первый понедельник (значения по умолчанию из switchCadence) тоже должен
+  // пережить перезагрузку, не только периодичность и время.
+  await expect(cleaningAgain.getByLabel('Which one')).toHaveValue('1')
+  await expect(cleaningAgain.getByLabel('Day of week')).toHaveValue('mon')
 })
 
 test('перезагрузка сохраняет значение, введённое до срабатывания автосохранения', async ({ page }) => {
