@@ -18,6 +18,10 @@ import {
   applyToWeekend,
   copyPreviousDay,
   switchCadence,
+  formatWeekHours,
+  formatCleaning,
+  weekHoursCells,
+  cleaningCells,
   WEEKDAY_WORKDAYS,
   WEEKDAY_WEEKEND,
   type HoursOptions,
@@ -309,5 +313,126 @@ describe('switchCadence', () => {
     expect(switchCadence(null, 'quarterly')).toEqual({
       cadence: 'quarterly', nth: 1, weekday: 'mon', windows: [],
     })
+  })
+})
+
+describe('канонический текст недельных часов', () => {
+  // Явная аннотация вместо `as const` — та же причина, что у `mon` выше:
+  // `WeekHours`/`DayHours` требуют мутабельный `Window[]`.
+  const nine: DayHours = { kind: 'windows', windows: [{ from: '09:00', to: '18:00' }] }
+
+  it('одинаковые соседние дни сжимаются в отрезок', () => {
+    const week = { ...everyDay(nine), sun: { kind: 'none' } } as WeekHours
+    expect(formatWeekHours(week, OPEN, 'en')).toBe('Mon–Sat 09:00–18:00; Sun Closed')
+    expect(formatWeekHours(week, OPEN, 'ru')).toBe('Пн–Сб 09:00–18:00; Вс Закрыто')
+  })
+
+  it('одиночный день не превращается в отрезок', () => {
+    const week = { ...everyDay({ kind: 'allDay' }), wed: { kind: 'none' } } as WeekHours
+    expect(formatWeekHours(week, OPEN, 'en')).toBe('Mon–Tue 24h; Wed Closed; Thu–Sun 24h')
+  })
+
+  it('разрывной день печатает интервалы через запятую', () => {
+    const week = everyDay({ kind: 'windows', windows: [{ from: '01:00', to: '11:00' }, { from: '12:00', to: '23:00' }] })
+    expect(formatWeekHours(week, OPEN, 'en')).toBe('Mon–Sun 01:00–11:00, 12:00–23:00')
+  })
+
+  it('неотвеченный день — прочерк, недописанный интервал — многоточие', () => {
+    expect(formatWeekHours({ mon: nine }, OPEN, 'en')).toBe('Mon 09:00–18:00; Tue–Sun —')
+    expect(
+      formatWeekHours(everyDay({ kind: 'windows', windows: [{ from: '01:00', to: null }] }), OPEN, 'en'),
+    ).toBe('Mon–Sun 01:00–…')
+  })
+
+  it('подпись пустого состояния берётся у поля', () => {
+    expect(formatWeekHours(everyDay({ kind: 'none' }), PEAK, 'en')).toBe('Mon–Sun No peak')
+    expect(formatWeekHours(everyDay({ kind: 'none' }), PEAK, 'ru')).toBe('Пн–Вс Нет пика')
+  })
+
+  it('старый текстовый ответ печатается как есть', () => {
+    expect(formatWeekHours('Monday – Saturday: 00:00 – 23:59', OPEN, 'en')).toBe(
+      'Monday – Saturday: 00:00 – 23:59',
+    )
+  })
+})
+
+describe('канонический текст графика уборки', () => {
+  const windows = [{ from: '02:00', to: '04:00' }]
+
+  it('ежедневно и еженедельно', () => {
+    expect(formatCleaning({ cadence: 'daily', windows }, 'en')).toBe('Daily 02:00–04:00')
+    expect(formatCleaning({ cadence: 'daily', windows }, 'ru')).toBe('Ежедневно 02:00–04:00')
+    const weekly = { cadence: 'weekly', days: { ...everyDay({ kind: 'none' }), mon: { kind: 'windows', windows } } }
+    expect(formatCleaning(weekly, 'en')).toBe('Weekly: Mon 02:00–04:00; Tue–Sun No cleaning')
+  })
+
+  it('ежемесячно и ежеквартально с порядковым днём', () => {
+    expect(
+      formatCleaning({ cadence: 'monthly', nth: 1, weekday: 'mon', windows }, 'en'),
+    ).toBe('Monthly, 1st Monday 02:00–04:00')
+    expect(
+      formatCleaning({ cadence: 'monthly', nth: 1, weekday: 'mon', windows }, 'ru'),
+    ).toBe('Ежемесячно, 1-й понедельник 02:00–04:00')
+    expect(
+      formatCleaning({ cadence: 'quarterly', nth: 'last', weekday: 'sun', windows }, 'en'),
+    ).toBe('Quarterly, last Sunday 02:00–04:00')
+    expect(
+      formatCleaning({ cadence: 'quarterly', nth: 'last', weekday: 'sun', windows }, 'ru'),
+    ).toBe('Ежеквартально, последнее воскресенье 02:00–04:00')
+  })
+
+  it('старый текст — как есть', () => {
+    expect(formatCleaning('Every day: 14:30 – 15:00', 'en')).toBe('Every day: 14:30 – 15:00')
+  })
+})
+
+describe('ячейки выгрузки', () => {
+  it('недельные часы: колонка на день, старый текст в свободной колонке', () => {
+    const week = { ...everyDay({ kind: 'allDay' }), sun: { kind: 'windows', windows: [{ from: '03:00', to: END_OF_DAY }] }, sat: { kind: 'none' } } as WeekHours
+    const cells = weekHoursCells(week, OPEN)
+    expect(cells.mon).toBe('24h')
+    expect(cells.sat).toBe('Closed')
+    expect(cells.sun).toBe('03:00–24:00')
+    expect(cells.free).toBe(null)
+
+    const legacy = weekHoursCells('Mon-Sun 09-18', OPEN)
+    expect(legacy.free).toBe('Mon-Sun 09-18')
+    expect(legacy.mon).toBe(null)
+  })
+
+  it('неотвеченный день — пустая ячейка, а не прочерк: в файле пусто это пусто', () => {
+    expect(weekHoursCells({ mon: { kind: 'none' } }, OPEN).tue).toBe(null)
+  })
+
+  it('уборка: ежедневная заполняет все семь дней', () => {
+    const cells = cleaningCells({ cadence: 'daily', windows: [{ from: '14:30', to: '15:00' }] })
+    expect(cells.cadence).toBe('Daily')
+    for (const day of WEEKDAYS) expect(cells[day], day).toBe('14:30–15:00')
+  })
+
+  it('уборка: месячная ставит интервал в колонку своего дня', () => {
+    const cells = cleaningCells({ cadence: 'monthly', nth: 1, weekday: 'mon', windows: [{ from: '22:00', to: '23:30' }] })
+    expect(cells.cadence).toBe('Monthly, 1st')
+    expect(cells.mon).toBe('22:00–23:30')
+    expect(cells.tue).toBe(null)
+  })
+
+  it('уборка: еженедельная — по дням; квартальная называет периодичность', () => {
+    const weekly = cleaningCells({ cadence: 'weekly', days: { mon: { kind: 'windows', windows: [{ from: '02:00', to: '04:00' }] }, tue: { kind: 'none' } } })
+    expect(weekly.cadence).toBe('Weekly')
+    expect(weekly.mon).toBe('02:00–04:00')
+    expect(weekly.tue).toBe('No cleaning')
+    expect(weekly.wed).toBe(null)
+
+    expect(cleaningCells({ cadence: 'quarterly', nth: 'last', weekday: 'sun', windows: [{ from: '01:00', to: '05:00' }] }).cadence).toBe(
+      'Quarterly, last',
+    )
+  })
+
+  it('уборка: старый текст — в свободной колонке, остальные пусты', () => {
+    const cells = cleaningCells('Every day: 14:30 – 15:00')
+    expect(cells.free).toBe('Every day: 14:30 – 15:00')
+    expect(cells.cadence).toBe(null)
+    expect(cells.mon).toBe(null)
   })
 })

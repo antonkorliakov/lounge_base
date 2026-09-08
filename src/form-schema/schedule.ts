@@ -254,6 +254,169 @@ export function copyPreviousDay(week: WeekHours, day: Weekday): WeekHours {
   return spread(week, WEEKDAYS[index - 1]!, [day])
 }
 
+const DAY_SHORT: Record<Weekday, Localized> = {
+  mon: { en: 'Mon', ru: 'Пн' }, tue: { en: 'Tue', ru: 'Вт' }, wed: { en: 'Wed', ru: 'Ср' },
+  thu: { en: 'Thu', ru: 'Чт' }, fri: { en: 'Fri', ru: 'Пт' }, sat: { en: 'Sat', ru: 'Сб' },
+  sun: { en: 'Sun', ru: 'Вс' },
+}
+
+const DAY_FULL: Record<Weekday, Localized> = {
+  mon: { en: 'Monday', ru: 'понедельник' }, tue: { en: 'Tuesday', ru: 'вторник' },
+  wed: { en: 'Wednesday', ru: 'среда' }, thu: { en: 'Thursday', ru: 'четверг' },
+  fri: { en: 'Friday', ru: 'пятница' }, sat: { en: 'Saturday', ru: 'суббота' },
+  sun: { en: 'Sunday', ru: 'воскресенье' },
+}
+
+const ALL_DAY_LABEL: Localized = { en: '24h', ru: 'Круглосуточно' }
+const UNANSWERED = '—'
+
+const CADENCE_LABEL: Record<Cadence, Localized> = {
+  daily: { en: 'Daily', ru: 'Ежедневно' },
+  weekly: { en: 'Weekly', ru: 'Еженедельно' },
+  monthly: { en: 'Monthly', ru: 'Ежемесячно' },
+  quarterly: { en: 'Quarterly', ru: 'Ежеквартально' },
+}
+
+const NTH_LABEL: Record<string, Localized> = {
+  '1': { en: '1st', ru: '1-й' }, '2': { en: '2nd', ru: '2-й' }, '3': { en: '3rd', ru: '3-й' },
+  '4': { en: '4th', ru: '4-й' }, last: { en: 'last', ru: 'последнее' },
+}
+
+/** Один интервал; недописанный печатается с многоточием — читатель видит, что
+ *  ответ начат и не закончен, а не что конец совпал с началом. */
+function formatWindow(window: Window): string {
+  return `${window.from}–${window.to ?? '…'}`
+}
+
+export function formatWindows(windows: Window[]): string {
+  return windows.map(formatWindow).join(', ')
+}
+
+export function formatDayHours(
+  hours: DayHours | undefined,
+  options: HoursOptions,
+  locale: 'en' | 'ru',
+): string {
+  if (!hours) return UNANSWERED
+  if (hours.kind === 'allDay') return ALL_DAY_LABEL[locale]
+  if (hours.kind === 'none') return options.noneLabel[locale]
+  return formatWindows(hours.windows)
+}
+
+/** Соседние дни с одинаковым текстом сливаются в отрезок: «Mon–Sat 09:00–18:00»
+ *  вместо шести строк. Сравниваются именно ТЕКСТЫ дней, а не структуры: два дня,
+ *  которые читаются одинаково, для читателя и есть одно и то же. */
+function compressDays(texts: Record<Weekday, string>, locale: 'en' | 'ru'): string {
+  const parts: string[] = []
+  let start = 0
+  for (let index = 1; index <= WEEKDAYS.length; index += 1) {
+    const same = index < WEEKDAYS.length && texts[WEEKDAYS[index]!] === texts[WEEKDAYS[start]!]
+    if (same) continue
+    const first = DAY_SHORT[WEEKDAYS[start]!][locale]
+    const last = DAY_SHORT[WEEKDAYS[index - 1]!][locale]
+    const span = index - start === 1 ? first : `${first}–${last}`
+    parts.push(`${span} ${texts[WEEKDAYS[start]!]}`)
+    start = index
+  }
+  return parts.join('; ')
+}
+
+function isLegacyText(value: unknown): value is string {
+  return typeof value === 'string'
+}
+
+export function formatWeekHours(
+  value: unknown,
+  options: HoursOptions,
+  locale: 'en' | 'ru',
+): string {
+  // Старый свободный текст печатается дословно: он остаётся ответом, пока
+  // оператор не введёт структуру (см. spec, «старые текстовые ответы»).
+  if (isLegacyText(value)) return value
+  if (weekHoursProblem(value, options) !== null) return String(value ?? '')
+
+  const week = value as WeekHours
+  const texts = Object.fromEntries(
+    WEEKDAYS.map((day) => [day, formatDayHours(week[day], options, locale)]),
+  ) as Record<Weekday, string>
+  return compressDays(texts, locale)
+}
+
+export function formatCleaning(value: unknown, locale: 'en' | 'ru'): string {
+  if (isLegacyText(value)) return value
+  if (cleaningProblem(value) !== null) return String(value ?? '')
+
+  const schedule = value as CleaningSchedule
+  const cadence = CADENCE_LABEL[schedule.cadence][locale]
+
+  if (schedule.cadence === 'weekly') {
+    return `${cadence}: ${formatWeekHours(schedule.days, CLEANING_DAY_OPTIONS, locale)}`
+  }
+  if (schedule.cadence === 'daily') {
+    return `${cadence} ${formatWindows(schedule.windows)}`
+  }
+  const nth = NTH_LABEL[String(schedule.nth)]![locale]
+  const day = DAY_FULL[schedule.weekday][locale]
+  return `${cadence}, ${nth} ${day} ${formatWindows(schedule.windows)}`
+}
+
+/**
+ * Ячейки выгрузки для недельных часов: своя колонка на каждый день плюс
+ * `free` для старого свободного текста. Ячейка дня — текст БЕЗ имени дня (имя
+ * несёт заголовок колонки) и БЕЗ прочерка: пустая ячейка файла и значит «не
+ * отвечено», а «—» получатель принял бы за значение. Язык — английский, как у
+ * всей выгрузки (`rows.ts` печатает `locale: 'en'`).
+ */
+export function weekHoursCells(
+  value: unknown,
+  options: HoursOptions,
+): Record<Weekday | 'free', string | null> {
+  const empty = Object.fromEntries(WEEKDAYS.map((day) => [day, null])) as Record<Weekday, string | null>
+
+  if (isLegacyText(value)) return { ...empty, free: value }
+  if (weekHoursProblem(value, options) !== null) return { ...empty, free: null }
+
+  const week = value as WeekHours
+  const cells = Object.fromEntries(
+    WEEKDAYS.map((day) => [day, week[day] ? formatDayHours(week[day], options, 'en') : null]),
+  ) as Record<Weekday, string | null>
+  return { ...cells, free: null }
+}
+
+/** Ячейки выгрузки графика уборки: периодичность, семь дней, свободный текст.
+ *  Ежедневная заполняет все семь дней (это и значит «каждый день»), месячная и
+ *  квартальная — только колонку своего дня недели, а `Cadence` при них несёт и
+ *  порядковый номер («Monthly, 1st»), которому иначе негде появиться. */
+export function cleaningCells(
+  value: unknown,
+): Record<Weekday | 'cadence' | 'free', string | null> {
+  const empty = Object.fromEntries(WEEKDAYS.map((day) => [day, null])) as Record<Weekday, string | null>
+
+  if (isLegacyText(value)) return { ...empty, cadence: null, free: value }
+  if (cleaningProblem(value) !== null) return { ...empty, cadence: null, free: null }
+
+  const schedule = value as CleaningSchedule
+
+  if (schedule.cadence === 'weekly') {
+    const days = weekHoursCells(schedule.days, CLEANING_DAY_OPTIONS)
+    const { free: _free, ...perDay } = days
+    return { ...perDay, cadence: CADENCE_LABEL.weekly.en, free: null }
+  }
+
+  const text = formatWindows(schedule.windows)
+  if (schedule.cadence === 'daily') {
+    const cells = Object.fromEntries(WEEKDAYS.map((day) => [day, text])) as Record<Weekday, string | null>
+    return { ...cells, cadence: CADENCE_LABEL.daily.en, free: null }
+  }
+
+  return {
+    ...empty,
+    [schedule.weekday]: text,
+    cadence: `${CADENCE_LABEL[schedule.cadence].en}, ${NTH_LABEL[String(schedule.nth)]!.en}`,
+    free: null,
+  }
+}
+
 /**
  * Смена периодичности уборки. Интервалы переносятся между `daily`, `monthly` и
  * `quarterly` — там это один список на весь график; в `weekly` они привязаны к
