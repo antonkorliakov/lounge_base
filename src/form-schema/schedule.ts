@@ -396,9 +396,16 @@ const NTH_LABEL: Record<string, Localized> = {
 }
 
 /** Один интервал; недописанный печатается с многоточием — читатель видит, что
- *  ответ начат и не закончен, а не что конец совпал с началом. */
+ *  ответ начат и не закончен, а не что конец совпал с началом.
+ *
+ *  Пригодность к показу и пригодность к печати — разные вопросы: редактор
+ *  нарочно продолжает показывать интервал с негодным временем (иначе день
+ *  исчезал бы под курсором), а печать такого значения не имеет права выдать
+ *  читателю внутреннее представление. */
 function formatWindow(window: Window): string {
-  return `${window.from}–${window.to ?? '…'}`
+  const from = isClock(window.from) ? window.from : UNANSWERED
+  const to = window.to === null ? '…' : isClock(window.to) ? window.to : UNANSWERED
+  return `${from}–${to}`
 }
 
 export function formatWindows(windows: Window[]): string {

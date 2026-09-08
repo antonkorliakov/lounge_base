@@ -588,6 +588,30 @@ describe('канонический текст недельных часов', ()
       expect(html).not.toContain('object')
     })
   })
+
+  // Собственный тег `windowsProblem` для негодной границы — 'clock', и он
+  // рисуемый (`dayRenderable`) нарочно: транзитная негодность времени не
+  // должна ронять день, как это делает 'shape'/'kind' у соседних веток I2.
+  // Но «рисуемый» — не то же самое, что «границу можно напечатать»: значение
+  // с границей не-строкой сюда попадает не через редактор (его поля пишут
+  // только строки), а из данных, записанных до этой ветки, скриптом или
+  // прежним клиентом, — и раньше `formatWindow` печатал такую границу шаблонной
+  // строкой, коверкая её в «[object Object]».
+  describe('негодное (не строка) время внутри рисуемого интервала — прочерк, а не «[object Object]»', () => {
+    it('formatWeekHours: понедельник с нестроковой границей — прочерк вместо неё, остальные дни целы', () => {
+      const badWindow = { from: {}, to: '10:00' } as unknown as Window
+      const week = { mon: { kind: 'windows', windows: [badWindow] } } as WeekHours
+      const text = formatWeekHours(week, OPEN, 'en')
+      expect(text).not.toContain('object')
+      expect(text).not.toContain('Object')
+      expect(text).toBe('Mon —–10:00; Tue–Sun —')
+    })
+
+    it('годный интервал по-прежнему печатается как раньше — регресс в обычном форматировании не пройдёт незамеченным', () => {
+      const nine: DayHours = { kind: 'windows', windows: [{ from: '09:00', to: '18:00' }] }
+      expect(formatWeekHours({ mon: nine }, OPEN, 'en')).toBe('Mon 09:00–18:00; Tue–Sun —')
+    })
+  })
 })
 
 describe('канонический текст графика уборки', () => {
@@ -639,6 +663,17 @@ describe('канонический текст графика уборки', () =
       expect(formatCleaning({ cadence: 'yearly' }, 'en')).toBe('')
       expect(formatCleaning(42, 'en')).toBe('')
     })
+  })
+
+  // Тот же случай, что у недельных часов выше: 'clock' — рисуемый тег, но
+  // граница-не-строка достижима только для значений старше этой ветки,
+  // записанных скриптом или прежним клиентом, а не через редактор.
+  it('негодная (не строка) граница интервала — прочерк вместо неё, а не «[object Object]»', () => {
+    const badWindow = { from: {}, to: '10:00' } as unknown as Window
+    const text = formatCleaning({ cadence: 'daily', windows: [badWindow] }, 'en')
+    expect(text).not.toContain('object')
+    expect(text).not.toContain('Object')
+    expect(text).toBe('Daily —–10:00')
   })
 })
 
@@ -702,5 +737,22 @@ describe('ячейки выгрузки', () => {
     expect(cells.mon).toBe('09:00–18:00')
     expect(cells.sat).toBe('09:00–18:00')
     expect(cells.sun).toBe(null)
+  })
+
+  // Тот же случай, что в «канонический текст…» выше: 'clock' — рисуемый тег,
+  // но граница-не-строка достижима только для данных старше этой ветки,
+  // записанных скриптом или прежним клиентом, а не через редактор.
+  it('негодная (не строка) граница интервала в ячейке — прочерк вместо неё, а не «[object Object]»', () => {
+    const badWindow = { from: {}, to: '10:00' } as unknown as Window
+    const week = { mon: { kind: 'windows', windows: [badWindow] } } as WeekHours
+    const cell = weekHoursCells(week, OPEN).mon
+    expect(cell).not.toContain('object')
+    expect(cell).not.toContain('Object')
+    expect(cell).toBe('—–10:00')
+
+    const cleaningCell = cleaningCells({ cadence: 'daily', windows: [badWindow] }).mon
+    expect(cleaningCell).not.toContain('object')
+    expect(cleaningCell).not.toContain('Object')
+    expect(cleaningCell).toBe('—–10:00')
   })
 })
