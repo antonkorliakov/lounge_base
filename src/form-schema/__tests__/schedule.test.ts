@@ -10,8 +10,19 @@ import {
   weekHoursProblem,
   cleaningProblem,
   CLEANING_DAY_OPTIONS,
+  windowsFinished,
+  weekHoursComplete,
+  cleaningComplete,
+  applyToAll,
+  applyToWeekdays,
+  applyToWeekend,
+  copyPreviousDay,
+  switchCadence,
+  WEEKDAY_WORKDAYS,
+  WEEKDAY_WEEKEND,
   type HoursOptions,
   type WeekHours,
+  type DayHours,
 } from '../schedule'
 
 const OPEN: HoursOptions = { allDay: true, noneLabel: { en: 'Closed', ru: 'Закрыто' } }
@@ -170,5 +181,133 @@ describe('cleaningProblem', () => {
     [{ cadence: 'quarterly', nth: 1, weekday: 'mon', windows: [{ from: '02:00', to: '01:00' }] }, 'order'],
   ])('отклоняет %j как %s', (value, expected) => {
     expect(cleaningProblem(value)).toBe(expected)
+  })
+})
+
+describe('полнота недельной сетки', () => {
+  const windows = [{ from: '01:00', to: '11:00' }]
+
+  it('отвечены все семь дней и хотя бы один открыт — заполнено', () => {
+    expect(weekHoursComplete(everyDay({ kind: 'windows', windows }), OPEN)).toBe(true)
+    expect(
+      weekHoursComplete({ ...everyDay({ kind: 'none' }), mon: { kind: 'allDay' } }, OPEN),
+    ).toBe(true)
+  })
+
+  it('не все дни отвечены — не заполнено', () => {
+    const week = everyDay({ kind: 'none' }) as Record<string, unknown>
+    delete week.sun
+    expect(weekHoursComplete(week, OPEN)).toBe(false)
+  })
+
+  it('вся неделя пустая — не заполнено: лаунж, закрытый всегда, это не ответ', () => {
+    expect(weekHoursComplete(everyDay({ kind: 'none' }), OPEN)).toBe(false)
+    expect(weekHoursComplete(everyDay({ kind: 'none' }), PEAK)).toBe(false)
+  })
+
+  it('недописанный интервал — сохраняется, но не заполнено', () => {
+    const week = everyDay({ kind: 'windows', windows: [{ from: '01:00', to: null }] })
+    expect(weekHoursProblem(week, OPEN)).toBe(null)
+    expect(weekHoursComplete(week, OPEN)).toBe(false)
+  })
+
+  it('сломанное по форме значение не заполнено (а не бросает)', () => {
+    expect(weekHoursComplete('mon 9-5', OPEN)).toBe(false)
+    expect(weekHoursComplete(null, OPEN)).toBe(false)
+  })
+})
+
+describe('полнота графика уборки', () => {
+  it('каждая периодичность с дописанными интервалами — заполнено', () => {
+    expect(cleaningComplete({ cadence: 'daily', windows: [{ from: '14:30', to: '15:00' }] })).toBe(true)
+    expect(
+      cleaningComplete({ cadence: 'monthly', nth: 1, weekday: 'mon', windows: [{ from: '22:00', to: '23:30' }] }),
+    ).toBe(true)
+    expect(
+      cleaningComplete({ cadence: 'weekly', days: { ...everyDay({ kind: 'none' }), mon: { kind: 'windows', windows: [{ from: '02:00', to: '04:00' }] } } }),
+    ).toBe(true)
+  })
+
+  it('еженедельная без единого дня с интервалами — не заполнено', () => {
+    expect(cleaningComplete({ cadence: 'weekly', days: everyDay({ kind: 'none' }) })).toBe(false)
+  })
+
+  it('недописанный интервал — не заполнено', () => {
+    expect(cleaningComplete({ cadence: 'daily', windows: [{ from: '14:30', to: null }] })).toBe(false)
+  })
+
+  it('старый текстовый ответ — не заполнено: его надо ввести заново структурой', () => {
+    expect(cleaningComplete('Every day: 14:30 – 15:00')).toBe(false)
+  })
+})
+
+describe('быстрые действия — чистые функции над неделей', () => {
+  // Явная аннотация вместо `as const`: `WeekHours`/`DayHours` требуют
+  // мутабельный `Window[]`, а `as const` сделал бы его readonly-кортежем —
+  // значение то же самое, просто типизировано под форму, которую редакторы
+  // реально кладут в состояние.
+  const mon: DayHours = { kind: 'windows', windows: [{ from: '09:00', to: '18:00' }] }
+
+  it('«одинаково всю неделю» раскладывает день-источник на все семь', () => {
+    const out = applyToAll({ mon, sun: { kind: 'none' } }, 'mon')
+    expect(Object.keys(out).sort()).toEqual([...WEEKDAYS].sort())
+    for (const day of WEEKDAYS) expect(out[day], day).toEqual(mon)
+  })
+
+  it('«на будни» не трогает выходные, «на выходные» не трогает будни', () => {
+    const week = applyToWeekdays({ mon, sat: { kind: 'none' } }, 'mon')
+    expect(WEEKDAY_WORKDAYS.every((d) => week[d]?.kind === 'windows')).toBe(true)
+    expect(week.sat).toEqual({ kind: 'none' })
+    expect(week.sun).toBeUndefined()
+
+    const weekend = applyToWeekend({ mon, sat: { kind: 'none' } }, 'mon')
+    expect(WEEKDAY_WEEKEND.every((d) => weekend[d]?.kind === 'windows')).toBe(true)
+    expect(weekend.tue).toBeUndefined()
+  })
+
+  it('«как в предыдущем дне» берёт соседа слева; у понедельника соседа нет', () => {
+    expect(copyPreviousDay({ mon }, 'tue').tue).toEqual(mon)
+    expect(copyPreviousDay({ mon }, 'mon')).toEqual({ mon })
+    // Предыдущий день не отвечен — копировать нечего, неделя не меняется.
+    expect(copyPreviousDay({ mon }, 'thu')).toEqual({ mon })
+  })
+
+  it('источник не мутируется — редактор кладёт результат в состояние React', () => {
+    const week = { mon }
+    applyToAll(week, 'mon')
+    expect(Object.keys(week)).toEqual(['mon'])
+  })
+
+  it('день-источник, который не отвечен, ничего не раскладывает', () => {
+    expect(applyToAll({}, 'mon')).toEqual({})
+  })
+})
+
+describe('switchCadence', () => {
+  const windows = [{ from: '02:00', to: '04:00' }]
+
+  it('daily → monthly переносит интервалы и ставит первый понедельник', () => {
+    const out = switchCadence({ cadence: 'daily', windows }, 'monthly')
+    expect(out).toEqual({ cadence: 'monthly', nth: 1, weekday: 'mon', windows })
+  })
+
+  it('monthly → quarterly сохраняет и день, и интервалы', () => {
+    const out = switchCadence({ cadence: 'monthly', nth: 'last', weekday: 'sun', windows }, 'quarterly')
+    expect(out).toEqual({ cadence: 'quarterly', nth: 'last', weekday: 'sun', windows })
+  })
+
+  it('в weekly и обратно интервалы не переносятся: там они привязаны к дням', () => {
+    expect(switchCadence({ cadence: 'daily', windows }, 'weekly')).toEqual({ cadence: 'weekly', days: {} })
+    expect(switchCadence({ cadence: 'weekly', days: { mon: { kind: 'windows', windows } } }, 'daily')).toEqual({
+      cadence: 'daily',
+      windows: [],
+    })
+  })
+
+  it('из пустоты (или из старого текста) — пустая форма выбранной периодичности', () => {
+    expect(switchCadence(null, 'daily')).toEqual({ cadence: 'daily', windows: [] })
+    expect(switchCadence(null, 'quarterly')).toEqual({
+      cadence: 'quarterly', nth: 1, weekday: 'mon', windows: [],
+    })
   })
 })

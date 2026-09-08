@@ -176,3 +176,100 @@ export function cleaningProblem(value: unknown): CleaningProblem {
   }
   return windowsProblem(value.windows)
 }
+
+export const WEEKDAY_WORKDAYS: readonly Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri']
+export const WEEKDAY_WEEKEND: readonly Weekday[] = ['sat', 'sun']
+
+/** Все интервалы дописаны (`to` задан). Незаполненность — вопрос полноты
+ *  анкеты, не формы значения; см. `windowsProblem`. */
+export function windowsFinished(windows: Window[]): boolean {
+  return windows.every((window) => window.to !== null)
+}
+
+function dayFinished(hours: DayHours): boolean {
+  return hours.kind === 'windows' ? windowsFinished(hours.windows) : true
+}
+
+function dayHasHours(hours: DayHours): boolean {
+  return hours.kind === 'allDay' || (hours.kind === 'windows' && hours.windows.length > 0)
+}
+
+/**
+ * Недельная сетка заполнена: значение корректно по форме, отвечены все семь
+ * дней, все интервалы дописаны и хотя бы один день несёт часы. Последнее
+ * условие — не придирка: у часов работы неделя из семи «закрыто» означала бы
+ * лаунж, который не работает никогда, а у пиковых часов и уборки — что
+ * оператор прошёл сетку, ничего не сказав.
+ */
+export function weekHoursComplete(value: unknown, options: HoursOptions): boolean {
+  if (weekHoursProblem(value, options) !== null) return false
+  const week = value as WeekHours
+  const days = WEEKDAYS.map((day) => week[day])
+  if (days.some((hours) => hours === undefined)) return false
+  const present = days as DayHours[]
+  return present.every(dayFinished) && present.some(dayHasHours)
+}
+
+/** График уборки заполнен: корректен по форме, интервалы дописаны, и есть
+ *  хотя бы один интервал (у еженедельной — хотя бы один день с интервалами). */
+export function cleaningComplete(value: unknown): boolean {
+  if (cleaningProblem(value) !== null) return false
+  const schedule = value as CleaningSchedule
+  if (schedule.cadence === 'weekly') return weekHoursComplete(schedule.days, CLEANING_DAY_OPTIONS)
+  return schedule.windows.length > 0 && windowsFinished(schedule.windows)
+}
+
+function spread(week: WeekHours, from: Weekday, targets: readonly Weekday[]): WeekHours {
+  const source = week[from]
+  // Копировать нечего — неделя возвращается как есть, а не затирается
+  // пустотой: кнопка быстрого действия не должна уметь стереть введённое.
+  if (!source) return week
+  const out: WeekHours = { ...week }
+  for (const day of targets) out[day] = source
+  return out
+}
+
+/** «Одинаково всю неделю»: день-источник (в интерфейсе — понедельник) едет во
+ *  все семь. Новый объект, источник не мутируется — результат кладут в
+ *  состояние React, а мутация не вызвала бы перерисовку. */
+export function applyToAll(week: WeekHours, from: Weekday): WeekHours {
+  return spread(week, from, WEEKDAYS)
+}
+
+export function applyToWeekdays(week: WeekHours, from: Weekday): WeekHours {
+  return spread(week, from, WEEKDAY_WORKDAYS)
+}
+
+export function applyToWeekend(week: WeekHours, from: Weekday): WeekHours {
+  return spread(week, from, WEEKDAY_WEEKEND)
+}
+
+/** «Как в предыдущем дне»: сосед слева по `WEEKDAYS`. У понедельника соседа
+ *  нет, а неотвеченный сосед копировать нечего — в обоих случаях неделя не
+ *  меняется (кнопка в интерфейсе в это время выключена, но правило живёт
+ *  здесь, а не в компоненте). */
+export function copyPreviousDay(week: WeekHours, day: Weekday): WeekHours {
+  const index = WEEKDAYS.indexOf(day)
+  if (index <= 0) return week
+  return spread(week, WEEKDAYS[index - 1]!, [day])
+}
+
+/**
+ * Смена периодичности уборки. Интервалы переносятся между `daily`, `monthly` и
+ * `quarterly` — там это один список на весь график; в `weekly` они привязаны к
+ * дням, поэтому при переходе в неё и из неё список начинается пустым (склеивать
+ * «интервалы вообще» с «интервалами вторника» значило бы придумывать за
+ * оператора). `nth`/`weekday` при переходе daily → monthly берут первый
+ * понедельник как отправную точку, которую видно и легко поменять.
+ */
+export function switchCadence(current: CleaningSchedule | null, cadence: Cadence): CleaningSchedule {
+  const carried = current && current.cadence !== 'weekly' ? current.windows : []
+
+  if (cadence === 'daily') return { cadence, windows: carried }
+  if (cadence === 'weekly') return { cadence, days: {} }
+
+  const nth = current && (current.cadence === 'monthly' || current.cadence === 'quarterly') ? current.nth : 1
+  const weekday =
+    current && (current.cadence === 'monthly' || current.cadence === 'quarterly') ? current.weekday : 'mon'
+  return { cadence, nth, weekday, windows: carried }
+}
