@@ -44,12 +44,11 @@ const NOT_A_NUMBER = fail(
   'Enter a non-negative number',
   'Введите неотрицательное число',
 )
-// Один текст на все нарушения формы расписания, а не текст на тег: оператор в
-// браузере физически не может собрать сетку с пересечением или обратным
-// временем (редактор такого не даёт), так что до этого отказа доходит только
-// запись мимо интерфейса — старая вкладка или скрипт. Ему нужна честная
-// причина, а не разбор какого именно правила; разбор есть у тегов
-// `windowsProblem`, и он проверяется тестами схемы.
+// Один текст на все нарушения формы расписания, а не текст на тег: теги
+// `windowsProblem` закреплены собственными тестами схемы, а вызывающий,
+// который вообще дошёл до этого отказа, уже обошёл контроли самой анкеты
+// (старая вкладка, скрипт или запись прямо в API) — ему нужна честная
+// причина, а не разбор того, какое именно правило сработало.
 const INVALID_SCHEDULE = fail(
   'Check the schedule: times must run forward and windows must not overlap',
   'Проверьте расписание: время должно идти вперёд, интервалы не должны пересекаться',
@@ -405,6 +404,6 @@ export function fieldAnswered(field: Field, value: unknown): boolean {
 
   if (value === null || value === undefined) return false
   if (typeof value === 'string') return value.trim() !== ''
-  if (Array.isArray(value)) return value.length === 0 ? false : true
+  if (Array.isArray(value)) return value.length > 0
   return true
 }

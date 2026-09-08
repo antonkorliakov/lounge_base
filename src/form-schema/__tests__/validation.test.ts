@@ -444,4 +444,10 @@ describe('fieldAnswered', () => {
     expect(fieldAnswered(field('III.1.1'), 'Mon-Sun 09-18')).toBe(false)
     expect(fieldAnswered(field('III.1.4'), { cadence: 'daily', windows: [{ from: '02:00', to: '04:00' }] })).toBe(true)
   })
+
+  it('для массивов (мультивыбор) — «не пусто»', () => {
+    const f = fakeField({ type: 'multi_select', optionList: 'zone', required: false })
+    expect(fieldAnswered(f, [])).toBe(false)
+    expect(fieldAnswered(f, ['central'])).toBe(true)
+  })
 })
