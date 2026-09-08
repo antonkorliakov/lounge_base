@@ -69,8 +69,8 @@ export function renderField(fieldKey: string, value: unknown): ExportCell {
 
 /**
  * Ячейки ОДНОГО поля с их ключами колонок. У обычного поля пара одна — та же,
- * что раньше писал `put(fieldKey, renderField(...))`. У расписания их девять
- * или десять: раскладку считает схема (`weekHoursCells`/`cleaningCells`),
+ * что раньше писал `put(fieldKey, renderField(...))`. У расписания их восемь
+ * или девять: раскладку считает схема (`weekHoursCells`/`cleaningCells`),
  * выгрузка только разносит по ключам, чтобы «какой день в какой колонке» не
  * было написано дважды.
  */
