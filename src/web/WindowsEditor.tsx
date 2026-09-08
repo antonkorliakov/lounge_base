@@ -82,9 +82,10 @@ export function WindowsEditor(props: {
       <button
         type="button"
         className="wh-add"
-        // День кончился, добавлять нечего: последний интервал уже доходит до
-        // конца суток, и `nextWindowStart` не может предложить время внутри
-        // дня для нового интервала.
+        // Кнопка выключена по двум причинам, обе — `nextWindowStart` вернул
+        // `null`: либо день кончился (последний интервал уже доходит до
+        // конца суток), либо предыдущий интервал ещё не закрыт (`to: null`)
+        // — начинать следующий неоткуда, пока у этого нет конца.
         disabled={nextStart === null}
         onClick={() => nextStart !== null && onChange([...windows, { from: nextStart, to: null }])}
       >

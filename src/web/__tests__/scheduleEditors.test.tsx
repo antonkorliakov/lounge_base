@@ -79,6 +79,16 @@ describe('WeekHoursEditor', () => {
       const button = html.match(/<button type="button" class="wh-add"[^>]*>/)![0]
       expect(button).toContain('disabled=""')
     })
+
+    // Последний интервал ещё не закрыт (`to: null`) — начинать следующий
+    // неоткуда: любое предложенное время совпало бы с `from` этого же
+    // интервала и форма отказала бы. Кнопка выключена, а не предлагает то же
+    // время второй раз.
+    it('последний интервал без конца: кнопка выключена — предыдущий ещё не закрыт', () => {
+      const html = render({ mon: { kind: 'windows', windows: [{ from: '09:00', to: null }] } }, OPEN)
+      const button = html.match(/<button type="button" class="wh-add"[^>]*>/)![0]
+      expect(button).toContain('disabled=""')
+    })
   })
 
   it('быстрые действия на месте; «как в предыдущем дне» — не у понедельника', () => {

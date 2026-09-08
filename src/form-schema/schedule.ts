@@ -130,14 +130,18 @@ export function windowsProblem(value: unknown): WindowsProblem {
  *  у дня 01:00–11:00 такой интервал встал бы внутрь предыдущего, значение
  *  оказалось бы негодным по форме, а редактор прячет негодный день — оператор
  *  увидел бы, как день исчезает вместо новой строки. Берём конец последнего
- *  интервала (у недописанного — его начало), а у пустого списка — 09:00 как
- *  разумное начало рабочего дня. */
+ *  интервала, а у пустого списка — 09:00 как разумное начало рабочего дня.
+ *  Если последний интервал ещё не закрыт (`to: null`), начинать следующий
+ *  неоткуда — предложенное время совпало бы с `from` этого же интервала, и
+ *  `windowsProblem` тут же отверг бы список правилом order; возвращаем
+ *  `null`, и кнопка «+ интервал» остаётся выключена, пока оператор не
+ *  проставит конец текущему интервалу. */
 export function nextWindowStart(windows: Window[]): string | null {
   if (windows.length === 0) return '09:00'
   const last = windows[windows.length - 1]!
-  const start = last.to ?? last.from
-  if (start === END_OF_DAY) return null
-  return start
+  if (last.to === null) return null
+  if (last.to === END_OF_DAY) return null
+  return last.to
 }
 
 export type DayHoursProblem = 'shape' | 'kind' | 'allDayNotAllowed' | Exclude<WindowsProblem, null> | null
