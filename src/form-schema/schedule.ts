@@ -159,6 +159,36 @@ export function dayHoursProblem(hours: unknown, options: HoursOptions): DayHours
   return windowsProblem((hours as { windows?: unknown }).windows)
 }
 
+/**
+ * Может ли редактор нарисовать день с таким изъяном, или ему честнее исчезнуть
+ * («не отвечено»). Это НЕ то же самое, что «можно сохранить» —
+ * `weekHoursProblem`/`dayHoursProblem` уже решают это для сервера, и
+ * `dayRenderable` их не заменяет, а добавляет второй, более узкий вопрос:
+ * можно ли БЕЗОПАСНО прочитать `hours.kind`/`hours.windows`, чтобы нарисовать
+ * кнопки и поля времени.
+ *
+ * `'shape'` и `'kind'` — нет: значение не разобрать (не объект, `windows` не
+ * массив, элемент списка без `from`/`to`) или вид дня неизвестен, и попытка
+ * всё равно отрисовать интервалы обычно кончается чтением поля не с того
+ * типа. `'clock'`, `'order'`, `'overlap'`, `'empty'`, `'allDayNotAllowed'` —
+ * да: день по-прежнему `{ kind, windows: Window[] }` пусть и с неверными
+ * временами или недопустимым `allDay`, редактор читает его как обычно и
+ * просто рисует то, что там есть, а отказ на сохранение (если он будет)
+ * покажет `validateField`.
+ *
+ * Обычное редактирование ПРОХОДИТ через эти негодные-по-форме, но рисуемые
+ * состояния постоянно: конец интервала правится раньше начала на полпути
+ * ввода, соседний интервал на секунду наезжает на предыдущий — `onChange`
+ * стреляет на каждое нажатие клавиши, и значение в это мгновение уже лежит
+ * в состоянии React. Раньше `asWeek` держала только `null`/`'empty'`, и
+ * любое из этих мимолётных состояний роняло день целиком: поля пропадали,
+ * фокус терялся, кнопки состояния гасли — а следующий клик оператора сохранял
+ * эту пропажу как «Сохранено».
+ */
+export function dayRenderable(problem: DayHoursProblem): boolean {
+  return problem !== 'shape' && problem !== 'kind'
+}
+
 export type WeekHoursProblem = 'shape' | 'day' | DayHoursProblem
 
 /** Что не так со недельной сеткой, или `null`. Отсутствующий день — «не
@@ -196,6 +226,37 @@ export function cleaningProblem(value: unknown): CleaningProblem {
     }
   }
   return windowsProblem(value.windows)
+}
+
+const UNRENDERABLE_SCHEDULE_TAGS: ReadonlySet<CleaningProblem> = new Set(['shape', 'cadence', 'nth', 'day'])
+
+/**
+ * Тот же вопрос, что `dayRenderable`, но для графика уборки целиком: можно ли
+ * прочитать `cadence`/`nth`/`weekday`/`windows`/`days`, чтобы нарисовать
+ * кнопки периодичности и вложенный редактор — или значению честнее считаться
+ * нечитаемым (старым текстом/`null`, если он есть, иначе четыре ненажатые
+ * кнопки).
+ *
+ * Негодно: `'shape'` (значение не объект), `'cadence'` (периодичность не одна
+ * из четырёх — рисовать нажатой нечего), `'nth'`/`'day'` (у monthly/quarterly
+ * порядковый номер или день недели не разобрать — `<select>` получит значение,
+ * которого нет среди его `<option>`). Годно: `null`, `'empty'` (уже
+ * обжитое первое состояние периодичности) и все теги одного дня —
+ * `'kind'`, `'allDayNotAllowed'`, `'clock'`, `'order'`, `'overlap'` — они
+ * приходят с ОДНОГО испорченного дня еженедельной уборки (`weekHoursProblem`
+ * возвращает тег этого дня как есть) и не должны гасить остальные шесть дней
+ * и кнопки периодичности: `WeekHoursEditor`'s `asWeek` сама разберётся с этим
+ * днём через `dayRenderable`, как только доберётся до него.
+ *
+ * Раньше `CleaningScheduleEditor`'s `asSchedule` держала только `null`/
+ * `'empty'` и на любом из этих тегов возвращала `schedule: null` — то есть
+ * не только гасила один плохой день еженедельной уборки вместе со всей
+ * неделей, но и роняла daily/monthly/quarterly целиком на том же
+ * пересечении/недописанном интервале, на который `dayRenderable` для
+ * обычных недельных часов уже отвечает «рисуй».
+ */
+export function scheduleRenderable(problem: CleaningProblem): boolean {
+  return problem === null || !UNRENDERABLE_SCHEDULE_TAGS.has(problem)
 }
 
 export const WEEKDAY_WORKDAYS: readonly Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri']
@@ -457,6 +518,16 @@ export function cleaningCells(
  * понедельник как отправную точку, которую видно и легко поменять.
  */
 export function switchCadence(current: CleaningSchedule | null, cadence: Cadence): CleaningSchedule {
+  // Кнопки периодичности не выключаются, когда их периодичность уже выбрана
+  // (оператор может нажать «Weekly», уже стоя на ней) — выбор ТОЙ ЖЕ
+  // периодичности обязан ничего не менять, для всех четырёх одинаково.
+  // Раньше это было true только по совпадению для daily/monthly/quarterly
+  // (интервалы переживают ветку «перенос интервалов» ниже, потому что несут
+  // тот же список сами себе), а `weekly` собирала новое значение с нуля
+  // (`{ cadence, days: {} }`) и стирала уже заполненную сетку — рабочий
+  // повторный клик выглядел как порча данных с пометкой «Сохранено».
+  if (current && current.cadence === cadence) return current
+
   const carried = current && current.cadence !== 'weekly' ? current.windows : []
 
   if (cadence === 'daily') return { cadence, windows: carried }

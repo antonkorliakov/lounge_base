@@ -9,6 +9,7 @@ import {
   copyPreviousDay,
   dayCopyable,
   dayHoursProblem,
+  dayRenderable,
   nextWindowStart,
   type DayHours,
   type HoursOptions,
@@ -33,7 +34,33 @@ import { WindowsEditor } from './WindowsEditor'
  *  запрет `allDay`) превращает уже сохранённые дни в `dayHoursProblem`, и
  *  тогда пропасть должна только эта клетка. Неизвестный ключ недели по той
  *  же причине не бросает исключение и не портит остальные дни — он просто
- *  игнорируется. */
+ *  игнорируется.
+ *
+ *  День остаётся в сетке, если `dayRenderable` (`schedule.ts`) говорит, что
+ *  его можно нарисовать (Critical 2, сквозное ревью) — не только когда он
+ *  безупречен или `'empty'`. `onChange` стреляет на каждое нажатие клавиши, и
+ *  значение уже лежит в состоянии React в момент, когда конец интервала на
+ *  секунду оказывается раньше начала или наезжает на соседний: раньше
+ *  единственными пропущенными сюда тегами были `null`/`'empty'`, и любое из
+ *  этих мимолётных состояний роняло день целиком — поля пропадали, фокус
+ *  терялся, кнопки состояния гасли, а следующий клик оператора сохранял эту
+ *  пропажу как «Сохранено». `dayRenderable` отсеивает только то, что
+ *  действительно нельзя прочитать (`'shape'`, `'kind'`) — те же теги, что
+ *  `dayCopyable` не умеет различить и посчитал бы день годным источником
+ *  копирования, так что здесь день отбрасывается и копирование, и остальные
+ *  шесть дней остаются целы.
+ *
+ *  M2: `'empty'` (`{ kind: 'windows', windows: [] }`) на дне — НЕ то, что
+ *  оставляет оператор, набравший «+ интервал» и снявший единственный «×»:
+ *  `setDayWindows` ниже удаляет день из недели целиком в этот самый момент,
+ *  живого пути через ЭТОТ редактор к застрявшему `'empty'`-дню нет — ни у
+ *  обычных недельных часов, ни у еженедельной сетки уборки (тот же
+ *  `WeekHoursEditor`, тот же `setDayWindows`), и `validation.ts` отказывает
+ *  сохранённому `'empty'`-дню `weekHours`-поля. Тег остаётся в списке
+ *  рисуемых ради значений, до которых этот редактор не дотрагивался: сид
+ *  (`scripts/seed-dev.ts`), более старая версия клиента, запись в обход UI.
+ *  `dayRenderable` не различает происхождение — раз день можно прочитать, он
+ *  рисуется. */
 function asWeek(value: unknown, options: HoursOptions): { week: WeekHours; legacy: string | null } {
   if (typeof value === 'string' && value.trim() !== '') return { week: {}, legacy: value }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return { week: {}, legacy: null }
@@ -41,19 +68,7 @@ function asWeek(value: unknown, options: HoursOptions): { week: WeekHours; legac
   const week: WeekHours = {}
   for (const [day, hours] of Object.entries(value)) {
     if (!(WEEKDAYS as readonly string[]).includes(day)) continue
-    const problem = dayHoursProblem(hours, options)
-    // `empty` — законная форма («по часам», ещё без интервалов), не порча:
-    // тот же результат оставил бы и оператор, набравший «+ интервал» и снявший
-    // единственный «×» (см. `setDayWindows` ниже). Прятать такой день не за
-    // что: `dayCopyable` и так отказывает ему в роли источника копирования
-    // (`windows.length === 0`), а на экране честнее показать пустой список
-    // интервалов, чем подменить его на «не отвечено», которое было бы неправдой
-    // про хранимые данные. Любая другая проблема (неизвестный вид, интервалы
-    // не по форме, круглосуточно там, где поле его больше не разрешает и т.п.)
-    // не настолько безобидна: `dayCopyable` не умеет её различить и посчитал
-    // бы такой день годным источником, так что здесь день отбрасывается — и
-    // копирование, и остальные шесть дней остаются целы.
-    if (problem === null || problem === 'empty') week[day as Weekday] = hours as DayHours
+    if (dayRenderable(dayHoursProblem(hours, options))) week[day as Weekday] = hours as DayHours
   }
   return { week, legacy: null }
 }

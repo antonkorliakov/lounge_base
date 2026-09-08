@@ -454,6 +454,21 @@ test('расписание: неделя одним нажатием, разры
   await monday.locator('input[type="time"]').nth(3).fill('23:00')
   await expect(page.getByText('Saved')).toBeVisible()
 
+  // C2 (сквозное ревью): исправление конца существующего интервала на время
+  // раньше его начала — обычное редактирование ("набирал 13:00, стёр
+  // последнюю цифру"), не порча. Раньше день целиком пропадал с экрана в этот
+  // момент (поля времени исчезали, кнопки состояния гасли), а следующий клик
+  // сохранял пропажу как «Сохранено». День и его поля должны остаться на
+  // месте, а отказ сервера — стать видимым рядом с полем.
+  await monday.locator('input[type="time"]').nth(3).fill('10:00') // конец второго интервала раньше его начала (12:00)
+  await expect(monday.locator('input[type="time"]')).toHaveCount(4)
+  await expect(
+    page.getByText('Check the schedule: times must run forward and windows must not overlap'),
+  ).toBeVisible()
+  // Починка: возвращаем конец интервала на место — отказ снимается, «Сохранено».
+  await monday.locator('input[type="time"]').nth(3).fill('23:00')
+  await expect(page.getByText('Saved')).toBeVisible()
+
   // Одна кнопка — вся неделя.
   await hours.getByRole('button', { name: 'Same all week' }).click()
   await expect(page.getByText('Saved')).toBeVisible()

@@ -15,6 +15,8 @@ import {
   windowsFinished,
   weekHoursComplete,
   cleaningComplete,
+  dayRenderable,
+  scheduleRenderable,
   applyToAll,
   applyToWeekdays,
   applyToWeekend,
@@ -413,6 +415,32 @@ describe('быстрые действия — чистые функции над
   })
 })
 
+describe('dayRenderable — можно ли нарисовать день с таким изъяном', () => {
+  it.each([null, 'clock', 'order', 'overlap', 'empty', 'allDayNotAllowed'] as const)(
+    'рисуемо: %s',
+    (problem) => {
+      expect(dayRenderable(problem)).toBe(true)
+    },
+  )
+
+  it.each(['shape', 'kind'] as const)('нерисуемо: %s', (problem) => {
+    expect(dayRenderable(problem)).toBe(false)
+  })
+})
+
+describe('scheduleRenderable — можно ли нарисовать график с таким изъяном', () => {
+  it.each([null, 'empty', 'clock', 'order', 'overlap', 'kind', 'allDayNotAllowed'] as const)(
+    'рисуемо: %s',
+    (problem) => {
+      expect(scheduleRenderable(problem)).toBe(true)
+    },
+  )
+
+  it.each(['shape', 'cadence', 'nth', 'day'] as const)('нерисуемо: %s', (problem) => {
+    expect(scheduleRenderable(problem)).toBe(false)
+  })
+})
+
 describe('switchCadence', () => {
   const windows = [{ from: '02:00', to: '04:00' }]
 
@@ -438,6 +466,34 @@ describe('switchCadence', () => {
     expect(switchCadence(null, 'daily')).toEqual({ cadence: 'daily', windows: [] })
     expect(switchCadence(null, 'quarterly')).toEqual({
       cadence: 'quarterly', nth: 1, weekday: 'mon', windows: [],
+    })
+  })
+
+  // C1: нажатие уже выбранной периодичности не должно ничего менять — ни для
+  // одной из четырёх. `weekly` — самый заметный случай (кнопка не выключена,
+  // и `{ cadence: 'weekly', days: {} }` проходит `cleaningProblem`, поэтому
+  // повторный клик по «Weekly» стирал заполненную сетку и сохранял пустоту
+  // как «Сохранено»), но правило одно на все четыре, а не частный случай для
+  // weekly — «выбор той же периодичности ничего не меняет».
+  describe('повторный выбор ТОЙ ЖЕ периодичности не меняет значение', () => {
+    it('weekly → weekly сохраняет заполненную сетку', () => {
+      const current = { cadence: 'weekly' as const, days: { mon: { kind: 'windows' as const, windows } } }
+      expect(switchCadence(current, 'weekly')).toEqual(current)
+    })
+
+    it('daily → daily сохраняет интервалы', () => {
+      const current = { cadence: 'daily' as const, windows }
+      expect(switchCadence(current, 'daily')).toEqual(current)
+    })
+
+    it('monthly → monthly сохраняет nth/weekday/интервалы', () => {
+      const current = { cadence: 'monthly' as const, nth: 'last' as const, weekday: 'fri' as const, windows }
+      expect(switchCadence(current, 'monthly')).toEqual(current)
+    })
+
+    it('quarterly → quarterly сохраняет nth/weekday/интервалы', () => {
+      const current = { cadence: 'quarterly' as const, nth: 2 as const, weekday: 'wed' as const, windows }
+      expect(switchCadence(current, 'quarterly')).toEqual(current)
     })
   })
 })

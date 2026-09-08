@@ -137,6 +137,43 @@ describe('WeekHoursEditor', () => {
     })
   })
 
+  // C2: обычное редактирование постоянно проходит через мимолётные негодные
+  // состояния (конец раньше начала, пересечение соседних интервалов) — день
+  // не должен пропадать на этом, потому что `onChange` стреляет на каждое
+  // нажатие клавиши и значение уже лежит в состоянии React в этот момент.
+  describe('день с мимолётной негодностью (C2) остаётся на экране', () => {
+    it('конец интервала раньше начала (order) — оба поля времени видны', () => {
+      const html = render({ mon: { kind: 'windows', windows: [{ from: '12:00', to: '01:00' }] } }, OPEN)
+      expect(html).toContain('value="12:00"')
+      expect(html).toContain('value="01:00"')
+    })
+
+    it('пересекающиеся интервалы (overlap) — все четыре поля времени видны', () => {
+      const html = render(
+        {
+          mon: {
+            kind: 'windows',
+            windows: [
+              { from: '01:00', to: '12:00' },
+              { from: '11:00', to: '13:00' },
+            ],
+          },
+        },
+        OPEN,
+      )
+      expect(html.match(/type="time"/g)).toHaveLength(4)
+    })
+
+    it('по-настоящему нерисуемый день (неизвестный kind) по-прежнему отбрасывается', () => {
+      const html = render({ mon: { kind: 'sometimes' } }, OPEN)
+      // Ни одна из трёх кнопок состояния для понедельника не нажата — день
+      // вернулся к «не отвечено», как и раньше для `'shape'`/`'kind'`.
+      const rows = html.match(/<div class="wh-row">[\s\S]*?<\/div>\s*<\/div>/g)!
+      const monRow = rows.find((row) => row.includes(UI['schedule.day.mon'].en))!
+      expect(monRow).not.toContain('aria-pressed="true"')
+    })
+  })
+
   it('испорченный понедельник не прячет вторник: у вторника видны настоящие интервалы', () => {
     // Раньше `asWeek` блокировала всю неделю, если хоть один день не проходил
     // `weekHoursProblem` — испорченный понедельник (пустой список интервалов,
@@ -229,6 +266,36 @@ describe('CleaningScheduleEditor', () => {
     it('по-настоящему испорченное значение (неизвестная периодичность) — все кнопки не нажаты', () => {
       const html = renderCleaning({ cadence: 'yearly', windows: [] })
       for (const label of ['Daily', 'Weekly', 'Monthly', 'Quarterly']) expect(html).toContain(label)
+      expect(html).not.toContain('aria-pressed="true"')
+    })
+  })
+
+  // C2: та же мимолётная негодность, что у обычных недельных часов, не
+  // должна ронять весь график уборки — ни daily/monthly/quarterly со своим
+  // общим списком интервалов, ни один плохой день еженедельной сетки.
+  describe('график с мимолётной негодностью (C2) остаётся на экране', () => {
+    it('daily: конец раньше начала — «Daily» остаётся нажатой, поля времени видны', () => {
+      const html = renderCleaning({ cadence: 'daily', windows: [{ from: '12:00', to: '01:00' }] })
+      expect(html).toMatch(/aria-pressed="true"[^>]*>Daily</)
+      expect(html).toContain('value="12:00"')
+      expect(html).toContain('value="01:00"')
+    })
+
+    it('weekly: один плохой день не гасит кнопки периодичности и остальные дни', () => {
+      const html = renderCleaning({
+        cadence: 'weekly',
+        days: {
+          mon: { kind: 'windows', windows: [{ from: '12:00', to: '01:00' }] },
+          tue: { kind: 'windows', windows: [{ from: '09:00', to: '18:00' }] },
+        },
+      })
+      expect(html).toMatch(/aria-pressed="true"[^>]*>Weekly</)
+      expect(html).toContain('value="09:00"')
+      expect(html).toContain('value="18:00"')
+    })
+
+    it('по-настоящему нерисуемое значение (сломанная периодичность) по-прежнему падает к четырём ненажатым кнопкам', () => {
+      const html = renderCleaning({ cadence: 'yearly', windows: [{ from: '12:00', to: '01:00' }] })
       expect(html).not.toContain('aria-pressed="true"')
     })
   })
