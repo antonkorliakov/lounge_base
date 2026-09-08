@@ -1,0 +1,85 @@
+'use client'
+
+import type React from 'react'
+import { END_OF_DAY, type Window } from '@/form-schema'
+import { useLocale } from '@/i18n/context'
+
+/**
+ * Интервалы ОДНОГО дня (или одного графика уборки). Правил здесь нет: порядок,
+ * непересечение и полнота живут в `schedule.ts` и проверяются сервером; этот
+ * компонент только показывает список и отдаёт наверх новый массив.
+ *
+ * Новый интервал появляется с `to: null` — незакрытым. Так и задумано: отказ
+ * на полпути набора уносил бы черновик, поэтому незакрытый интервал
+ * сохраняется, а отправку держит правило полноты (`windowsFinished`).
+ */
+export function WindowsEditor(props: {
+  windows: Window[]
+  onChange: (windows: Window[]) => void
+  /** Префикс id для связки label с полем: ключ поля плюс день, чтобы на
+   *  странице с семью днями и двумя расписаниями id не столкнулись. */
+  idPrefix: string
+}): React.JSX.Element {
+  const { t } = useLocale()
+  const { windows, onChange } = props
+
+  const replace = (index: number, window: Window): void => {
+    onChange(windows.map((current, position) => (position === index ? window : current)))
+  }
+
+  return (
+    <div className="wh-windows">
+      {windows.map((window, index) => {
+        const id = `${props.idPrefix}-w${index}`
+        const endOfDay = window.to === END_OF_DAY
+        return (
+          <div className="wh-window" key={index}>
+            <label htmlFor={`${id}-from`}>{t('schedule.from')}</label>
+            <input
+              id={`${id}-from`}
+              type="time"
+              step={300}
+              value={window.from}
+              onChange={(e) => replace(index, { ...window, from: e.target.value })}
+            />
+            <label htmlFor={`${id}-to`}>{t('schedule.to')}</label>
+            <input
+              id={`${id}-to`}
+              type="time"
+              step={300}
+              // `<input type="time">` не принимает 24:00 — при таком значении
+              // поле осталось бы пустым, и «работаем до полуночи» выглядело бы
+              // как незаполненный конец. Поэтому конец суток живёт нажатой
+              // кнопкой рядом, а поле в это время пустое и выключено.
+              value={endOfDay ? '' : (window.to ?? '')}
+              disabled={endOfDay}
+              onChange={(e) => replace(index, { ...window, to: e.target.value === '' ? null : e.target.value })}
+            />
+            <button
+              type="button"
+              aria-pressed={endOfDay}
+              onClick={() => replace(index, { ...window, to: endOfDay ? null : END_OF_DAY })}
+            >
+              {t('schedule.untilEndOfDay')}
+            </button>
+            <button
+              type="button"
+              className="wh-drop"
+              aria-label={t('schedule.removeWindow')}
+              onClick={() => onChange(windows.filter((_, position) => position !== index))}
+            >
+              ×
+            </button>
+          </div>
+        )
+      })}
+      <button
+        type="button"
+        className="wh-add"
+        onClick={() => onChange([...windows, { from: '09:00', to: null }])}
+      >
+        {t('schedule.addWindow')}
+      </button>
+    </div>
+  )
+}
