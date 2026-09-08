@@ -55,13 +55,18 @@ export function WindowsEditor(props: {
               disabled={endOfDay}
               onChange={(e) => replace(index, { ...window, to: e.target.value === '' ? null : e.target.value })}
             />
-            <button
-              type="button"
-              aria-pressed={endOfDay}
-              onClick={() => replace(index, { ...window, to: endOfDay ? null : END_OF_DAY })}
-            >
-              {t('schedule.untilEndOfDay')}
-            </button>
+            {/* `.chip-row` несёт то же правило нажатости `[aria-pressed='true']`,
+                что и `.avail-toggle` (см. globals.css) — кнопка получает
+                общий вид нажатого чипа без второй копии цветового правила. */}
+            <span className="chip-row">
+              <button
+                type="button"
+                aria-pressed={endOfDay}
+                onClick={() => replace(index, { ...window, to: endOfDay ? null : END_OF_DAY })}
+              >
+                {t('schedule.untilEndOfDay')}
+              </button>
+            </span>
             <button
               type="button"
               className="wh-drop"

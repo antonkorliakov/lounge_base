@@ -17,6 +17,7 @@ import {
   applyToWeekdays,
   applyToWeekend,
   copyPreviousDay,
+  dayCopyable,
   switchCadence,
   formatWeekHours,
   formatCleaning,
@@ -284,6 +285,36 @@ describe('быстрые действия — чистые функции над
 
   it('день-источник, который не отвечен, ничего не раскладывает', () => {
     expect(applyToAll({}, 'mon')).toEqual({})
+  })
+
+  describe('dayCopyable — годится ли день как источник копирования', () => {
+    it('неотвеченный день — нет', () => {
+      expect(dayCopyable(undefined)).toBe(false)
+    })
+
+    it('«по часам» без единого интервала — нет: нести нечего, а сервер такой день отвергает', () => {
+      expect(dayCopyable({ kind: 'windows', windows: [] })).toBe(false)
+    })
+
+    it('«по часам» с недописанным интервалом — да: черновик уже несёт начатый ответ', () => {
+      expect(dayCopyable({ kind: 'windows', windows: [{ from: '09:00', to: null }] })).toBe(true)
+    })
+
+    it('«не работаем» и «круглосуточно» — да, это законные ответы', () => {
+      expect(dayCopyable({ kind: 'none' })).toBe(true)
+      expect(dayCopyable({ kind: 'allDay' })).toBe(true)
+    })
+  })
+
+  it('регресс: пустой «по часам» источник не стирает реальные ответы соседних дней', () => {
+    // Воспроизведение из ревью: понедельник нажат в «по часам» и остался без
+    // единого интервала (оператор удалил последний), вторник несёт настоящие
+    // часы. «Одинаково всю неделю» от понедельника не должен стереть вторник.
+    const week: WeekHours = {
+      mon: { kind: 'windows', windows: [] },
+      tue: { kind: 'windows', windows: [{ from: '09:00', to: '18:00' }] },
+    }
+    expect(applyToAll(week, 'mon')).toEqual(week)
   })
 })
 

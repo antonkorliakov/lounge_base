@@ -7,11 +7,13 @@ import {
   applyToWeekdays,
   applyToWeekend,
   copyPreviousDay,
+  dayCopyable,
   weekHoursProblem,
   type DayHours,
   type HoursOptions,
   type WeekHours,
   type Weekday,
+  type Window,
 } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 import { WindowsEditor } from './WindowsEditor'
@@ -37,6 +39,20 @@ export function WeekHoursEditor(props: {
 
   const setDay = (day: Weekday, hours: DayHours): void => onChange({ ...week, [day]: hours })
 
+  // Список интервалов дня опустел (снят последний «×»): день возвращается в
+  // «не отвечено», а не остаётся truthy-пустышкой `{kind:'windows',windows:[]}}`
+  // — сервер такой день отвергает (`windowsProblem` → 'empty'), а с truthy-
+  // пустышкой быстрые действия скопировали бы пустоту на другие дни (см.
+  // `dayCopyable` в schedule.ts).
+  const setDayWindows = (day: Weekday, windows: Window[]): void => {
+    if (windows.length === 0) {
+      const { [day]: _removed, ...rest } = week
+      onChange(rest)
+      return
+    }
+    setDay(day, { kind: 'windows', windows })
+  }
+
   const states: { key: 'allDay' | 'none' | 'windows'; label: string }[] = [
     ...(options.allDay ? [{ key: 'allDay' as const, label: t('schedule.allDay') }] : []),
     { key: 'none' as const, label: pick(options.noneLabel) },
@@ -53,13 +69,13 @@ export function WeekHoursEditor(props: {
       )}
 
       <div className="wh-bulk">
-        <button type="button" disabled={!week.mon} onClick={() => onChange(applyToAll(week, 'mon'))}>
+        <button type="button" disabled={!dayCopyable(week.mon)} onClick={() => onChange(applyToAll(week, 'mon'))}>
           {t('schedule.sameAllWeek')}
         </button>
-        <button type="button" disabled={!week.mon} onClick={() => onChange(applyToWeekdays(week, 'mon'))}>
+        <button type="button" disabled={!dayCopyable(week.mon)} onClick={() => onChange(applyToWeekdays(week, 'mon'))}>
           {t('schedule.copyToWorkdays')}
         </button>
-        <button type="button" disabled={!week.mon} onClick={() => onChange(applyToWeekend(week, 'mon'))}>
+        <button type="button" disabled={!dayCopyable(week.mon)} onClick={() => onChange(applyToWeekend(week, 'mon'))}>
           {t('schedule.copyToWeekend')}
         </button>
       </div>
@@ -95,7 +111,7 @@ export function WeekHoursEditor(props: {
               <button
                 type="button"
                 className="wh-copy"
-                disabled={!week[WEEKDAYS[index - 1]!]}
+                disabled={!dayCopyable(week[WEEKDAYS[index - 1]!])}
                 onClick={() => onChange(copyPreviousDay(week, day))}
               >
                 {t('schedule.copyPrevious')}
@@ -105,7 +121,7 @@ export function WeekHoursEditor(props: {
               <WindowsEditor
                 windows={hours.windows}
                 idPrefix={`${props.idPrefix}-${day}`}
-                onChange={(windows) => setDay(day, { kind: 'windows', windows })}
+                onChange={(windows) => setDayWindows(day, windows)}
               />
             )}
           </div>

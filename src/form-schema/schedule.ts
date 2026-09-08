@@ -219,11 +219,21 @@ export function cleaningComplete(value: unknown): boolean {
   return schedule.windows.length > 0 && windowsFinished(schedule.windows)
 }
 
+/** Годится ли день как ИСТОЧНИК копирования: он отвечен и несёт ответ. День в
+ *  состоянии «по часам» с пустым списком интервалов не несёт ничего (и сервер
+ *  такой день отвергает — `windowsProblem` → 'empty'), поэтому копировать его
+ *  на другие дни значило бы стереть их ответы. Одно правило на два потребителя:
+ *  `spread` ниже и выключенность кнопок в `WeekHoursEditor`. */
+export function dayCopyable(hours: DayHours | undefined): boolean {
+  if (!hours) return false
+  return hours.kind !== 'windows' || hours.windows.length > 0
+}
+
 function spread(week: WeekHours, from: Weekday, targets: readonly Weekday[]): WeekHours {
   const source = week[from]
   // Копировать нечего — неделя возвращается как есть, а не затирается
   // пустотой: кнопка быстрого действия не должна уметь стереть введённое.
-  if (!source) return week
+  if (!dayCopyable(source)) return week
   const out: WeekHours = { ...week }
   for (const day of targets) out[day] = source
   return out

@@ -75,4 +75,35 @@ describe('WeekHoursEditor', () => {
     expect(html).toContain(UI['form.freeFormAnswer'].en)
     expect(html).toContain('aria-pressed="false"')
   })
+
+  // Выключенность — это и есть обещание «быстрое действие не может стереть»,
+  // и она проверяется в разметке, потому что DOM в этом наборе нет.
+  describe('быстрые действия выключены, когда понедельник не несёт ответа', () => {
+    it('понедельник не отвечен — три кнопки массовых действий выключены', () => {
+      const html = render({}, OPEN)
+      const bulk = html.match(/<div class="wh-bulk">[\s\S]*?<\/div>/)![0]
+      expect(bulk.match(/disabled=""/g)).toHaveLength(3)
+    })
+
+    it('понедельник несёт часы — кнопки массовых действий включены', () => {
+      const html = render({ mon: { kind: 'allDay' } }, OPEN)
+      const bulk = html.match(/<div class="wh-bulk">[\s\S]*?<\/div>/)![0]
+      expect(bulk).not.toContain('disabled=""')
+    })
+
+    it('копия вторника выключена, пока понедельник не отвечен', () => {
+      const html = render({}, OPEN)
+      const rows = html.match(/<div class="wh-row">[\s\S]*?<\/div>\s*<\/div>/g)!
+      const tueRow = rows.find((row) => row.includes(UI['schedule.day.tue'].en))!
+      expect(tueRow).toContain('class="wh-copy" disabled=""')
+    })
+
+    it('понедельник «по часам» без единого интервала — кнопки массовых действий тоже выключены', () => {
+      // Воспроизведение из ревью: «By hours» нажато, последний интервал
+      // удалён — день формально truthy, но ничего не несёт.
+      const html = render({ mon: { kind: 'windows', windows: [] } }, OPEN)
+      const bulk = html.match(/<div class="wh-bulk">[\s\S]*?<\/div>/)![0]
+      expect(bulk.match(/disabled=""/g)).toHaveLength(3)
+    })
+  })
 })
