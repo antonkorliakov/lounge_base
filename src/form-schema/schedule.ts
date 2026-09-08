@@ -94,8 +94,11 @@ export type WindowsProblem = 'shape' | 'clock' | 'order' | 'overlap' | 'empty' |
  *
  * Недописанный интервал (`to: null`) формой НЕ нарушен: оператор только что
  * нажал «+ интервал», отказ на этом месте уносил бы черновик. Незаполненность
- * ловит `weekHoursComplete` (Task 3), то есть отправка, а не сохранение.
- * Порядок при этом проверяется по `from`, который есть всегда.
+ * ловит `weekHoursComplete` (Task 3), то есть отправка, а не сохранение. Но
+ * `from` у недописанного интервала есть всегда, и по нему интервал наравне
+ * с завершёнными проверяется и на порядок, и на пересечение с предыдущим —
+ * ждать конца, чтобы заметить, что начало уже залезло в чужой интервал,
+ * не нужно. Отложен только сам пропущенный `to`.
  */
 export function windowsProblem(value: unknown): WindowsProblem {
   if (!Array.isArray(value)) return 'shape'
@@ -112,10 +115,10 @@ export function windowsProblem(value: unknown): WindowsProblem {
 
     const start = clockMinutes(from)
     if (start <= previousStart) return 'order'
+    if (previousEnd > start) return 'overlap'
     if (to !== null) {
       const end = clockMinutes(to)
       if (end <= start) return 'order'
-      if (previousEnd > start) return 'overlap'
       previousEnd = end
     }
     previousStart = start
