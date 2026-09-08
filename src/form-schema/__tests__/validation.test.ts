@@ -416,6 +416,14 @@ describe('расписания — сервер как ворота', () => {
     if (!refused.ok) expect(refused.error.en).toBe('Check the cleaning schedule: pick a cadence and set the times')
   })
 
+  // WHY: сохранение и полнота отвечают на разные вопросы; «периодичность
+  // выбрана, время ещё нет» сохраняется, но не отправляется.
+  it('график уборки: периодичность выбрана, интервалов ещё нет — сохраняется, но неполно', () => {
+    const justChosen = { cadence: 'monthly', nth: 1, weekday: 'mon', windows: [] }
+    expect(validateField(field('III.1.4'), justChosen).ok).toBe(true)
+    expect(fieldAnswered(field('III.1.4'), justChosen)).toBe(false)
+  })
+
   it('null — очищенный ответ, не отказ; строка — старый ответ, тоже не отказ', () => {
     expect(validateField(field('III.1.1'), null).ok).toBe(false) // обязательное → REQUIRED
     if (!validateField(field('III.1.1'), null).ok) {

@@ -294,7 +294,13 @@ export function validateField(field: Field, value: unknown): ValidationResult {
     case 'cleaningSchedule': {
       if (value === null || value === undefined) return field.required ? REQUIRED : ok
       if (typeof value === 'string') return ok
-      return cleaningProblem(value) === null ? ok : INVALID_CLEANING
+      const problem = cleaningProblem(value)
+      // `'empty'` — периодичность выбрана, интервалы ещё не набраны: это
+      // нормальное состояние черновика (та же логика, что у интервала без
+      // конца), и отказ на нём говорил бы оператору о его ошибке там, где
+      // ошибки нет. Отправку такого графика по-прежнему держит полнота —
+      // `cleaningComplete` требует непустой список.
+      return problem === null || problem === 'empty' ? ok : INVALID_CLEANING
     }
 
     case 'text':
