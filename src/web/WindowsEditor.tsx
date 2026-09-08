@@ -1,7 +1,7 @@
 'use client'
 
 import type React from 'react'
-import { END_OF_DAY, type Window } from '@/form-schema'
+import { END_OF_DAY, nextWindowStart, type Window } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 
 /**
@@ -22,6 +22,7 @@ export function WindowsEditor(props: {
 }): React.JSX.Element {
   const { t } = useLocale()
   const { windows, onChange } = props
+  const nextStart = nextWindowStart(windows)
 
   const replace = (index: number, window: Window): void => {
     onChange(windows.map((current, position) => (position === index ? window : current)))
@@ -81,7 +82,11 @@ export function WindowsEditor(props: {
       <button
         type="button"
         className="wh-add"
-        onClick={() => onChange([...windows, { from: '09:00', to: null }])}
+        // День кончился, добавлять нечего: последний интервал уже доходит до
+        // конца суток, и `nextWindowStart` не может предложить время внутри
+        // дня для нового интервала.
+        disabled={nextStart === null}
+        onClick={() => nextStart !== null && onChange([...windows, { from: nextStart, to: null }])}
       >
         {t('schedule.addWindow')}
       </button>

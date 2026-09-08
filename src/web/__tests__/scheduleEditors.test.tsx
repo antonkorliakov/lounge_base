@@ -63,6 +63,24 @@ describe('WeekHoursEditor', () => {
     expect(html).not.toContain('value="24:00"')
   })
 
+  // Кнопка предлагает время после последнего интервала, а когда день кончился
+  // — не предлагает ничего. Раньше «+ interval» всегда добавляла 09:00: у
+  // дня 01:00–11:00 это создавало интервал внутри предыдущего, форма
+  // отказывала, и весь день пропадал из сетки.
+  describe('«+ interval» предлагает время после последнего интервала', () => {
+    it('день 01:00–11:00: кнопка включена', () => {
+      const html = render({ mon: { kind: 'windows', windows: [{ from: '01:00', to: '11:00' }] } }, OPEN)
+      const button = html.match(/<button type="button" class="wh-add"[^>]*>/)![0]
+      expect(button).not.toContain('disabled')
+    })
+
+    it('день заканчивается интервалом до конца суток: кнопка выключена — добавлять нечего', () => {
+      const html = render({ mon: { kind: 'windows', windows: [{ from: '03:00', to: '24:00' }] } }, OPEN)
+      const button = html.match(/<button type="button" class="wh-add"[^>]*>/)![0]
+      expect(button).toContain('disabled=""')
+    })
+  })
+
   it('быстрые действия на месте; «как в предыдущем дне» — не у понедельника', () => {
     const html = render({ mon: { kind: 'allDay' } }, OPEN)
     expect(html).toContain(UI['schedule.sameAllWeek'].en)

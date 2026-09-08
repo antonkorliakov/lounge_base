@@ -9,6 +9,7 @@ import {
   copyPreviousDay,
   dayCopyable,
   dayHoursProblem,
+  nextWindowStart,
   type DayHours,
   type HoursOptions,
   type WeekHours,
@@ -128,7 +129,15 @@ export function WeekHoursEditor(props: {
                     setDay(
                       day,
                       state.key === 'windows'
-                        ? { kind: 'windows', windows: hours?.kind === 'windows' ? hours.windows : [{ from: '09:00', to: null }] }
+                        ? {
+                            kind: 'windows',
+                            // Пустой день с нуля — тот же случай, что пустой
+                            // список в `nextWindowStart`: 09:00 живёт одним
+                            // местом, а не повторённым литералом. `!` тут
+                            // безопасен: пустой список — первая ветка
+                            // `nextWindowStart`, она всегда возвращает строку.
+                            windows: hours?.kind === 'windows' ? hours.windows : [{ from: nextWindowStart([])!, to: null }],
+                          }
                         : { kind: state.key },
                     )
                   }

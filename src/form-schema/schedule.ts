@@ -126,6 +126,20 @@ export function windowsProblem(value: unknown): WindowsProblem {
   return null
 }
 
+/** С какого времени начинать СЛЕДУЮЩИЙ интервал дня. Не фиксированные 09:00:
+ *  у дня 01:00–11:00 такой интервал встал бы внутрь предыдущего, значение
+ *  оказалось бы негодным по форме, а редактор прячет негодный день — оператор
+ *  увидел бы, как день исчезает вместо новой строки. Берём конец последнего
+ *  интервала (у недописанного — его начало), а у пустого списка — 09:00 как
+ *  разумное начало рабочего дня. */
+export function nextWindowStart(windows: Window[]): string | null {
+  if (windows.length === 0) return '09:00'
+  const last = windows[windows.length - 1]!
+  const start = last.to ?? last.from
+  if (start === END_OF_DAY) return null
+  return start
+}
+
 export type DayHoursProblem = 'shape' | 'kind' | 'allDayNotAllowed' | Exclude<WindowsProblem, null> | null
 
 /** Что не так с ОДНИМ днём, или `null`. Отдельно от недели, потому что у
