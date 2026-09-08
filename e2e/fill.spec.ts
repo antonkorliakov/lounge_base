@@ -427,6 +427,74 @@ test('контактные поля: телефон отфильтрован п�
   )
 })
 
+/**
+ * Структурированные расписания (spec 2026-09-04): сетка вместо свободного
+ * текста, быстрые действия и разрывной день — целиком через настоящий путь
+ * (клики, автосохранение, перезагрузка). Правила формы и сжатия дней
+ * закреплены юнитами (`src/form-schema/__tests__/schedule.test.ts`); здесь —
+ * что оператор может это собрать и что собранное доживает до сервера.
+ */
+test('расписание: неделя одним нажатием, разрывной день, закрытое воскресенье — и всё это переживает перезагрузку', async ({ page }) => {
+  const url = seed()
+  await page.goto(url)
+
+  await clickNext(page, 2)
+  await expect(page.getByRole('heading', { name: 'Operating Schedule', level: 1 })).toBeVisible()
+
+  const hours = page.locator('.field').filter({ hasText: 'Lounge Operating Hours' })
+  const dayRow = (label: string) => hours.locator('.wh-row').filter({ hasText: label })
+
+  // Понедельник по часам: 01:00–11:00 и второй интервал 12:00–23:00.
+  await dayRow('Monday').getByRole('button', { name: 'By hours' }).click()
+  const monday = dayRow('Monday')
+  await monday.locator('input[type="time"]').first().fill('01:00')
+  await monday.locator('input[type="time"]').nth(1).fill('11:00')
+  await monday.getByRole('button', { name: '+ interval' }).click()
+  await monday.locator('input[type="time"]').nth(2).fill('12:00')
+  await monday.locator('input[type="time"]').nth(3).fill('23:00')
+  await expect(page.getByText('Saved')).toBeVisible()
+
+  // Одна кнопка — вся неделя.
+  await hours.getByRole('button', { name: 'Same all week' }).click()
+  await expect(page.getByText('Saved')).toBeVisible()
+  for (const day of ['Tuesday', 'Sunday']) {
+    await expect(dayRow(day).locator('input[type="time"]').first()).toHaveValue('01:00')
+  }
+
+  // Воскресенье закрыто — и «Closed» нажато именно у него.
+  await dayRow('Sunday').getByRole('button', { name: 'Closed' }).click()
+  await expect(page.getByText('Saved')).toBeVisible()
+  await expect(dayRow('Sunday').getByRole('button', { name: 'Closed' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(dayRow('Saturday').getByRole('button', { name: 'Closed' })).toHaveAttribute('aria-pressed', 'false')
+
+  // Пиковые часы: у них нет круглосуточного состояния, а пустое читается иначе.
+  const peak = page.locator('.field').filter({ hasText: 'Peak Hours' })
+  await expect(peak.getByRole('button', { name: '24 hours' })).toHaveCount(0)
+  await expect(peak.locator('.wh-row').first().getByRole('button', { name: 'No peak' })).toBeVisible()
+
+  // Уборка: ежемесячно, первый понедельник, 22:00–23:30.
+  const cleaning = page.locator('.field').filter({ hasText: 'Deep Cleaning Schedule' })
+  await cleaning.getByRole('button', { name: 'Monthly' }).click()
+  await cleaning.getByRole('button', { name: '+ interval' }).click()
+  await cleaning.locator('input[type="time"]').first().fill('22:00')
+  await cleaning.locator('input[type="time"]').nth(1).fill('23:30')
+  await expect(page.getByText('Saved')).toBeVisible()
+
+  // Перечитываем с сервера — структура сохранилась целиком.
+  await page.reload()
+  await clickNext(page, 2)
+  const monAgain = page.locator('.field').filter({ hasText: 'Lounge Operating Hours' }).locator('.wh-row').filter({ hasText: 'Monday' })
+  await expect(monAgain.locator('input[type="time"]')).toHaveCount(4)
+  await expect(monAgain.locator('input[type="time"]').nth(2)).toHaveValue('12:00')
+  await expect(
+    page.locator('.field').filter({ hasText: 'Lounge Operating Hours' }).locator('.wh-row').filter({ hasText: 'Sunday' })
+      .getByRole('button', { name: 'Closed' }),
+  ).toHaveAttribute('aria-pressed', 'true')
+  await expect(
+    page.locator('.field').filter({ hasText: 'Deep Cleaning Schedule' }).getByRole('button', { name: 'Monthly' }),
+  ).toHaveAttribute('aria-pressed', 'true')
+})
+
 test('перезагрузка сохраняет значение, введённое до срабатывания автосохранения', async ({ page }) => {
   const url = seed()
   await page.goto(url)
