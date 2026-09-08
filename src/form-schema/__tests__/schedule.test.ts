@@ -571,6 +571,23 @@ describe('канонический текст недельных часов', ()
       'Monday – Saturday: 00:00 – 23:59',
     )
   })
+
+  // I2: раньше один негодный день ронял ВЕСЬ текст в `String(value ?? '')` —
+  // на плоском объекте это буквально печатало «[object Object]» ревьюеру и в
+  // файл выгрузки. Теперь деградация — по дню, как у `asWeek` в редакторе:
+  // хорошие дни печатаются как обычно, плохой — тем же прочерком, что и
+  // непришедший день.
+  describe('деградация по дню вместо порчи всего текста (I2)', () => {
+    it('шесть хороших дней плюс один по-настоящему нерисуемый — шесть напечатаны, седьмой — прочерк', () => {
+      const week = { ...everyDay(nine), sun: { kind: 'sometimes' } } as unknown as WeekHours
+      expect(formatWeekHours(week, OPEN, 'en')).toBe('Mon–Sat 09:00–18:00; Sun —')
+    })
+
+    it('formatWeekHours({ mon: { kind: "allDay" } }, PEAK, "en") больше не содержит "object"', () => {
+      const html = formatWeekHours({ mon: { kind: 'allDay' } }, PEAK, 'en')
+      expect(html).not.toContain('object')
+    })
+  })
 })
 
 describe('канонический текст графика уборки', () => {
@@ -600,6 +617,28 @@ describe('канонический текст графика уборки', () =
 
   it('старый текст — как есть', () => {
     expect(formatCleaning('Every day: 14:30 – 15:00', 'en')).toBe('Every day: 14:30 – 15:00')
+  })
+
+  // I2: та же деградация, что у недельных часов — печатается то, что можно
+  // прочитать, а не `String(значение)` целиком.
+  describe('деградация вместо порчи всего текста (I2)', () => {
+    it('периодичность легко читается, интервалы — нет: печатается одна периодичность', () => {
+      expect(formatCleaning({ cadence: 'daily', windows: 'not an array' }, 'en')).toBe('Daily')
+    })
+
+    it('еженедельная с одним нерисуемым днём — печатает остальные шесть, а не «object»', () => {
+      const value = {
+        cadence: 'weekly',
+        days: { ...everyDay({ kind: 'none' }), mon: { kind: 'sometimes' } },
+      }
+      expect(formatCleaning(value, 'en')).not.toContain('object')
+      expect(formatCleaning(value, 'en')).toBe('Weekly: Mon —; Tue–Sun No cleaning')
+    })
+
+    it('периодичность вообще не разобрать — пустая строка, а не «[object Object]»', () => {
+      expect(formatCleaning({ cadence: 'yearly' }, 'en')).toBe('')
+      expect(formatCleaning(42, 'en')).toBe('')
+    })
   })
 })
 
@@ -651,5 +690,17 @@ describe('ячейки выгрузки', () => {
     expect(cells.free).toBe('Every day: 14:30 – 15:00')
     expect(cells.cadence).toBe(null)
     expect(cells.mon).toBe(null)
+  })
+
+  // I2: та же деградация по дню, что у канонического текста — `weekHoursCells`
+  // раньше возвращала все семь ячеек `null`, стоило одному дню быть не по
+  // форме, вместо шести настоящих значений плюс пустая ячейка у седьмого.
+  it('шесть хороших дней плюс один по-настоящему нерисуемый — их ячейки целы', () => {
+    const nine = { kind: 'windows' as const, windows: [{ from: '09:00', to: '18:00' }] }
+    const week = { ...everyDay(nine), sun: { kind: 'sometimes' } } as unknown as WeekHours
+    const cells = weekHoursCells(week, OPEN)
+    expect(cells.mon).toBe('09:00–18:00')
+    expect(cells.sat).toBe('09:00–18:00')
+    expect(cells.sun).toBe(null)
   })
 })

@@ -438,6 +438,18 @@ function isLegacyText(value: unknown): value is string {
   return typeof value === 'string'
 }
 
+/**
+ * Канонический текст недели. Деградирует ПО ДНЮ, той же мерой, что `asWeek` в
+ * `WeekHoursEditor.tsx` (`dayRenderable`) — не всем текстом разом (Important
+ * 2, сквозное ревью). Раньше единственной проверкой формы был
+ * `weekHoursProblem(value, options) !== null` для ВСЕЙ недели, и он срабатывал
+ * от одного плохого дня — `weekHoursProblem` возвращает тег первого
+ * встреченного нарушения как тег недели целиком (см. её комментарий), так что
+ * шесть настоящих ответов пропадали вместе с седьмым, а строкой печати
+ * оказывался `String(value ?? '')` — на плоском объекте буквально
+ * «[object Object]», и это доезжало до ревьюера (`renderValues`) и до файла
+ * выгрузки (`export/rows.ts`, `single.ts`) как есть.
+ */
 export function formatWeekHours(
   value: unknown,
   options: HoursOptions,
@@ -446,31 +458,63 @@ export function formatWeekHours(
   // Старый свободный текст печатается дословно: он остаётся ответом, пока
   // оператор не введёт структуру (см. spec, «старые текстовые ответы»).
   if (isLegacyText(value)) return value
-  if (weekHoursProblem(value, options) !== null) return String(value ?? '')
+  if (!isPlainObject(value)) return ''
 
   const week = value as WeekHours
   const texts = Object.fromEntries(
-    WEEKDAYS.map((day) => [day, formatDayHours(week[day], options, locale)]),
+    WEEKDAYS.map((day) => {
+      const hours = week[day]
+      const text = dayRenderable(dayHoursProblem(hours, options))
+        ? formatDayHours(hours, options, locale)
+        : UNANSWERED
+      return [day, text]
+    }),
   ) as Record<Weekday, string>
   return compressDays(texts, locale)
 }
 
+/**
+ * Канонический текст графика уборки — та же деградация: печатается всё, что
+ * можно прочитать, вместо `String(значение)` целиком. Периодичность —
+ * первый и самый дешёвый в проверке кусок формы, поэтому она печатается,
+ * даже если дальше (интервалы, `nth`/`weekday`, один день еженедельной сетки)
+ * разобрать нечего; полностью нечитаемое значение (периодичность неизвестна
+ * или значение не объект) — пустая строка, а не порченный `String`.
+ */
 export function formatCleaning(value: unknown, locale: 'en' | 'ru'): string {
   if (isLegacyText(value)) return value
-  if (cleaningProblem(value) !== null) return String(value ?? '')
+  if (!isPlainObject(value)) return ''
 
-  const schedule = value as CleaningSchedule
-  const cadence = CADENCE_LABEL[schedule.cadence][locale]
+  const cadenceRaw = value.cadence
+  if (typeof cadenceRaw !== 'string' || !(CADENCES as readonly string[]).includes(cadenceRaw)) {
+    return ''
+  }
+  const cadence = cadenceRaw as Cadence
+  const cadenceLabel = CADENCE_LABEL[cadence][locale]
 
-  if (schedule.cadence === 'weekly') {
-    return `${cadence}: ${formatWeekHours(schedule.days, CLEANING_DAY_OPTIONS, locale)}`
+  if (cadence === 'weekly') {
+    return `${cadenceLabel}: ${formatWeekHours(value.days, CLEANING_DAY_OPTIONS, locale)}`
   }
-  if (schedule.cadence === 'daily') {
-    return `${cadence} ${formatWindows(schedule.windows)}`
+
+  // `dayRenderable` берёт тот же список тегов, что и день недельной сетки:
+  // `windowsProblem`'s теги ('shape'|'clock'|'order'|'overlap'|'empty'|null)
+  // — подмножество `DayHoursProblem`, так что 'shape' (список интервалов не
+  // разобрать) остаётся непечатаемым, а мимолётные 'clock'/'order'/'overlap'
+  // и законное первое 'empty' печатаются как есть (пустой список → пустой
+  // текст, ветки ниже сами решают, что показать без него).
+  const windowsText = dayRenderable(windowsProblem(value.windows)) ? formatWindows(value.windows as Window[]) : ''
+
+  if (cadence === 'daily') {
+    return windowsText ? `${cadenceLabel} ${windowsText}` : cadenceLabel
   }
-  const nth = NTH_LABEL[String(schedule.nth)]![locale]
-  const day = DAY_FULL[schedule.weekday][locale]
-  return `${cadence}, ${nth} ${day} ${formatWindows(schedule.windows)}`
+
+  const nthOk = (NTHS as readonly unknown[]).includes(value.nth)
+  const weekdayOk = typeof value.weekday === 'string' && (WEEKDAYS as readonly string[]).includes(value.weekday)
+  if (!nthOk || !weekdayOk) return cadenceLabel
+
+  const nth = NTH_LABEL[String(value.nth)]![locale]
+  const day = DAY_FULL[value.weekday as Weekday][locale]
+  return windowsText ? `${cadenceLabel}, ${nth} ${day} ${windowsText}` : `${cadenceLabel}, ${nth} ${day}`
 }
 
 /**
@@ -487,11 +531,22 @@ export function weekHoursCells(
   const empty = Object.fromEntries(WEEKDAYS.map((day) => [day, null])) as Record<Weekday, string | null>
 
   if (isLegacyText(value)) return { ...empty, free: value }
-  if (weekHoursProblem(value, options) !== null) return { ...empty, free: null }
+  if (!isPlainObject(value)) return { ...empty, free: null }
 
+  // Деградация по дню (Important 2) — та же мера, что `formatWeekHours` выше:
+  // хороший день печатает свою ячейку, нерисуемый или непришедший день —
+  // пустая ячейка (то же «не отвечено», которое пустая ячейка файла и так
+  // значит), а не все семь ячеек `null` из-за одного плохого дня.
   const week = value as WeekHours
   const cells = Object.fromEntries(
-    WEEKDAYS.map((day) => [day, week[day] ? formatDayHours(week[day], options, 'en') : null]),
+    WEEKDAYS.map((day) => {
+      const hours = week[day]
+      const text =
+        hours !== undefined && dayRenderable(dayHoursProblem(hours, options))
+          ? formatDayHours(hours, options, 'en')
+          : null
+      return [day, text]
+    }),
   ) as Record<Weekday, string | null>
   return { ...cells, free: null }
 }
@@ -506,26 +561,38 @@ export function cleaningCells(
   const empty = Object.fromEntries(WEEKDAYS.map((day) => [day, null])) as Record<Weekday, string | null>
 
   if (isLegacyText(value)) return { ...empty, cadence: null, free: value }
-  if (cleaningProblem(value) !== null) return { ...empty, cadence: null, free: null }
+  if (!isPlainObject(value)) return { ...empty, cadence: null, free: null }
 
-  const schedule = value as CleaningSchedule
+  const cadenceRaw = value.cadence
+  if (typeof cadenceRaw !== 'string' || !(CADENCES as readonly string[]).includes(cadenceRaw)) {
+    return { ...empty, cadence: null, free: null }
+  }
+  const cadence = cadenceRaw as Cadence
 
-  if (schedule.cadence === 'weekly') {
-    const days = weekHoursCells(schedule.days, CLEANING_DAY_OPTIONS)
+  if (cadence === 'weekly') {
+    const days = weekHoursCells(value.days, CLEANING_DAY_OPTIONS)
     const { free: _free, ...perDay } = days
     return { ...perDay, cadence: CADENCE_LABEL.weekly.en, free: null }
   }
 
-  const text = formatWindows(schedule.windows)
-  if (schedule.cadence === 'daily') {
+  // Та же деградация, что в `formatCleaning`: интервалы нерисуемые по форме
+  // ('shape') не печатаются вовсе, но периодичность (а у monthly/quarterly —
+  // и колонка дня) остаётся видна.
+  const text = dayRenderable(windowsProblem(value.windows)) ? formatWindows(value.windows as Window[]) : null
+
+  if (cadence === 'daily') {
     const cells = Object.fromEntries(WEEKDAYS.map((day) => [day, text])) as Record<Weekday, string | null>
     return { ...cells, cadence: CADENCE_LABEL.daily.en, free: null }
   }
 
+  const nthOk = (NTHS as readonly unknown[]).includes(value.nth)
+  const weekdayOk = typeof value.weekday === 'string' && (WEEKDAYS as readonly string[]).includes(value.weekday)
+  if (!nthOk || !weekdayOk) return { ...empty, cadence: CADENCE_LABEL[cadence].en, free: null }
+
   return {
     ...empty,
-    [schedule.weekday]: text,
-    cadence: `${CADENCE_LABEL[schedule.cadence].en}, ${NTH_LABEL[String(schedule.nth)]!.en}`,
+    [value.weekday as Weekday]: text,
+    cadence: `${CADENCE_LABEL[cadence].en}, ${NTH_LABEL[String(value.nth)]!.en}`,
     free: null,
   }
 }
