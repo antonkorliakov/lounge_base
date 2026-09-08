@@ -115,3 +115,15 @@ describe('шаблонные фразы схемы пригодны для за�
     })
   }
 })
+
+it('расписание печатается каноническим текстом через formatFieldValue', () => {
+  const week = Object.fromEntries(
+    ['mon', 'tue', 'wed', 'thu', 'fri', 'sat'].map((d) => [d, { kind: 'allDay' }]),
+  )
+  expect(
+    formatFieldValue(fieldByKey('III.1.1')!, { ...week, sun: { kind: 'none' } }, { locale: 'en', template: 'phrase' }),
+  ).toBe('Mon–Sat 24h; Sun Closed')
+  expect(
+    formatFieldValue(fieldByKey('III.1.4')!, { cadence: 'daily', windows: [{ from: '02:00', to: '04:00' }] }, { locale: 'ru', template: 'slots' }),
+  ).toBe('Ежедневно 02:00–04:00')
+})

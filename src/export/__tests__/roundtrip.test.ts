@@ -10,6 +10,7 @@ import {
   PHOTO_SLOTS,
   SERVICE_ATTRIBUTES,
   SERVICE_ITEMS,
+  WEEKDAYS,
   applicableAttributes,
   attributeApplies,
   isOfferedAvailability,
@@ -93,6 +94,17 @@ function enteredFieldValue(field: Field, position: number): unknown {
       return `+90 212 ${100 + position} 00 00`
     case 'email':
       return `answer-${field.key.toLowerCase().replaceAll('.', '-')}@example.com`
+
+    // Расписания проходят валидацию только структурой; свой набор часов у
+    // каждого поля, чтобы ячейка, уехавшая в чужую колонку, не совпала со
+    // «своей» случайно.
+    case 'weekHours': {
+      const from = `${String(6 + (position % 12)).padStart(2, '0')}:00`
+      const day = { kind: 'windows' as const, windows: [{ from, to: '23:00' }] }
+      return Object.fromEntries(WEEKDAYS.map((weekday) => [weekday, day]))
+    }
+    case 'cleaningSchedule':
+      return { cadence: 'daily' as const, windows: [{ from: '14:30', to: '15:00' }] }
 
     case 'date':
       return '2026-03-01'

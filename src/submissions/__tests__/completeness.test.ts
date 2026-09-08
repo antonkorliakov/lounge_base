@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { createTestDb } from '@/db/__tests__/harness'
 import type { Db } from '@/db/types'
 import { lounges, submissions, photos } from '@/db/schema'
-import { FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, MIN_PHOTOS } from '@/form-schema'
+import {
+  FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, MIN_PHOTOS, OPTION_LISTS, WEEKDAYS, PHONE_PLACEHOLDER,
+} from '@/form-schema'
 import { saveFieldValue, saveServiceValue } from '../values'
 import { missingItems } from '../completeness'
 
@@ -14,6 +16,94 @@ async function seedDraft(db: Db): Promise<string> {
   const [submission] = await db
     .insert(submissions).values({ loungeId: lounge!.id }).returning()
   return submission!.id
+}
+
+/**
+ * A fully answered questionnaire, written through the real `saveFieldValue`/
+ * `saveServiceValue` writers — same shape as `transitions.test.ts`'s own
+ * `seedComplete`, plus the two schedule branches that helper predates. A
+ * bare fallback string (its old default for every field type it didn't
+ * special-case) is a valid but UNANSWERED value for `weekHours`/
+ * `cleaningSchedule` (`fieldAnswered` requires the structure, not just text),
+ * so a schedule test built on the old ternary would seed a submission that
+ * `missingItems` already considers incomplete before the test even breaks
+ * anything — the new test below needs the schedule fields genuinely complete
+ * first, or "breaking one field makes it incomplete" would prove nothing.
+ */
+async function seedComplete(db: Db): Promise<string> {
+  const [lounge] = await db
+    .insert(lounges)
+    .values({ name: 'Primeclass', country: 'Turkey', city: 'Istanbul', airport: 'Istanbul Airport', iataCode: 'IST' })
+    .returning()
+  const [submission] = await db
+    .insert(submissions).values({ loungeId: lounge!.id }).returning()
+  const submissionId = submission!.id
+
+  for (const field of FIELDS.filter((f) => f.required)) {
+    const value =
+      field.type === 'date' ? '2026-03-01'
+      : field.type === 'number' ? 1
+      : field.type === 'multi_select' ? ['departure']
+      : field.type === 'template'
+        ? Object.fromEntries(field.templateSlots.map((s) => [s.key, 1]))
+      : field.type === 'select' || field.type === 'select_with_detail'
+        ? {
+            option: OPTION_LISTS[field.optionList!][0]!.id,
+            detail: 'подробности',
+            ...(field.key === 'III.3.2' ? { slots: { age: 10 } } : {}),
+          }
+        : field.type === 'phone' ? PHONE_PLACEHOLDER
+        : field.type === 'email' ? 'ops@example.com'
+        // Каждый день недели заполнен — только круглосуточно у полей, что
+        // его разрешают (`hoursOptions.allDay`); у пиковых часов сетка
+        // пуста, если использовать `allDay`, где его нет.
+        : field.type === 'weekHours'
+          ? Object.fromEntries(
+              WEEKDAYS.map((day) => [
+                day,
+                field.hoursOptions!.allDay
+                  ? { kind: 'allDay' as const }
+                  : { kind: 'windows' as const, windows: [{ from: '06:00', to: '09:00' }] },
+              ]),
+            )
+        : field.type === 'cleaningSchedule'
+          ? { cadence: 'daily' as const, windows: [{ from: '02:00', to: '04:00' }] }
+        : 'заполнено'
+
+    await saveFieldValue(db, { submissionId, fieldKey: field.key, value })
+  }
+
+  for (const item of SERVICE_ITEMS) {
+    await saveServiceValue(db, {
+      submissionId,
+      itemKey: item.key,
+      value: {
+        available: item.availabilityList === 'vaping' ? 'not_allowed' : 'no',
+        chargeType: null, price: null, currency: null,
+        slotMinutes: null, bookingRequired: null, details: null,
+      },
+    })
+  }
+
+  for (const slot of PHOTO_SLOTS.filter((s) => s.required)) {
+    await db.insert(photos).values({
+      submissionId, slot: slot.key,
+      blobKey: `${slot.key}.jpg`, url: `https://example.test/${slot.key}.jpg`,
+    })
+  }
+
+  const requiredCount = PHOTO_SLOTS.filter((s) => s.required).length
+  const extraSlot = PHOTO_SLOTS.find((s) => s.extra)
+  if (extraSlot) {
+    for (let i = requiredCount; i < MIN_PHOTOS; i++) {
+      await db.insert(photos).values({
+        submissionId, slot: extraSlot.key,
+        blobKey: `${extraSlot.key}-${i}.jpg`, url: `https://example.test/${extraSlot.key}-${i}.jpg`,
+      })
+    }
+  }
+
+  return submissionId
 }
 
 describe('полнота анкеты', () => {
@@ -236,5 +326,17 @@ describe('полнота анкеты', () => {
 
     const missing = await missingItems(db, submissionId)
     expect(missing.photoSlots).toHaveLength(0)
+  })
+
+  it('расписание с недописанным интервалом — анкета неполна', async () => {
+    const db = await createTestDb()
+    const submissionId = await seedComplete(db)
+    await saveFieldValue(db, {
+      submissionId,
+      fieldKey: 'III.1.1',
+      value: { mon: { kind: 'windows', windows: [{ from: '09:00', to: null }] } },
+    })
+    const missing = await missingItems(db, submissionId)
+    expect(missing.fieldKeys).toContain('III.1.1')
   })
 })

@@ -1,4 +1,5 @@
 import type { Field, TemplateSlot } from './fields'
+import { formatCleaning, formatWeekHours } from './schedule'
 
 /**
  * Текстовое представление ОДНОГО значения поля анкеты — общее для всех
@@ -170,6 +171,18 @@ function formatTemplate(field: Field, raw: Record<string, unknown>, style: Field
  */
 export function formatFieldValue(field: Field, raw: unknown, style: FieldValueStyle): string | null {
   if (raw === null || raw === undefined || raw === '') return null
+
+  // Расписания печатаются каноническим текстом — одним и тем же на экране
+  // проверки, в карточке правок, в листе одной анкеты. Старый свободный текст
+  // `formatWeekHours` отдаёт дословно, поэтому эта ветка стоит ДО общего
+  // `String(raw)` ниже.
+  if (field.type === 'weekHours') {
+    return field.hoursOptions
+      ? formatWeekHours(raw, field.hoursOptions, style.locale)
+      : String(raw)
+  }
+  if (field.type === 'cleaningSchedule') return formatCleaning(raw, style.locale)
+
   if (Array.isArray(raw)) return raw.join(', ')
   if (!isPlainObject(raw)) return String(raw)
 

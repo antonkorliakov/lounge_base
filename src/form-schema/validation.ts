@@ -4,6 +4,9 @@ import type { ServiceItem } from './services'
 import { attributeApplies, isOfferedAvailability, requiredAttributesFor } from './services'
 import { OPTION_LISTS } from './option-lists'
 import { EMAIL_PLACEHOLDER, PHONE_PLACEHOLDER, isValidEmail, isValidPhone } from './contact'
+import {
+  cleaningComplete, cleaningProblem, weekHoursComplete, weekHoursProblem,
+} from './schedule'
 
 export type ValidationResult = { ok: true } | { ok: false; error: Localized }
 
@@ -40,6 +43,20 @@ const DETAIL_REQUIRED = fail(
 const NOT_A_NUMBER = fail(
   'Enter a non-negative number',
   'Введите неотрицательное число',
+)
+// Один текст на все нарушения формы расписания, а не текст на тег: оператор в
+// браузере физически не может собрать сетку с пересечением или обратным
+// временем (редактор такого не даёт), так что до этого отказа доходит только
+// запись мимо интерфейса — старая вкладка или скрипт. Ему нужна честная
+// причина, а не разбор какого именно правила; разбор есть у тегов
+// `windowsProblem`, и он проверяется тестами схемы.
+const INVALID_SCHEDULE = fail(
+  'Check the schedule: times must run forward and windows must not overlap',
+  'Проверьте расписание: время должно идти вперёд, интервалы не должны пересекаться',
+)
+const INVALID_CLEANING = fail(
+  'Check the cleaning schedule: pick a cadence and set the times',
+  'Проверьте график уборки: выберите периодичность и укажите время',
 )
 // Пример в отказе — тот же плейсхолдер, что стоит в поле (`contact.ts`):
 // подсказка и пример под полем не могут разойтись.
@@ -262,6 +279,25 @@ export function validateField(field: Field, value: unknown): ValidationResult {
       return isValidEmail(text) ? ok : INVALID_EMAIL
     }
 
+    // Пустота — вопрос `required`; СТРОКА — старый ответ прежней версии
+    // анкеты (свободный текст), он уже лежит в базе и отказом его не
+    // «исправить»: поле просто считается незаполненным (`fieldAnswered`
+    // ниже), пока оператор не введёт структуру. Всё остальное судит
+    // `schedule.ts`.
+    case 'weekHours': {
+      if (value === null || value === undefined) return field.required ? REQUIRED : ok
+      if (typeof value === 'string') return ok
+      const options = field.hoursOptions
+      if (!options) return INVALID_SCHEDULE
+      return weekHoursProblem(value, options) === null ? ok : INVALID_SCHEDULE
+    }
+
+    case 'cleaningSchedule': {
+      if (value === null || value === undefined) return field.required ? REQUIRED : ok
+      if (typeof value === 'string') return ok
+      return cleaningProblem(value) === null ? ok : INVALID_CLEANING
+    }
+
     case 'text':
     case 'textarea': {
       const text = asText(value) ?? ''
@@ -350,4 +386,25 @@ export function validateServiceValue(
   }
 
   return ok
+}
+
+/**
+ * Дан ли на поле ОТВЕТ, годный для отправки. Для прежних типов это «значение
+ * не пусто» — правило, которое годами жило в `completeness.ts` как приватный
+ * `isBlank`. Расписания сломали это равенство: сетка с одним заполненным днём
+ * не пуста, но и не ответ, а старый свободный текст — ответ прежней версии
+ * анкеты, который надо ввести заново структурой. Правило переехало сюда,
+ * рядом с `validateField`, чтобы «что можно сохранить» и «что считается
+ * отвеченным» стояли в одном модуле и не расходились.
+ */
+export function fieldAnswered(field: Field, value: unknown): boolean {
+  if (field.type === 'weekHours') {
+    return field.hoursOptions ? weekHoursComplete(value, field.hoursOptions) : false
+  }
+  if (field.type === 'cleaningSchedule') return cleaningComplete(value)
+
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string') return value.trim() !== ''
+  if (Array.isArray(value)) return value.length === 0 ? false : true
+  return true
 }

@@ -152,4 +152,32 @@ describe('плоские поля', () => {
     for (const key of ['II.2.2', 'II.2.3']) expect(typeOf(key), key).toBe('text')
     expect(FIELDS.filter((f) => f.type === 'phone' || f.type === 'email')).toHaveLength(7)
   })
+
+  /**
+   * Три расписания закреплены БУКВАЛЬНО по ключам, как и контактные поля:
+   * подпись («… Hours», «… Schedule») носят и соседние поля (III.1.2
+   * «Seasonal schedule changes» — обычный select), так что вывод по подписи
+   * отнёс бы к расписаниям не то.
+   */
+  it('расписания: два weekHours и одно cleaningSchedule, у weekHours есть hoursOptions', () => {
+    const byKey = (key: string) => FIELDS.find((f) => f.key === key)!
+    expect(byKey('III.1.1').type).toBe('weekHours')
+    expect(byKey('III.1.3').type).toBe('weekHours')
+    expect(byKey('III.1.4').type).toBe('cleaningSchedule')
+    expect(byKey('III.1.2').type).toBe('select_with_detail')
+
+    // Круглосуточно есть только у часов работы: «пик круглые сутки» — не ответ.
+    expect(byKey('III.1.1').hoursOptions).toEqual({
+      allDay: true, noneLabel: { en: 'Closed', ru: 'Закрыто' },
+    })
+    expect(byKey('III.1.3').hoursOptions).toEqual({
+      allDay: false, noneLabel: { en: 'No peak', ru: 'Нет пика' },
+    })
+
+    // `hoursOptions` — только у weekHours: у остальных типов он ничего не
+    // значил бы, а редактор читает его без проверки типа.
+    for (const field of FIELDS) {
+      expect(field.hoursOptions === null, field.key).toBe(field.type !== 'weekHours')
+    }
+  })
 })

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { validateField, validateServiceValue, needsDetail } from '../validation'
+import { validateField, validateServiceValue, needsDetail, fieldAnswered } from '../validation'
 import { fieldByKey, serviceItemByKey } from '../index'
 import type { Field } from '../index'
 
@@ -33,6 +33,7 @@ const fakeField = (over: Partial<Field>): Field => ({
   templateText: null,
   templateSlots: [],
   detailRequiredFor: [],
+  hoursOptions: null,
   ...over,
 })
 
@@ -385,5 +386,62 @@ describe('устойчивость к некорректным данным (fix
     const f = fakeField({ type: 'multi_select', optionList: 'zone', required: false })
     expect(validateField(f, []).ok).toBe(true)
     expect(validateField(f, undefined).ok).toBe(true)
+  })
+})
+
+describe('расписания — сервер как ворота', () => {
+  const week = Object.fromEntries(
+    ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, { kind: 'allDay' }]),
+  )
+
+  it('корректная неделя принимается, сломанная — отказ', () => {
+    expect(validateField(field('III.1.1'), week).ok).toBe(true)
+    const refused = validateField(field('III.1.1'), { mon: { kind: 'windows', windows: [{ from: '11:00', to: '01:00' }] } })
+    expect(refused.ok).toBe(false)
+    if (!refused.ok) expect(refused.error.en).toBe('Check the schedule: times must run forward and windows must not overlap')
+  })
+
+  it('круглосуточно у пиковых часов — отказ (поле его не разрешает)', () => {
+    expect(validateField(field('III.1.3'), { mon: { kind: 'allDay' } }).ok).toBe(false)
+  })
+
+  it('недописанный интервал сохраняется — черновик не теряется', () => {
+    expect(validateField(field('III.1.1'), { mon: { kind: 'windows', windows: [{ from: '09:00', to: null }] } }).ok).toBe(true)
+  })
+
+  it('график уборки: все периодичности принимаются, чужая — отказ', () => {
+    expect(validateField(field('III.1.4'), { cadence: 'daily', windows: [{ from: '02:00', to: '04:00' }] }).ok).toBe(true)
+    const refused = validateField(field('III.1.4'), { cadence: 'yearly', windows: [] })
+    expect(refused.ok).toBe(false)
+    if (!refused.ok) expect(refused.error.en).toBe('Check the cleaning schedule: pick a cadence and set the times')
+  })
+
+  it('null — очищенный ответ, не отказ; строка — старый ответ, тоже не отказ', () => {
+    expect(validateField(field('III.1.1'), null).ok).toBe(false) // обязательное → REQUIRED
+    if (!validateField(field('III.1.1'), null).ok) {
+      const r = validateField(field('III.1.1'), null)
+      if (!r.ok) expect(r.error.ru).toBe('Поле обязательно')
+    }
+    // Старый текстовый ответ не отвергается: он уже лежит в базе.
+    expect(validateField(field('III.1.1'), 'Monday – Saturday: 00:00 – 23:59').ok).toBe(true)
+  })
+})
+
+describe('fieldAnswered', () => {
+  it('для прежних типов — «не пусто»', () => {
+    expect(fieldAnswered(field('I.2'), 'Primeclass')).toBe(true)
+    expect(fieldAnswered(field('I.2'), '  ')).toBe(false)
+  })
+
+  it('для расписаний — правило полноты, а не «не пусто»', () => {
+    // Одного дня недостаточно, хотя значение и не пустое.
+    expect(fieldAnswered(field('III.1.1'), { mon: { kind: 'allDay' } })).toBe(false)
+    const full = Object.fromEntries(
+      ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, { kind: 'allDay' }]),
+    )
+    expect(fieldAnswered(field('III.1.1'), full)).toBe(true)
+    // Старый текстовый ответ не считается заполненным: его надо ввести заново.
+    expect(fieldAnswered(field('III.1.1'), 'Mon-Sun 09-18')).toBe(false)
+    expect(fieldAnswered(field('III.1.4'), { cadence: 'daily', windows: [{ from: '02:00', to: '04:00' }] })).toBe(true)
   })
 })

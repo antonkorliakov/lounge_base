@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm'
-import { FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, MIN_PHOTOS, serviceItemAnswered } from '@/form-schema'
+import { FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, MIN_PHOTOS, serviceItemAnswered, fieldAnswered } from '@/form-schema'
 import { photos } from '@/db/schema'
 import type { Db, Tx } from '@/db/types'
 import { loadSubmissionValues } from './values'
@@ -10,13 +10,6 @@ export type MissingItems = {
   photoSlots: string[]
 }
 
-function isBlank(value: unknown): boolean {
-  if (value === null || value === undefined) return true
-  if (typeof value === 'string') return value.trim() === ''
-  if (Array.isArray(value)) return value.length === 0
-  return false
-}
-
 export async function missingItems(
   db: Db | Tx,
   submissionId: string,
@@ -24,7 +17,7 @@ export async function missingItems(
   const values = await loadSubmissionValues(db, submissionId)
 
   const fieldKeys = FIELDS.filter(
-    (field) => field.required && isBlank(values.fields[field.key]),
+    (field) => field.required && !fieldAnswered(field, values.fields[field.key]),
   ).map((field) => field.key)
 
   // Позиция считается заполненной, как только на неё дан любой ответ,

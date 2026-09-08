@@ -1,5 +1,6 @@
 import type { Localized } from './types'
 import type { OptionListId } from './option-lists'
+import type { HoursOptions } from './schedule'
 
 export type FieldType =
   | 'text'
@@ -14,6 +15,11 @@ export type FieldType =
   // `validateField`, ввод — `FieldInput`. Значение в базе остаётся текстом.
   | 'phone'
   | 'email'
+  // Расписания: правила — `schedule.ts`, проверка — `validateField`, ввод —
+  // `WeekHoursEditor`/`CleaningScheduleEditor`. Значение — структура в том же
+  // jsonb-столбце, миграции нет.
+  | 'weekHours'
+  | 'cleaningSchedule'
 
 export type TemplateSlot = { key: string; unit: Localized }
 
@@ -39,6 +45,14 @@ export type Field = {
    * choice is meaningless without naming them.
    */
   detailRequiredFor: string[]
+  /**
+   * Настройка недельной сетки — только у полей типа `weekHours`, у остальных
+   * `null` (закреплено тестом): какие состояния есть у дня и как читается
+   * пустое. Живёт на поле, а не в структуре значения, потому что это свойство
+   * ВОПРОСА: одна и та же пустая клетка у часов работы значит «закрыто», а у
+   * пиковых часов — «нет пика».
+   */
+  hoursOptions: HoursOptions | null
 }
 
 const base = {
@@ -48,6 +62,7 @@ const base = {
   templateText: null,
   templateSlots: [],
   detailRequiredFor: [],
+  hoursOptions: null,
 } satisfies Partial<Field>
 
 export const FIELDS: Field[] = [
@@ -332,9 +347,9 @@ export const FIELDS: Field[] = [
     key: 'III.1.1',
     section: 'III',
     block: 'III.1',
-    type: 'text',
+    type: 'weekHours',
     label: { en: 'Lounge Operating Hours', ru: 'Часы работы лаунжа' },
-    example: 'Monday – Saturday: 00:00 – 23:59\nSunday: 03:00 – 23:59',
+    hoursOptions: { allDay: true, noneLabel: { en: 'Closed', ru: 'Закрыто' } },
     required: true,
   },
   {
@@ -353,9 +368,9 @@ export const FIELDS: Field[] = [
     key: 'III.1.3',
     section: 'III',
     block: 'III.1',
-    type: 'text',
+    type: 'weekHours',
     label: { en: 'Peak Hours', ru: 'Часы пиковой нагрузки' },
-    example: 'Daily: 06:00 – 09:00 and 17:00 – 21:00',
+    hoursOptions: { allDay: false, noneLabel: { en: 'No peak', ru: 'Нет пика' } },
     required: true,
   },
   {
@@ -363,9 +378,8 @@ export const FIELDS: Field[] = [
     key: 'III.1.4',
     section: 'III',
     block: 'III.1',
-    type: 'textarea',
+    type: 'cleaningSchedule',
     label: { en: 'Deep Cleaning Schedule', ru: 'График глубокой уборки' },
-    example: 'Every day: 14:30 – 15:00\nOR\nAdditional deep cleaning every first Monday of the month: 22:00 – 23:30',
     required: true,
   },
   {
