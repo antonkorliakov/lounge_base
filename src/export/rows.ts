@@ -1,5 +1,6 @@
 import {
-  fieldByKey, formatFieldValue, PHOTO_SLOTS, SERVICE_ATTRIBUTES, SERVICE_ITEMS,
+  cleaningCells, fieldByKey, formatFieldValue, PHOTO_SLOTS, SERVICE_ATTRIBUTES, SERVICE_ITEMS,
+  weekHoursCells,
 } from '@/form-schema'
 import type { Db } from '@/db/types'
 import { listRegistry, type RegistryFilters } from '@/registry/query'
@@ -64,6 +65,29 @@ export function renderField(fieldKey: string, value: unknown): ExportCell {
   if (!field) return null
   if (typeof value === 'number') return value
   return formatFieldValue(field, value, { locale: 'en', template: 'phrase' })
+}
+
+/**
+ * Ячейки ОДНОГО поля с их ключами колонок. У обычного поля пара одна — та же,
+ * что раньше писал `put(fieldKey, renderField(...))`. У расписания их девять
+ * или десять: раскладку считает схема (`weekHoursCells`/`cleaningCells`),
+ * выгрузка только разносит по ключам, чтобы «какой день в какой колонке» не
+ * было написано дважды.
+ */
+export function renderFieldCells(fieldKey: string, value: unknown): Array<[string, ExportCell]> {
+  const field = fieldByKey(fieldKey)
+  if (!field) return []
+
+  if (field.type === 'weekHours') {
+    if (!field.hoursOptions) return []
+    const cells = weekHoursCells(value, field.hoursOptions)
+    return Object.entries(cells).map(([suffix, cell]) => [`${fieldKey}.${suffix}`, cell])
+  }
+  if (field.type === 'cleaningSchedule') {
+    const cells = cleaningCells(value)
+    return Object.entries(cells).map(([suffix, cell]) => [`${fieldKey}.${suffix}`, cell])
+  }
+  return [[fieldKey, renderField(fieldKey, value)]]
 }
 
 /**
@@ -143,7 +167,7 @@ export async function buildFlatRows(
       const values = await loadSubmissionValues(db, entry.submissionId)
 
       for (const [fieldKey, value] of Object.entries(values.fields)) {
-        put(fieldKey, renderField(fieldKey, value))
+        for (const [columnKey, cell] of renderFieldCells(fieldKey, value)) put(columnKey, cell)
       }
 
       for (const item of SERVICE_ITEMS) {

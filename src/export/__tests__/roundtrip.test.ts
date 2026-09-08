@@ -300,6 +300,21 @@ describe('обратный прогон: слой xlsx', () => {
 describe('обратный прогон: введённое возвращается (ожидания — от сида)', () => {
   it('каждый введённый ответ доехал до файла непустым', () => {
     for (const field of FIELDS) {
+      // Расписания уезжают по дням (Task 7, `scheduleColumnSuffixes`), а не
+      // одной колонкой на ключ поля: сид (см. `enteredFieldValue` выше)
+      // заполняет каждый день недели, так что непустыми должны быть все семь
+      // дневных колонок (плюс `cadence` у уборки) — не `field.key` напрямую,
+      // такой колонки для расписания больше нет, и не `free`, которая у
+      // структурного ответа законно пуста (несёт только старый текст).
+      if (field.type === 'weekHours' || field.type === 'cleaningSchedule') {
+        for (const day of WEEKDAYS) {
+          expect(cellUnder(`${field.key}.${day}`), `${field.key}.${day}`).not.toBeNull()
+        }
+        if (field.type === 'cleaningSchedule') {
+          expect(cellUnder(`${field.key}.cadence`), `${field.key}.cadence`).not.toBeNull()
+        }
+        continue
+      }
       expect(cellUnder(field.key), field.key).not.toBeNull()
     }
     // У позиции — каждый ПРИМЕНИМЫЙ атрибут (`available` плюс профиль):

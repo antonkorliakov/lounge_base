@@ -3,6 +3,8 @@ import {
   PHOTO_SLOTS,
   SERVICE_ATTRIBUTES,
   SERVICE_ITEMS,
+  WEEKDAYS,
+  type Field,
   type ServiceAttribute,
 } from '@/form-schema'
 
@@ -72,6 +74,23 @@ const ATTRIBUTE_HEADERS: Record<ServiceAttribute, string> = {
 }
 
 /**
+ * Суффиксы колонок поля-расписания, или `null` у обычного поля (одна колонка,
+ * ключ = ключ поля). Ячейка на день недели — решение получателя: «Mon–Sat
+ * 09:00–18:00» в одной ячейке человек читает, а машина нет. `free` держит
+ * старый свободный текст, чтобы он не потерялся и не смешался с часами.
+ */
+export function scheduleColumnSuffixes(field: Field): readonly string[] | null {
+  if (field.type === 'weekHours') return [...WEEKDAYS, 'free']
+  if (field.type === 'cleaningSchedule') return ['cadence', ...WEEKDAYS, 'free']
+  return null
+}
+
+const SUFFIX_HEADER: Record<string, string> = {
+  mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun',
+  cadence: 'Cadence', free: 'Free text',
+}
+
+/**
  * Ключи, встретившиеся больше одного раза, — по одному разу каждый.
  *
  * Отдельная экспортируемая функция, а не проверка внутри `flatColumns`, чтобы у
@@ -133,11 +152,17 @@ export function duplicateKeysIn(columns: Column[]): string[] {
  * своим, не задевая следующую выгрузку и `IDENTITY_COLUMNS`.
  */
 export function flatColumns(): Column[] {
-  const fields: Column[] = FIELDS.map((field) => ({
-    key: field.key,
-    header: `${field.key} ${field.label.en}`,
-    group: 'fields',
-  }))
+  const fields: Column[] = FIELDS.flatMap((field) => {
+    const suffixes = scheduleColumnSuffixes(field)
+    if (!suffixes) {
+      return [{ key: field.key, header: `${field.key} ${field.label.en}`, group: 'fields' as const }]
+    }
+    return suffixes.map((suffix) => ({
+      key: `${field.key}.${suffix}`,
+      header: `${field.key} ${field.label.en} — ${SUFFIX_HEADER[suffix]}`,
+      group: 'fields' as const,
+    }))
+  })
 
   const services: Column[] = SERVICE_ITEMS.flatMap((item) =>
     SERVICE_ATTRIBUTES.map((attribute) => ({

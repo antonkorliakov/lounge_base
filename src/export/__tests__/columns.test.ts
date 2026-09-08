@@ -88,6 +88,11 @@ const IDENTITY_KEYS = [
 
 const PHOTO_SLOT_KEYS = ['entrance', 'reception', 'landmarks', 'additional']
 
+const SUFFIX_HEADERS: Record<string, string> = {
+  mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun',
+  cadence: 'Cadence', free: 'Free text',
+}
+
 const keysOf = (columns: Column[]): string[] => columns.map((c) => c.key)
 const inGroup = (group: Column['group']): Column[] =>
   flatColumns().filter((c) => c.group === group)
@@ -128,13 +133,39 @@ describe('колонки плоской выгрузки', () => {
     expect(submission?.header).toContain('Form')
   })
 
-  it('поля идут в порядке и составе исходной формы (golden fixture)', () => {
-    expect(keysOf(inGroup('fields'))).toEqual(sourceFieldKeys)
+  /**
+   * Расписания (`weekHours`, `cleaningSchedule`) — единственные поля, у которых
+   * колонок больше одной: получателю нужна ячейка на день недели, а не строка
+   * «Mon–Sat …» (решение пользователя). Суффиксы перечислены здесь ЛИТЕРАЛЬНО,
+   * а не взяты из `columns.ts`: оракул, выведенный из реализации, повторил бы
+   * её ошибку. Ключи расписаний тоже литеральные — те же три, что закреплены в
+   * `fields.test.ts`.
+   */
+  const SCHEDULE_SUFFIXES: Record<string, string[]> = {
+    'III.1.1': ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun', 'free'],
+    'III.1.3': ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun', 'free'],
+    'III.1.4': ['cadence', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun', 'free'],
+  }
+
+  const expectedFieldKeys = sourceFieldKeys.flatMap((key) =>
+    SCHEDULE_SUFFIXES[key] ? SCHEDULE_SUFFIXES[key]!.map((suffix) => `${key}.${suffix}`) : [key],
+  )
+
+  it('поля идут в порядке и составе исходной формы; у расписаний — колонка на день', () => {
+    expect(keysOf(inGroup('fields'))).toEqual(expectedFieldKeys)
   })
 
-  it('заголовок поля — его номер и дословная формулировка исходника', () => {
+  it('заголовок поля — его номер и дословная формулировка исходника, у расписания плюс день', () => {
     for (const key of sourceFieldKeys) {
-      expect(byKey(key)?.header, key).toBe(`${key} ${sourceFieldLabels[key]}`)
+      const suffixes = SCHEDULE_SUFFIXES[key]
+      if (!suffixes) {
+        expect(byKey(key)?.header, key).toBe(`${key} ${sourceFieldLabels[key]}`)
+        continue
+      }
+      for (const suffix of suffixes) {
+        const header = byKey(`${key}.${suffix}`)?.header
+        expect(header, `${key}.${suffix}`).toBe(`${key} ${sourceFieldLabels[key]} — ${SUFFIX_HEADERS[suffix]}`)
+      }
     }
   })
 
@@ -165,11 +196,21 @@ describe('колонки плоской выгрузки', () => {
   })
 
   // Хвост оракула выше, для второй таблицы ответов: `renderField` выгружает
-  // ровно `row.value`, и колонка группы `fields` на ключ — одна. Это честно,
-  // ПОКА `value` — единственный атрибут таблицы; проверка ниже делает это
-  // равенство утверждением по данным, а не молчаливой предпосылкой.
+  // ровно `row.value`. Проверка ниже делает это равенство утверждением по
+  // данным, а не молчаливой предпосылкой.
   it('field_values хранит ровно один атрибут — value; новая колонка требует решения о выгрузке', () => {
     expect(storedFieldAttributes).toEqual(['value'])
+  })
+
+  // Хвост того же оракула: одна колонка на ключ ПЕРЕСТАЛА быть правилом —
+  // расписания раскладывают своё единственное `value` на день недели
+  // (`scheduleColumnSuffixes`). Утверждение теперь такое: колонок больше
+  // одной ровно у расписаний, у всех прочих полей — по одной.
+  it('несколько колонок на поле — только у расписаний', () => {
+    for (const key of sourceFieldKeys) {
+      const own = keysOf(inGroup('fields')).filter((k) => k === key || k.startsWith(`${key}.`))
+      expect(own.length, key).toBe(SCHEDULE_SUFFIXES[key]?.length ?? 1)
+    }
   })
 
   it('атрибуты одной позиции идут подряд', () => {
@@ -226,15 +267,19 @@ describe('колонки плоской выгрузки', () => {
     }
   })
 
-  it('всего 488 колонок: 11 + 67 + 58×7 + 4', () => {
+  // Было 488 (11 + 67 + 58×7 + 4) до расписаний; `expectedFieldKeys` уже
+  // учитывает их разворот в колонки по дню (тот же литеральный
+  // `SCHEDULE_SUFFIXES`, что у теста состава `fields` выше), поэтому формула
+  // остаётся суммой источников, а не вторым хардкодом числа.
+  it('всего 510 колонок: 11 + 89 + 58×7 + 4', () => {
     const expected =
       IDENTITY_KEYS.length +
-      sourceFieldKeys.length +
+      expectedFieldKeys.length +
       sourceServiceKeys.length * storedAttributes.length +
       PHOTO_SLOT_KEYS.length
 
     expect(flatColumns()).toHaveLength(expected)
-    expect(flatColumns()).toHaveLength(488)
+    expect(flatColumns()).toHaveLength(510)
   })
 
   it('ключи уникальны', () => {
@@ -269,7 +314,7 @@ describe('колонки плоской выгрузки', () => {
     // Вызывающий получает свой массив: `rows.ts` строит по нему индекс и вправе
     // с ним работать, не ломая следующую выгрузку и `IDENTITY_COLUMNS`.
     first.length = 0
-    expect(flatColumns()).toHaveLength(488)
+    expect(flatColumns()).toHaveLength(510)
     expect(IDENTITY_COLUMNS).toHaveLength(IDENTITY_KEYS.length)
   })
 
