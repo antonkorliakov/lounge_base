@@ -126,31 +126,34 @@ export function windowsProblem(value: unknown): WindowsProblem {
   return null
 }
 
-export type WeekHoursProblem =
-  | 'shape'
-  | 'day'
-  | 'kind'
-  | 'allDayNotAllowed'
-  | Exclude<WindowsProblem, null>
-  | null
+export type DayHoursProblem = 'shape' | 'kind' | 'allDayNotAllowed' | Exclude<WindowsProblem, null> | null
+
+/** Что не так с ОДНИМ днём, или `null`. Отдельно от недели, потому что у
+ *  редактора и у ворот разные вопросы: воротам достаточно узнать, что неделя
+ *  негодна, а редактору нужно показать шесть хороших дней и не выдать
+ *  седьмой за пустоту. */
+export function dayHoursProblem(hours: unknown, options: HoursOptions): DayHoursProblem {
+  if (!isPlainObject(hours)) return 'shape'
+  const kind = (hours as { kind?: unknown }).kind
+  if (kind === 'allDay') return options.allDay ? null : 'allDayNotAllowed'
+  if (kind === 'none') return null
+  if (kind !== 'windows') return 'kind'
+  return windowsProblem((hours as { windows?: unknown }).windows)
+}
+
+export type WeekHoursProblem = 'shape' | 'day' | DayHoursProblem
 
 /** Что не так со недельной сеткой, или `null`. Отсутствующий день — «не
  *  отвечено»: это законное состояние черновика, полноту считает
- *  `weekHoursComplete` (Task 3). */
+ *  `weekHoursComplete` (Task 3). Правило одного дня живёт в `dayHoursProblem`
+ *  — здесь только перебор ключей недели и её собственные вопросы (форма
+ *  значения целиком, неизвестный день недели). */
 export function weekHoursProblem(value: unknown, options: HoursOptions): WeekHoursProblem {
   if (!isPlainObject(value)) return 'shape'
 
   for (const [day, hours] of Object.entries(value)) {
     if (!(WEEKDAYS as readonly string[]).includes(day)) return 'day'
-    if (!isPlainObject(hours)) return 'shape'
-    const kind = (hours as { kind?: unknown }).kind
-    if (kind === 'allDay') {
-      if (!options.allDay) return 'allDayNotAllowed'
-      continue
-    }
-    if (kind === 'none') continue
-    if (kind !== 'windows') return 'kind'
-    const problem = windowsProblem((hours as { windows?: unknown }).windows)
+    const problem = dayHoursProblem(hours, options)
     if (problem) return problem
   }
   return null

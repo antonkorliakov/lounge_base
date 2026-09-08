@@ -106,4 +106,31 @@ describe('WeekHoursEditor', () => {
       expect(bulk.match(/disabled=""/g)).toHaveLength(3)
     })
   })
+
+  it('испорченный понедельник не прячет вторник: у вторника видны настоящие интервалы', () => {
+    // Раньше `asWeek` блокировала всю неделю, если хоть один день не проходил
+    // `weekHoursProblem` — испорченный понедельник (пустой список интервалов,
+    // та же форма, что и после «By hours» → «×» на последнем интервале) гасил
+    // вторник вместе с собой, хотя вторник отвечен корректно. Теперь плохой
+    // день отбрасывается сам по себе — вторник должен остаться на экране.
+    const html = render(
+      {
+        mon: { kind: 'windows', windows: [] },
+        tue: { kind: 'windows', windows: [{ from: '09:00', to: '18:00' }] },
+      },
+      OPEN,
+    )
+    expect(html).toContain('value="09:00"')
+    expect(html).toContain('value="18:00"')
+    // Понедельник с `dayHoursProblem` 'empty' теперь НЕ отбрасывается
+    // `asWeek` (в отличие от других проблем) — сетка получает настоящий
+    // `{ kind: 'windows', windows: [] }`, и кнопки выключает именно
+    // `dayCopyable`'s ветка `windows.length > 0`. Раньше это было
+    // недостижимо: `asWeek` гасила всю неделю ещё до вызова `dayCopyable`,
+    // так что выключенность объяснялась `dayCopyable(undefined)`, а не тем,
+    // что здесь под проверкой. Теперь эта проверка по-настоящему проверяет
+    // пустой-windows ветку `dayCopyable`.
+    const bulk = html.match(/<div class="wh-bulk">[\s\S]*?<\/div>/)![0]
+    expect(bulk.match(/disabled=""/g)).toHaveLength(3)
+  })
 })

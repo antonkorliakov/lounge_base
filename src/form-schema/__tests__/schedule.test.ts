@@ -7,6 +7,7 @@ import {
   isClock,
   clockMinutes,
   windowsProblem,
+  dayHoursProblem,
   weekHoursProblem,
   cleaningProblem,
   CLEANING_DAY_OPTIONS,
@@ -153,6 +154,41 @@ describe('weekHoursProblem', () => {
     [{ mon: { kind: 'windows', windows: [{ from: '11:00', to: '01:00' }] } }, 'order'],
   ])('отклоняет %j как %s', (value, expected) => {
     expect(weekHoursProblem(value, OPEN)).toBe(expected)
+  })
+})
+
+describe('dayHoursProblem', () => {
+  it('корректные состояния одного дня — null', () => {
+    expect(dayHoursProblem({ kind: 'allDay' }, OPEN)).toBe(null)
+    expect(dayHoursProblem({ kind: 'none' }, OPEN)).toBe(null)
+    expect(dayHoursProblem({ kind: 'windows', windows: [{ from: '09:00', to: '18:00' }] }, OPEN)).toBe(null)
+  })
+
+  it('круглосуточно там, где поле его не разрешает — отказ', () => {
+    expect(dayHoursProblem({ kind: 'allDay' }, PEAK)).toBe('allDayNotAllowed')
+  })
+
+  it('неизвестный вид — kind', () => {
+    expect(dayHoursProblem({ kind: 'sometimes' }, OPEN)).toBe('kind')
+  })
+
+  it.each([
+    ['not an object', 'shape'],
+    [{ kind: 'windows' }, 'shape'],
+  ])('отклоняет %j как %s', (value, expected) => {
+    expect(dayHoursProblem(value, OPEN)).toBe(expected)
+  })
+
+  it('пустой список интервалов — empty', () => {
+    expect(dayHoursProblem({ kind: 'windows', windows: [] }, OPEN)).toBe('empty')
+  })
+
+  // weekHoursProblem теперь делегирует dayHoursProblem, но её собственный
+  // контракт (ярлыки на всю неделю) не должен измениться — два прежних
+  // случая до и после рефакторинга совпадают.
+  it('weekHoursProblem возвращает те же ярлыки, что и раньше', () => {
+    expect(weekHoursProblem({ mon: { kind: 'allDay' } }, PEAK)).toBe('allDayNotAllowed')
+    expect(weekHoursProblem({ funday: { kind: 'none' } }, OPEN)).toBe('day')
   })
 })
 

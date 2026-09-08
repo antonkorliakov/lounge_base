@@ -8,7 +8,7 @@ import {
   applyToWeekend,
   copyPreviousDay,
   dayCopyable,
-  weekHoursProblem,
+  dayHoursProblem,
   type DayHours,
   type HoursOptions,
   type WeekHours,
@@ -18,13 +18,43 @@ import {
 import { useLocale } from '@/i18n/context'
 import { WindowsEditor } from './WindowsEditor'
 
-/** Сохранённое значение → сетка. Старый свободный текст (и любое значение, не
- *  прошедшее форму) сеткой не является: она начинается пустой, а текст
- *  показывается над ней с пометкой — ответ виден, и его есть чем заменить. */
+/** Сохранённое значение → сетка. Старый свободный текст остаётся текстом:
+ *  сетка тогда пустая, а текст показывается над ней с пометкой — ответ
+ *  виден, и его есть чем заменить.
+ *
+ *  Для структурного значения дни разбираются ПО ОДНОМУ, а не всей неделей
+ *  разом: испорченный день отбрасывается сам по себе (рендерится как «не
+ *  отвечено», которое сетка и так честно показывает), а не гасит шесть
+ *  хороших дней заодно с собой — одна плохая клетка не должна выглядеть как
+ *  пропажа всех остальных ответов. Это не только про плохие данные:
+ *  `hoursOptions` живут в схеме (`src/form-schema/fields.ts`) и читаются
+ *  заново при каждом рендере, так что обычная будущая правка поля (например,
+ *  запрет `allDay`) превращает уже сохранённые дни в `dayHoursProblem`, и
+ *  тогда пропасть должна только эта клетка. Неизвестный ключ недели по той
+ *  же причине не бросает исключение и не портит остальные дни — он просто
+ *  игнорируется. */
 function asWeek(value: unknown, options: HoursOptions): { week: WeekHours; legacy: string | null } {
   if (typeof value === 'string' && value.trim() !== '') return { week: {}, legacy: value }
-  if (weekHoursProblem(value, options) !== null) return { week: {}, legacy: null }
-  return { week: (value ?? {}) as WeekHours, legacy: null }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { week: {}, legacy: null }
+
+  const week: WeekHours = {}
+  for (const [day, hours] of Object.entries(value)) {
+    if (!(WEEKDAYS as readonly string[]).includes(day)) continue
+    const problem = dayHoursProblem(hours, options)
+    // `empty` — законная форма («по часам», ещё без интервалов), не порча:
+    // тот же результат оставил бы и оператор, набравший «+ интервал» и снявший
+    // единственный «×» (см. `setDayWindows` ниже). Прятать такой день не за
+    // что: `dayCopyable` и так отказывает ему в роли источника копирования
+    // (`windows.length === 0`), а на экране честнее показать пустой список
+    // интервалов, чем подменить его на «не отвечено», которое было бы неправдой
+    // про хранимые данные. Любая другая проблема (неизвестный вид, интервалы
+    // не по форме, круглосуточно там, где поле его больше не разрешает и т.п.)
+    // не настолько безобидна: `dayCopyable` не умеет её различить и посчитал
+    // бы такой день годным источником, так что здесь день отбрасывается — и
+    // копирование, и остальные шесть дней остаются целы.
+    if (problem === null || problem === 'empty') week[day as Weekday] = hours as DayHours
+  }
+  return { week, legacy: null }
 }
 
 export function WeekHoursEditor(props: {
