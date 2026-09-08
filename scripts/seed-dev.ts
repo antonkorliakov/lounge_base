@@ -96,6 +96,8 @@ import {
   PHONE_PLACEHOLDER,
   isOfferedAvailability,
   requiredAttributesFor,
+  WEEKDAYS,
+  END_OF_DAY,
 } from '../src/form-schema'
 import type {
   Field,
@@ -120,6 +122,29 @@ function valueForField(field: Field): unknown {
       return PHONE_PLACEHOLDER
     case 'email':
       return seedEmailFor(field.key)
+
+    // Расписания: полная неделя, иначе анкета неполна (`fieldAnswered`) и
+    // режимы `--complete`/`--submitted` не дошли бы до отправки. Часы работы —
+    // до конца суток (`END_OF_DAY`), пиковые — два интервала в будни и «нет
+    // пика» в выходные: сид показывает и разрывной день, и пустой.
+    case 'weekHours': {
+      const peak = field.key === 'III.1.3'
+      return Object.fromEntries(
+        WEEKDAYS.map((day) => {
+          const weekend = day === 'sat' || day === 'sun'
+          if (peak && weekend) return [day, { kind: 'none' }]
+          if (peak) {
+            return [day, { kind: 'windows', windows: [
+              { from: '06:00', to: '09:00' }, { from: '17:00', to: '21:00' },
+            ] }]
+          }
+          return [day, { kind: 'windows', windows: [{ from: weekend ? '03:00' : '00:00', to: END_OF_DAY }] }]
+        }),
+      )
+    }
+
+    case 'cleaningSchedule':
+      return { cadence: 'daily', windows: [{ from: '14:30', to: '15:00' }] }
 
     case 'date':
       return '2020-01-01'
