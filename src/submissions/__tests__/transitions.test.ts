@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { createTestDb } from '@/db/__tests__/harness'
 import type { Db } from '@/db/types'
 import { lounges, submissions, photos, events } from '@/db/schema'
-import { FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, OPTION_LISTS, MIN_PHOTOS, PHONE_PLACEHOLDER } from '@/form-schema'
+import { FIELDS, SERVICE_ITEMS, PHOTO_SLOTS, OPTION_LISTS, MIN_PHOTOS, PHONE_PLACEHOLDER, WEEKDAYS } from '@/form-schema'
 import { saveFieldValue, saveServiceValue } from '../values'
 import { submitSubmission } from '../transitions'
 
@@ -40,6 +40,16 @@ async function seedComplete(db: Db): Promise<string> {
           }
         : field.type === 'phone' ? PHONE_PLACEHOLDER
         : field.type === 'email' ? 'ops@example.com'
+        // `fieldAnswered` требует полную неделю (все семь дней) для
+        // weekHours — один заполненный день не в счёт, поэтому нужен весь
+        // список WEEKDAYS, а не одно значение.
+        : field.type === 'weekHours'
+          ? Object.fromEntries(WEEKDAYS.map((day) => [day, { kind: 'windows', windows: [{ from: '09:00', to: '18:00' }] }]))
+        // Как и weekHours, cleaningSchedule засчитывается заполненным только
+        // как завершённая структура (периодичность + хотя бы один
+        // законченный интервал) — общий фолбэк-текст ниже её не устроит.
+        : field.type === 'cleaningSchedule'
+          ? { cadence: 'daily', windows: [{ from: '14:30', to: '15:00' }] }
         : 'заполнено'
 
     await saveFieldValue(db, { submissionId, fieldKey: field.key, value })

@@ -64,6 +64,7 @@ describe('контракт FieldInput ↔ validateField', () => {
       label: { en: 'Fake field', ru: 'Тестовое поле' },
       hint: null,
       example: null,
+      hoursOptions: null,
       required: false,
       optionList: null,
       templateText: null,
