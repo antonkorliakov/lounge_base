@@ -77,6 +77,14 @@ export function WindowsEditor(props: {
             >
               ×
             </button>
+            {/* I4: факт о ЗНАЧЕНИИ интервала (`to === null`), видимый
+                безусловно — не только когда отправка отказала. Это
+                избавляет от необходимости тащить состояние отправки внутрь
+                редактора ради одной сетки (см. WeekHoursEditor's
+                `dayUnanswered`, тот же приём для дня целиком). */}
+            {window.to === null && (
+              <p className="field-hint wh-window-unfinished">{t('schedule.windowUnfinished')}</p>
+            )}
           </div>
         )
       })}

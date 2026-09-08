@@ -131,6 +131,11 @@ export function WeekHoursEditor(props: {
         return (
           <div className="wh-row" key={day}>
             <span className="wh-day">{t(`schedule.day.${day}`)}</span>
+            {/* I4: факт о ЗНАЧЕНИИ дня (отсутствует в сетке), видимый
+                безусловно — не только когда отправка отказала (см. довод у
+                `wh-window-unfinished` в WindowsEditor.tsx: не тащить
+                состояние отправки внутрь редактора ради одной сетки). */}
+            {hours === undefined && <span className="field-hint wh-day-unanswered">{t('schedule.dayUnanswered')}</span>}
             {/* Те же три состояния и тот же `aria-pressed`, что у пары Да|Нет
                 у услуг: нажатость — состояние с тремя исходами, и «не
                 отвечено» должно отличаться от «закрыто» на вид. */}

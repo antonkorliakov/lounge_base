@@ -133,6 +133,19 @@ describe('WeekHoursEditor', () => {
         expect(button).not.toContain('disabled=""')
       }
     })
+
+    // I4: маркер «не закончено» — факт о ЗНАЧЕНИИ интервала (`to === null`),
+    // виден безусловно, а не только когда отправка отказала — иначе пришлось
+    // бы тащить состояние отправки внутрь редактора ради одной сетки.
+    it('недописанный интервал несёт маркер «не закончено»', () => {
+      const html = renderWindows([{ from: '09:00', to: null }])
+      expect(html).toContain(UI['schedule.windowUnfinished'].en)
+    })
+
+    it('завершённый интервал маркера не несёт', () => {
+      const html = renderWindows([{ from: '01:00', to: '11:00' }])
+      expect(html).not.toContain(UI['schedule.windowUnfinished'].en)
+    })
   })
 
   it('быстрые действия на месте; «как в предыдущем дне» — не у понедельника', () => {
@@ -178,6 +191,27 @@ describe('WeekHoursEditor', () => {
       const html = render({ mon: { kind: 'windows', windows: [] } }, OPEN)
       const bulk = html.match(/<div class="wh-bulk">[\s\S]*?<\/div>/)![0]
       expect(bulk.match(/disabled=""/g)).toHaveLength(3)
+    })
+  })
+
+  // I4: маркер «не отвечено» — факт о значении дня (отсутствует в сетке),
+  // виден безусловно, той же логикой, что маркер интервала в WindowsEditor —
+  // не только когда отправка отказала.
+  describe('маркер «не отвечено» у незаполненного дня (I4)', () => {
+    it('пустая неделя — все семь дней несут маркер', () => {
+      const html = render({}, OPEN)
+      expect(html.match(new RegExp(UI['schedule.dayUnanswered'].en, 'g'))).toHaveLength(7)
+    })
+
+    it('отвеченный день маркера не несёт, неотвеченные соседи — несут', () => {
+      const html = render({ mon: { kind: 'allDay' } }, OPEN)
+      expect(html.match(new RegExp(UI['schedule.dayUnanswered'].en, 'g'))).toHaveLength(6)
+    })
+
+    it('полная неделя — маркеров нет вовсе', () => {
+      const full = Object.fromEntries(WEEKDAYS.map((day) => [day, { kind: 'none' as const }]))
+      const html = render(full, OPEN)
+      expect(html).not.toContain(UI['schedule.dayUnanswered'].en)
     })
   })
 
