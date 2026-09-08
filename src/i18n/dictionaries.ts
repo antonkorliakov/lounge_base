@@ -287,6 +287,31 @@ export const UI = {
     en: 'Free-form answer from an earlier version — fill the grid to replace it',
     ru: 'Ответ в свободной форме, из прежней версии — заполните сетку, чтобы заменить его',
   },
+  // Экран проверки показывает тот же факт, что `form.freeFormAnswer`, но не
+  // оператору, который может «заполнить сетку», а ревьюеру, который смотрит
+  // на чужой ответ — своя, более короткая формулировка без обращения к
+  // читателю на «вы, заполните» (Important 3, сквозное ревью).
+  'review.freeFormAnswer': {
+    en: 'Free-form answer from an earlier version',
+    ru: 'Ответ в свободной форме, из прежней версии',
+  },
+  // I1: «+ интервал» недоступна по двум разным причинам (см.
+  // `nextWindowBlockedReason` в `schedule.ts`) — раньше кнопка просто
+  // выключалась (`disabled`), выпадая из таб-порядка, и ни одна из причин
+  // нигде не была видна.
+  'schedule.finishPrevious': {
+    en: 'Finish the current interval first',
+    ru: 'Сначала закончите текущий интервал',
+  },
+  'schedule.dayIsFull': {
+    en: 'The day already runs to 24:00',
+    ru: 'День уже занят до 24:00',
+  },
+  // I4: маркеры незаполненного дня и недописанного интервала в сетке
+  // недельных часов — факт о значении, видимый всегда (не только когда
+  // отправка отказала), чтобы не тащить состояние отправки внутрь редактора.
+  'schedule.dayUnanswered': { en: 'Not answered', ru: 'Не отвечено' },
+  'schedule.windowUnfinished': { en: 'Not finished', ru: 'Не закончено' },
 } as const satisfies Record<string, Localized>
 
 export type UiKey = keyof typeof UI

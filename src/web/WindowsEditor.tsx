@@ -1,7 +1,7 @@
 'use client'
 
 import type React from 'react'
-import { END_OF_DAY, nextWindowStart, type Window } from '@/form-schema'
+import { END_OF_DAY, nextWindowBlockedReason, nextWindowStart, type Window } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 
 /**
@@ -23,6 +23,7 @@ export function WindowsEditor(props: {
   const { t } = useLocale()
   const { windows, onChange } = props
   const nextStart = nextWindowStart(windows)
+  const blockedReason = nextWindowBlockedReason(windows)
 
   const replace = (index: number, window: Window): void => {
     onChange(windows.map((current, position) => (position === index ? window : current)))
@@ -82,15 +83,29 @@ export function WindowsEditor(props: {
       <button
         type="button"
         className="wh-add"
-        // Кнопка выключена по двум причинам, обе — `nextWindowStart` вернул
-        // `null`: либо день кончился (последний интервал уже доходит до
-        // конца суток), либо предыдущий интервал ещё не закрыт (`to: null`)
-        // — начинать следующий неоткуда, пока у этого нет конца.
-        disabled={nextStart === null}
+        // `aria-disabled`, НЕ `disabled` (Important 1, сквозное ревью):
+        // `disabled` убирает кнопку из таб-порядка, и тогда причина рядом с
+        // ней (см. `blockedReason` ниже) недостижима — ни клавиатурой, ни
+        // скринридером, который эту кнопку вообще не озвучит. Обработчик
+        // остаётся сторожем сам по себе (`nextStart !== null &&`) — клик по
+        // недоступной кнопке по-прежнему ничего не делает, недоступность
+        // здесь чисто визуальная и структурная, не функциональная преграда.
+        aria-disabled={nextStart === null}
         onClick={() => nextStart !== null && onChange([...windows, { from: nextStart, to: null }])}
       >
         {t('schedule.addWindow')}
       </button>
+      {/* Обе причины — `nextWindowBlockedReason` в schedule.ts, эта разметка
+          не решает, когда именно кнопка недоступна, только называет ЧЬЮ из
+          двух причин та уже назвала: раньше `nextWindowStart` отдавал один
+          `null` на обе, и ни на экране, ни в дереве доступности не было
+          ничего, что объясняло бы выключенную кнопку с первого мгновения
+          после «По часам» (первый интервал сразу не закрыт). */}
+      {blockedReason && (
+        <p className="field-hint wh-add-reason">
+          {t(blockedReason === 'unfinished' ? 'schedule.finishPrevious' : 'schedule.dayIsFull')}
+        </p>
+      )}
     </div>
   )
 }

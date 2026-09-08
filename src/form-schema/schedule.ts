@@ -144,6 +144,27 @@ export function nextWindowStart(windows: Window[]): string | null {
   return last.to
 }
 
+export type NextWindowBlockedReason = 'unfinished' | 'full' | null
+
+/**
+ * Почему `nextWindowStart` вернула `null` — компаньон, а не замена: правило
+ * «когда именно нельзя предложить следующий интервал» по-прежнему целиком
+ * живёт в `nextWindowStart` (эта функция его не повторяет и не проверяет
+ * заново — просто смотрит на тот же последний интервал и называет причину).
+ * Нужен `WindowsEditor`, чтобы показать читателю, ПОЧЕМУ «+ интервал»
+ * недоступна (Important 1, сквозное ревью): `nextWindowStart` одного `null`
+ * для этого мало — у него две разные причины, и обе значат разное действие
+ * оператора: `'unfinished'` — сперва закончить текущий интервал (проставить
+ * ему конец), `'full'` — день уже занят до конца суток, добавлять некуда.
+ */
+export function nextWindowBlockedReason(windows: Window[]): NextWindowBlockedReason {
+  if (windows.length === 0) return null
+  const last = windows[windows.length - 1]!
+  if (last.to === null) return 'unfinished'
+  if (last.to === END_OF_DAY) return 'full'
+  return null
+}
+
 export type DayHoursProblem = 'shape' | 'kind' | 'allDayNotAllowed' | Exclude<WindowsProblem, null> | null
 
 /** Что не так с ОДНИМ днём, или `null`. Отдельно от недели, потому что у

@@ -8,6 +8,7 @@ import {
   clockMinutes,
   windowsProblem,
   nextWindowStart,
+  nextWindowBlockedReason,
   dayHoursProblem,
   weekHoursProblem,
   cleaningProblem,
@@ -184,6 +185,40 @@ describe('nextWindowStart — с какого времени предложит�
       const start = nextWindowStart(windows)
       if (start === null) return // нечего достраивать — кнопка выключена, а не предлагает негодное время
       expect(windowsProblem([...windows, { from: start, to: null }])).toBe(null)
+    })
+  })
+})
+
+describe('nextWindowBlockedReason — почему «+ интервал» недоступна (I1)', () => {
+  it('список пуст или последний интервал завершён — не заблокировано', () => {
+    expect(nextWindowBlockedReason([])).toBe(null)
+    expect(nextWindowBlockedReason([{ from: '01:00', to: '11:00' }])).toBe(null)
+  })
+
+  it('последний интервал не закрыт — «unfinished», не «full»', () => {
+    expect(nextWindowBlockedReason([{ from: '09:00', to: null }])).toBe('unfinished')
+  })
+
+  it('последний интервал доходит до конца суток — «full», не «unfinished»', () => {
+    expect(nextWindowBlockedReason([{ from: '03:00', to: '24:00' }])).toBe('full')
+  })
+
+  // Свойство, зеркальное тому, что уже проверено для nextWindowStart выше:
+  // ИМЕННО когда `nextWindowStart` вернул `null` (кнопка недоступна),
+  // `nextWindowBlockedReason` обязана назвать одну из двух причин, — и
+  // никогда не должна называть причину, когда кнопка доступна.
+  describe('свойство: заблокировано ⟺ есть причина', () => {
+    const fixtures: Window[][] = [
+      [],
+      [{ from: '01:00', to: '11:00' }],
+      [{ from: '01:00', to: '11:00' }, { from: '12:00', to: '23:00' }],
+      [{ from: '09:00', to: null }],
+      [{ from: '03:00', to: '24:00' }],
+    ]
+
+    it.each(fixtures.map((windows) => [windows] as const))('%j', (windows) => {
+      const blocked = nextWindowStart(windows) === null
+      expect(nextWindowBlockedReason(windows) !== null).toBe(blocked)
     })
   })
 })

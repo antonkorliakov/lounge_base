@@ -6,6 +6,7 @@ import { UI } from '@/i18n/dictionaries'
 import { WeekHoursEditor } from '../WeekHoursEditor'
 import { FieldInput } from '../FieldInput'
 import { CleaningScheduleEditor } from '../CleaningScheduleEditor'
+import { WindowsEditor } from '../WindowsEditor'
 
 const OPEN: HoursOptions = { allDay: true, noneLabel: { en: 'Closed', ru: 'Закрыто' } }
 const PEAK: HoursOptions = { allDay: false, noneLabel: { en: 'No peak', ru: 'Нет пика' } }
@@ -71,23 +72,66 @@ describe('WeekHoursEditor', () => {
     it('день 01:00–11:00: кнопка включена', () => {
       const html = render({ mon: { kind: 'windows', windows: [{ from: '01:00', to: '11:00' }] } }, OPEN)
       const button = html.match(/<button type="button" class="wh-add"[^>]*>/)![0]
-      expect(button).not.toContain('disabled')
+      expect(button).toContain('aria-disabled="false"')
     })
 
-    it('день заканчивается интервалом до конца суток: кнопка выключена — добавлять нечего', () => {
+    it('день заканчивается интервалом до конца суток: кнопка недоступна — добавлять нечего', () => {
       const html = render({ mon: { kind: 'windows', windows: [{ from: '03:00', to: '24:00' }] } }, OPEN)
       const button = html.match(/<button type="button" class="wh-add"[^>]*>/)![0]
-      expect(button).toContain('disabled=""')
+      expect(button).toContain('aria-disabled="true"')
     })
 
     // Последний интервал ещё не закрыт (`to: null`) — начинать следующий
     // неоткуда: любое предложенное время совпало бы с `from` этого же
-    // интервала и форма отказала бы. Кнопка выключена, а не предлагает то же
+    // интервала и форма отказала бы. Кнопка недоступна, а не предлагает то же
     // время второй раз.
-    it('последний интервал без конца: кнопка выключена — предыдущий ещё не закрыт', () => {
+    it('последний интервал без конца: кнопка недоступна — предыдущий ещё не закрыт', () => {
       const html = render({ mon: { kind: 'windows', windows: [{ from: '09:00', to: null }] } }, OPEN)
       const button = html.match(/<button type="button" class="wh-add"[^>]*>/)![0]
-      expect(button).toContain('disabled=""')
+      expect(button).toContain('aria-disabled="true"')
+    })
+  })
+
+  // I1: раньше недоступная «+ интервал» получала атрибут `disabled` — она
+  // выпадала из таб-порядка, и ни один пользователь не мог узнать причину.
+  // Теперь недоступность — `aria-disabled` (кнопка остаётся в таб-порядке и
+  // кликабельна технически, но обработчик — не действие, см. WindowsEditor),
+  // и рядом стоит явная причина, одна из двух.
+  describe('WindowsEditor называет причину недоступности «+ интервал» (I1)', () => {
+    const renderWindows = (windows: { from: string; to: string | null }[]): string =>
+      renderToStaticMarkup(
+        <LocaleProvider initial="en">
+          <WindowsEditor windows={windows} onChange={() => {}} idPrefix="w" />
+        </LocaleProvider>,
+      )
+
+    it('предыдущий интервал не закрыт — «Finish the current interval first»', () => {
+      const html = renderWindows([{ from: '09:00', to: null }])
+      expect(html).toContain(UI['schedule.finishPrevious'].en)
+      expect(html).not.toContain(UI['schedule.dayIsFull'].en)
+    })
+
+    it('день уже занят до конца суток — «The day already runs to 24:00»', () => {
+      const html = renderWindows([{ from: '03:00', to: '24:00' }])
+      expect(html).toContain(UI['schedule.dayIsFull'].en)
+      expect(html).not.toContain(UI['schedule.finishPrevious'].en)
+    })
+
+    it('кнопка доступна — ни одна причина не показана, и кнопка не помечена aria-disabled', () => {
+      const html = renderWindows([{ from: '01:00', to: '11:00' }])
+      expect(html).not.toContain(UI['schedule.finishPrevious'].en)
+      expect(html).not.toContain(UI['schedule.dayIsFull'].en)
+      expect(html).toContain('aria-disabled="false"')
+    })
+
+    // Не `disabled`: атрибут `disabled` убирает кнопку из таб-порядка и
+    // делает причину рядом с ней недостижимой — ровно то, что было дефектом.
+    it('кнопка НЕ несёт HTML-атрибут disabled ни при одной из причин', () => {
+      for (const windows of [[{ from: '09:00', to: null }], [{ from: '03:00', to: '24:00' }]]) {
+        const html = renderWindows(windows)
+        const button = html.match(/<button type="button" class="wh-add"[^>]*>/)![0]
+        expect(button).not.toContain('disabled=""')
+      }
     })
   })
 

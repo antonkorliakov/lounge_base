@@ -524,6 +524,48 @@ test('расписание: неделя одним нажатием, разры
   await expect(cleaningAgain.getByLabel('Day of week')).toHaveValue('mon')
 })
 
+/**
+ * I1 (сквозное ревью): «+ интервал» недоступна с первого мгновения после
+ * «По часам» (первый интервал сразу не закрыт) — раньше это было выключенной
+ * кнопкой без единого слова о причине. Теперь недоступность — `aria-disabled`
+ * (кнопка остаётся в таб-порядке и физически кликабельна), а причина стоит
+ * рядом текстом; здесь — что обе причины действительно видны и что клик по
+ * недоступной кнопке НЕ добавляет интервал (проверить это можно только через
+ * настоящий клик в браузере: `aria-disabled` не мешает Playwright нажать).
+ */
+test('«+ интервал»: недоступна с объяснением, остаётся в таб-порядке, клик по ней ничего не добавляет', async ({ page }) => {
+  const url = seed()
+  await page.goto(url)
+  await clickNext(page, 2)
+
+  const hours = page.locator('.field').filter({ hasText: 'Lounge Operating Hours' })
+  const monday = hours.locator('.wh-row').filter({ hasText: 'Monday' })
+  await monday.getByRole('button', { name: 'By hours' }).click()
+
+  const addButton = monday.getByRole('button', { name: '+ interval' })
+
+  // Причина №1: первый интервал создан без конца — начинать следующий неоткуда.
+  await expect(addButton).toHaveAttribute('aria-disabled', 'true')
+  await expect(monday.getByText('Finish the current interval first')).toBeVisible()
+  await expect(addButton).not.toHaveAttribute('disabled', '')
+  // Playwright's own actionability check already refuses a plain `.click()`
+  // on `aria-disabled="true"` (treats it like `disabled` for the click
+  // itself) — exactly the point of the fix is that a SCREEN READER or
+  // keyboard user can still reach and activate the element, so `force: true`
+  // bypasses that guard here to prove the COMPONENT's own no-op, not
+  // Playwright's.
+  await addButton.click({ force: true })
+  await expect(monday.locator('input[type="time"]')).toHaveCount(2) // клик не добавил второй интервал
+
+  // Причина №2: закрываем интервал до конца суток — день занят целиком.
+  await monday.getByRole('button', { name: 'until end of day' }).click()
+  await expect(addButton).toHaveAttribute('aria-disabled', 'true')
+  await expect(monday.getByText('The day already runs to 24:00')).toBeVisible()
+  await expect(monday.getByText('Finish the current interval first')).toHaveCount(0)
+  await addButton.click({ force: true })
+  await expect(monday.locator('input[type="time"]')).toHaveCount(2) // по-прежнему один интервал
+})
+
 test('перезагрузка сохраняет значение, введённое до срабатывания автосохранения', async ({ page }) => {
   const url = seed()
   await page.goto(url)
