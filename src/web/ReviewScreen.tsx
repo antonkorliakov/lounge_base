@@ -494,6 +494,7 @@ export function ReviewScreen(props: {
                 void run('block', () => unflagAction(props.submissionId, flagId))
               }
               editedByTeam={cell?.editedByTeam ?? false}
+              freeFormAnswer={cell?.freeFormAnswer ?? false}
               edit={editTargetFor(key)}
               // Отклик правки живёт У САМОЙ СТРОКИ, не в подвале: успех
               // перерисует значение ответом действия (revalidatePath), отказ

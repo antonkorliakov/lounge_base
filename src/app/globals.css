@@ -742,6 +742,11 @@ button:disabled { opacity: .4; }
   border: 1px solid #bcd3f5; border-radius: 20px; background: #eef4fd;
   color: #1d4ed8; font-size: 11px;
 }
+/* Тот же значок-пилюля («ответ в свободной форме», I3), но янтарный, не
+   синий: это не провенанс, а напоминание о незавершённости ответа — тот же
+   смысл, что у `.fix-open`. Переопределяет только цвет/фон/рамку `.team-badge`
+   (форма, отступы и размер шрифта общие — своя копия геометрии не нужна). */
+.freeform-badge { border-color: #f3d19e; background: #fdf3e2; color: #92400e; }
 /* «Сохранить» редактора правки — утвердительная, но не красная (красный на
    этом экране — язык замечаний, см. .bt-flag). */
 .bt-save { background: #1d4ed8; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
@@ -1175,6 +1180,11 @@ button:disabled { opacity: .4; }
   /* Пилюля провенанса — тот же приём, что у пилюль состояния: тёмный фон,
      светлый синий текст вместо пастельной подложки. */
   .team-badge { background: #14233b; border-color: #2a4a7f; color: #93c5fd; }
+  /* Тёмная пара `.freeform-badge` — тот же приём, тёмно-янтарный фон вместо
+     пастельного, светлый янтарный текст (тот же тон, что .fix-open в паре
+     ниже не имеет своего тёмного правила — эта пилюля здесь не наследует
+     `.fix-open`, красит себя сама). */
+  .freeform-badge { background: #2a2013; border-color: #7c5a1e; color: #fcd34d; }
   /* Кромка группы «команда исправила» — тем же тёмным синим, что рамка
      пилюли провенанса. */
   .fix-card-team { border-left-color: #2a4a7f; }

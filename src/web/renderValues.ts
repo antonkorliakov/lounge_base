@@ -24,8 +24,16 @@ import {
  * проверки (`edited_by`, см. `db/schema.ts`); строка экрана проверки несёт
  * значок «исправлено командой». Необязателен и ставится только `true` — как
  * `value`, это свойство вида строки, а не тристабильное состояние.
+ *
+ * `freeFormAnswer` — тот же приём для другого факта: хранимое значение поля
+ * расписания (`weekHours`/`cleaningSchedule`) — старая свободная строка
+ * прежней версии анкеты, ещё не введённая структурой (см. `isLegacyText` в
+ * `schedule.ts`). `formatFieldValue` печатает такую строку дословно — сам
+ * текст на экране ничем не отличается от обычного ответа, хотя
+ * `fieldAnswered` уже считает поле неотвеченным, и ревьюеру неоткуда узнать
+ * почему (Important 3, сквозное ревью).
  */
-export type RenderedCell = { label: string; value?: string; editedByTeam?: boolean }
+export type RenderedCell = { label: string; value?: string; editedByTeam?: boolean; freeFormAnswer?: boolean }
 
 /**
  * Плоское представление одной позиции услуг для показа ревьюеру.
@@ -120,11 +128,20 @@ export function renderValues(input: {
 
   for (const field of FIELDS) {
     const raw = input.fields[field.key]
+    // Свободная строка — легитимный ответ ТОЛЬКО у полей расписания
+    // (`weekHours`/`cleaningSchedule`): это единственные типы поля, для
+    // которых схема сама признаёт старую строку как переходное состояние
+    // (`isLegacyText` в `schedule.ts`). Строка в поле другого типа — это его
+    // ОБЫЧНАЯ форма хранения (текст, дата, телефон), а не пережиток миграции,
+    // и метка «ответ в свободной форме» была бы там неправдой.
+    const isScheduleField = field.type === 'weekHours' || field.type === 'cleaningSchedule'
+    const freeFormAnswer = isScheduleField && typeof raw === 'string'
     out[field.key] = {
       label: field.label[input.locale],
       value:
         formatFieldValue(field, raw, { locale: input.locale, template: 'slots' }) ?? '—',
       ...(teamEdited.has(field.key) ? { editedByTeam: true } : {}),
+      ...(freeFormAnswer ? { freeFormAnswer: true } : {}),
     }
   }
 

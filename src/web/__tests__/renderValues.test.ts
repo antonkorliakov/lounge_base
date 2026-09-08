@@ -143,3 +143,34 @@ describe('показ значений ревьюеру', () => {
     expect(out['III.2.2']?.value).toBe('3')
   })
 })
+
+/**
+ * I3 (сквозное ревью): старая свободная строка в поле расписания печатается
+ * дословно (`formatWeekHours`/`formatCleaning`'s `isLegacyText`), но экран
+ * проверки раньше ничем её не отмечал — ревьюер видел обычный текст и не мог
+ * понять, почему поле всё равно числится неотвеченным (`fieldAnswered`
+ * требует структуру). Каждая анкета, дошедшая до проверки на этой ветке,
+ * несёт такой текст во всех трёх полях расписания — дефект живой, не
+ * гипотетический.
+ */
+describe('пометка «ответ в свободной форме» на экране проверки (I3)', () => {
+  it('старая строка в поле расписания помечена', () => {
+    const out = renderValues({ fields: { 'III.1.1': 'Mon-Fri 9-18' }, services: {}, locale: 'en' })
+    expect(out['III.1.1']?.value).toBe('Mon-Fri 9-18')
+    expect(out['III.1.1']?.freeFormAnswer).toBe(true)
+  })
+
+  it('структурный ответ того же поля не помечен', () => {
+    const out = renderValues({
+      fields: { 'III.1.1': { mon: { kind: 'allDay' } } },
+      services: {},
+      locale: 'en',
+    })
+    expect(out['III.1.1']?.freeFormAnswer).toBeUndefined()
+  })
+
+  it('строка в поле, которое не про расписание, не помечена — это не общий признак «поле — строка»', () => {
+    const out = renderValues({ fields: { 'I.1': '2026-01-31' }, services: {}, locale: 'en' })
+    expect(out['I.1']?.freeFormAnswer).toBeUndefined()
+  })
+})

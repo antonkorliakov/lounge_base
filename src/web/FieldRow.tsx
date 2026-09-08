@@ -142,6 +142,16 @@ export function FieldRow(props: {
    */
   editedByTeam?: boolean
   /**
+   * Хранимое значение этого ответа — старая свободная строка прежней версии
+   * анкеты (`RenderedCell.freeFormAnswer`, вычисляется в `renderValues.ts`),
+   * ещё не введённая структурой. Строка печатается дословно
+   * (`formatWeekHours`/`formatCleaning`'s `isLegacyText`) и на вид не
+   * отличается от обычного ответа, хотя `fieldAnswered` уже считает поле
+   * неотвеченным — без значка ревьюер не может понять почему (Important 3,
+   * сквозное ревью).
+   */
+  freeFormAnswer?: boolean
+  /**
    * Чем эта строка правится (см. `EditTarget` выше); `undefined` — карандаша
    * нет вовсе (решения по анкете сейчас недоступны — причина одна на весь
    * экран и стоит в подписи состояния, тот же выбор, что у `canFlag`).
@@ -277,9 +287,18 @@ export function FieldRow(props: {
     )
 
   // Значок провенанса — над значением, в колонке значения: он описывает
-  // ЗНАЧЕНИЕ («последняя правка — команды»), а не строку целиком.
+  // ЗНАЧЕНИЕ («последняя правка — команды»), а не строку целиком. Оба значка
+  // могут стоять одновременно (команда могла в принципе записать строку
+  // напрямую) — они про РАЗНЫЕ факты и не гасят друг друга.
   const badge = props.editedByTeam ? (
     <p className="team-badge">{t('answer.teamEdited')}</p>
+  ) : null
+  // I3: тот же приём для другого факта — «это старая свободная строка,
+  // введите структурой» (см. `RenderedCell.freeFormAnswer`). Своя цветовая
+  // пара, не синяя `.team-badge`: это не провенанс, а напоминание о
+  // незавершённости ответа, тот же смысл, что у янтарного `.fix-open`.
+  const freeFormBadge = props.freeFormAnswer ? (
+    <p className="team-badge freeform-badge">{t('review.freeFormAnswer')}</p>
   ) : null
 
   // Карандаш — та же механика проявления, что у «отметить» (`.frow-act`:
@@ -367,6 +386,7 @@ export function FieldRow(props: {
         <div className="frow-key">{props.label}</div>
         <div className="frow-value">
           {badge}
+          {freeFormBadge}
           {valueArea}
           {editor}
           <div className="frow-comment">
@@ -404,6 +424,7 @@ export function FieldRow(props: {
       <div className="frow-key">{props.label}</div>
       <div className="frow-value">
         {badge}
+        {freeFormBadge}
         {valueArea}
         {editor}
         {open && (
