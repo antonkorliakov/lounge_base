@@ -177,6 +177,33 @@ describe('CleaningScheduleEditor', () => {
     expect(html).toContain('Every day: 14:30 – 15:00')
     expect(html).toContain(UI['form.freeFormAnswer'].en)
   })
+
+  // «Пусто» — это первое состояние любой периодичности (оператор только что
+  // нажал «Daily»/«Monthly»/«Quarterly» и ещё не набрал ни одного интервала),
+  // а не порча. Тот же результат оставляет и снятие последнего «×» у
+  // единственного интервала. Редактор обязан показать это состояние —
+  // выбранную кнопку и элемент, которым можно продолжить — иначе нажатие
+  // кнопки выглядит так, будто ничего не произошло.
+  describe('«пусто» — законное первое состояние периодичности, не порча', () => {
+    it('daily с пустым списком интервалов: кнопка «Daily» нажата, есть «+ interval»', () => {
+      const html = renderCleaning({ cadence: 'daily', windows: [] })
+      expect(html).toMatch(/aria-pressed="true"[^>]*>Daily</)
+      expect(html).toContain(UI['schedule.addWindow'].en)
+    })
+
+    it('monthly с пустым списком интервалов: видны «какой по счёту», «день недели» и «+ interval»', () => {
+      const html = renderCleaning({ cadence: 'monthly', nth: 1, weekday: 'mon', windows: [] })
+      expect(html).toContain(UI['schedule.nth'].en)
+      expect(html).toContain(UI['schedule.weekday'].en)
+      expect(html).toContain(UI['schedule.addWindow'].en)
+    })
+
+    it('по-настоящему испорченное значение (неизвестная периодичность) — все кнопки не нажаты', () => {
+      const html = renderCleaning({ cadence: 'yearly', windows: [] })
+      for (const label of ['Daily', 'Weekly', 'Monthly', 'Quarterly']) expect(html).toContain(label)
+      expect(html).not.toContain('aria-pressed="true"')
+    })
+  })
 })
 
 describe('FieldInput отдаёт расписания своим редакторам', () => {
@@ -200,8 +227,15 @@ describe('FieldInput отдаёт расписания своим редакто
     expect(html).toContain('No peak')
   })
 
-  it('III.1.4 — редактор уборки', () => {
-    expect(render('III.1.4', { cadence: 'daily', windows: [] })).toContain(UI['schedule.cadence'].en)
+  it('III.1.4 — редактор уборки: только что выбранная «Daily» видна нажатой, с «+ interval»', () => {
+    // Раньше здесь проверялась только всегда присутствующая подпись
+    // «How often» — она осталась бы в разметке, даже если бы клик по
+    // «Daily» не привёл ни к чему. Проверяем то, что подтверждает: кнопка
+    // нажата и есть чем продолжить — управление вернулось оператору.
+    const html = render('III.1.4', { cadence: 'daily', windows: [] })
+    expect(html).toContain(UI['schedule.cadence'].en)
+    expect(html).toMatch(/aria-pressed="true"[^>]*>Daily</)
+    expect(html).toContain(UI['schedule.addWindow'].en)
   })
 
   it('отказ сервера рисуется тем же .fix-comment, что у остальных полей', () => {

@@ -34,9 +34,34 @@ const NTH_BUTTON: Record<string, { en: string; ru: string }> = {
   '4': { en: '4th', ru: '4-й' }, last: { en: 'last', ru: 'последний' },
 }
 
+/** Сохранённое значение → расписание. Старый свободный текст остаётся
+ *  текстом (см. `asWeek` в `WeekHoursEditor.tsx` — тот же приём и та же
+ *  причина).
+ *
+ *  `cleaningProblem(value) === 'empty'` — законная форма, не порча: это
+ *  ровно то состояние, в которое попадает оператор через мгновение после
+ *  выбора периодичности (`switchCadence(null, 'daily')` и аналоги для
+ *  `monthly`/`quarterly` дают `{ cadence, windows: [] }`), и то же
+ *  состояние остаётся после снятия «×» у последнего интервала. Прятать его
+ *  значило бы, что нажатие кнопки «Daily» выглядит так, будто ничего не
+ *  произошло: ни одна кнопка периодичности не подсвечена, ни список
+ *  интервалов (а для monthly/quarterly — ни выбор «какой по счёту» и дня
+ *  недели) не появляется, хотя `onChange` уже отправил корректное значение.
+ *  Для `weekly` тот же тег `'empty'` в принципе недостижим на нетронутой
+ *  сетке: `weekHoursProblem({}, …)` возвращает `null` (сетка без единого
+ *  дня — это ещё не проблема, см. её комментарий), пустой список интервалов
+ *  внутри отдельного дня — уже дело `dayHoursProblem`/`asWeek`, которая сама
+ *  решает, что делать с таким днём. Этот разбор ветки затрагивает только
+ *  периодичности с общим списком интервалов (`daily`/`monthly`/`quarterly`).
+ *
+ *  Любой другой тег (`'cadence'`, `'shape'`, `'nth'`, `'day'` и т.п.) — это
+ *  по-прежнему не расписание: значение либо отсутствует, либо действительно
+ *  не разобрать, и тогда честнее показать четыре кнопки без нажатой, чем
+ *  выдать требуемую форму за то, что было сохранено. */
 function asSchedule(value: unknown): { schedule: CleaningSchedule | null; legacy: string | null } {
   if (typeof value === 'string' && value.trim() !== '') return { schedule: null, legacy: value }
-  if (cleaningProblem(value) !== null) return { schedule: null, legacy: null }
+  const problem = cleaningProblem(value)
+  if (problem !== null && problem !== 'empty') return { schedule: null, legacy: null }
   return { schedule: value as CleaningSchedule, legacy: null }
 }
 
