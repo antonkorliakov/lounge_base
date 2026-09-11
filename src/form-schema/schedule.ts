@@ -678,7 +678,6 @@ export function cleaningCells(
  * оператора). `nth`/`weekday` при переходе daily → monthly берут первый
  * понедельник как отправную точку, которую видно и легко поменять.
  */
-
 export function switchCadence(current: CleaningSchedule | null, cadence: Cadence): CleaningSchedule {
   // Кнопки периодичности не выключаются, когда их периодичность уже выбрана
   // (оператор может нажать «Weekly», уже стоя на ней) — выбор ТОЙ ЖЕ

@@ -901,7 +901,12 @@ describe('collapseWeek — дни собираются в правила', () =>
   it('полный день 00:00–24:00 не считается хвостом предыдущего', () => {
     const week: WeekHours = { mon: { kind: 'windows', windows: [{ from: '20:00', to: END_OF_DAY }] }, tue: { kind: 'windows', windows: [{ from: '00:00', to: END_OF_DAY }] } }
     const rules = collapseWeek(week)
-    expect(rules.find((r) => r.days.includes('mon'))!.hours).toEqual({ kind: 'windows', ranges: [{ from: '20:00', to: END_OF_DAY }] })
+    // Под мутантом вторник исчезал из списка, а понедельник читался тем же —
+    // проверять надо весь список, а не один день.
+    expect(rules).toEqual([
+      { days: ['mon'], hours: { kind: 'windows', ranges: [{ from: '20:00', to: END_OF_DAY }] } },
+      { days: ['tue'], hours: { kind: 'windows', ranges: [{ from: '00:00', to: END_OF_DAY }] } },
+    ])
   })
 
   it('дни none и неотвеченные в правила не попадают', () => {
