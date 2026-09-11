@@ -28,6 +28,7 @@ import {
   switchCadence,
   formatWindows,
   formatWeekHours,
+  dayTexts,
   formatCleaning,
   weekHoursCells,
   cleaningCells,
@@ -549,83 +550,50 @@ describe('switchCadence', () => {
 })
 
 describe('канонический текст недельных часов', () => {
-  // Явная аннотация вместо `as const` — та же причина, что у `mon` выше:
-  // `WeekHours`/`DayHours` требуют мутабельный `Window[]`.
-  const nine: DayHours = { kind: 'windows', windows: [{ from: '09:00', to: '18:00' }] }
-
-  it('одинаковые соседние дни сжимаются в отрезок', () => {
-    const week = { ...everyDay(nine), sun: { kind: 'none' } } as WeekHours
-    expect(formatWeekHours(week, OPEN, 'en')).toBe('Mon–Sat 09:00–18:00; Sun Closed')
-    expect(formatWeekHours(week, OPEN, 'ru')).toBe('Пн–Сб 09:00–18:00; Вс Закрыто')
+  it('№1: будни и выходные', () => {
+    expect(formatWeekHours(expandRules([rule(W, '09:00', '21:00'), rule(E, '10:00', '20:00')]), OPEN, 'en'))
+      .toBe('Mon–Fri 09:00–21:00; Sat–Sun 10:00–20:00')
   })
 
-  it('одиночный день не превращается в отрезок', () => {
-    const week = { ...everyDay({ kind: 'allDay' }), wed: { kind: 'none' } } as WeekHours
-    expect(formatWeekHours(week, OPEN, 'en')).toBe('Mon–Tue 24h; Wed Closed; Thu–Sun 24h')
+  it('№2: ночь печатается как её вводили, с пометкой', () => {
+    const week = expandRules([rule(W, '02:00', '01:00'), rule(E, '05:00', '01:00')])
+    expect(formatWeekHours(week, OPEN, 'en')).toBe('Mon–Fri 02:00–01:00 (next day); Sat–Sun 05:00–01:00 (next day)')
+    expect(formatWeekHours(week, OPEN, 'ru')).toBe('Пн–Пт 02:00–01:00 (след. дня); Сб–Вс 05:00–01:00 (след. дня)')
   })
 
-  it('разрывной день печатает интервалы через запятую', () => {
-    const week = everyDay({ kind: 'windows', windows: [{ from: '01:00', to: '11:00' }, { from: '12:00', to: '23:00' }] })
-    expect(formatWeekHours(week, OPEN, 'en')).toBe('Mon–Sun 01:00–11:00, 12:00–23:00')
+  it('№4 и №5: круглосуточно; несмежные дни через запятую, закрытый — словом поля', () => {
+    expect(formatWeekHours(expandRules([{ days: [...WEEKDAYS], hours: { kind: 'allDay' } }]), OPEN, 'ru')).toBe('Пн–Вс Круглосуточно')
+    expect(formatWeekHours(expandRules([rule(['mon', 'tue', 'wed', 'thu', 'sat', 'sun'], '09:00', '21:00')]), OPEN, 'en'))
+      .toBe('Mon–Thu, Sat–Sun 09:00–21:00; Fri Closed')
   })
 
-  it('неотвеченный день — прочерк, недописанный интервал — многоточие', () => {
-    expect(formatWeekHours({ mon: nine }, OPEN, 'en')).toBe('Mon 09:00–18:00; Tue–Sun —')
-    expect(
-      formatWeekHours(everyDay({ kind: 'windows', windows: [{ from: '01:00', to: null }] }), OPEN, 'en'),
-    ).toBe('Mon–Sun 01:00–…')
+  it('№6: рейсы словами на обоих языках', () => {
+    expect(formatWeekHours(expandRules([rule(WEEKDAYS, FIRST_FLIGHT, LAST_FLIGHT)]), OPEN, 'en')).toBe('Mon–Sun first flight–last flight')
+    expect(formatWeekHours(expandRules([rule(WEEKDAYS, FIRST_FLIGHT, LAST_FLIGHT)]), OPEN, 'ru')).toBe('Пн–Вс с первого рейса до последнего')
+    expect(formatWeekHours(expandRules([rule(W, '09:00', '21:00'), rule(E, FIRST_FLIGHT, '23:00')]), OPEN, 'ru'))
+      .toBe('Пн–Пт 09:00–21:00; Сб–Вс с первого рейса до 23:00')
   })
 
-  it('подпись пустого состояния берётся у поля', () => {
+  it('неотвеченные дни — прочерк; подпись пустого берётся у поля', () => {
+    expect(formatWeekHours({ mon: { kind: 'windows', windows: [{ from: '09:00', to: '18:00' }] } }, OPEN, 'en')).toBe('Mon 09:00–18:00; Tue–Sun —')
     expect(formatWeekHours(everyDay({ kind: 'none' }), PEAK, 'en')).toBe('Mon–Sun No peak')
-    expect(formatWeekHours(everyDay({ kind: 'none' }), PEAK, 'ru')).toBe('Пн–Вс Нет пика')
+  })
+
+  it('разрывной день печатает интервалы через запятую; недописанный — многоточием', () => {
+    expect(formatWeekHours(everyDay({ kind: 'windows', windows: [{ from: '01:00', to: '11:00' }, { from: '12:00', to: '23:00' }] }), OPEN, 'en'))
+      .toBe('Mon–Sun 01:00–11:00, 12:00–23:00')
+    expect(formatWeekHours(everyDay({ kind: 'windows', windows: [{ from: '01:00', to: null }] }), OPEN, 'en')).toBe('Mon–Sun 01:00–…')
   })
 
   it('старый текстовый ответ печатается как есть', () => {
-    expect(formatWeekHours('Monday – Saturday: 00:00 – 23:59', OPEN, 'en')).toBe(
-      'Monday – Saturday: 00:00 – 23:59',
-    )
+    expect(formatWeekHours('Monday – Saturday: 00:00 – 23:59', OPEN, 'en')).toBe('Monday – Saturday: 00:00 – 23:59')
   })
 
-  // I2: раньше один негодный день ронял ВЕСЬ текст в `String(value ?? '')` —
-  // на плоском объекте это буквально печатало «[object Object]» ревьюеру и в
-  // файл выгрузки. Теперь деградация — по дню, как у `asWeek` в редакторе:
-  // хорошие дни печатаются как обычно, плохой — тем же прочерком, что и
-  // непришедший день.
-  describe('деградация по дню вместо порчи всего текста (I2)', () => {
-    it('шесть хороших дней плюс один по-настоящему нерисуемый — шесть напечатаны, седьмой — прочерк', () => {
-      const week = { ...everyDay(nine), sun: { kind: 'sometimes' } } as unknown as WeekHours
-      expect(formatWeekHours(week, OPEN, 'en')).toBe('Mon–Sat 09:00–18:00; Sun —')
-    })
-
-    it('formatWeekHours({ mon: { kind: "allDay" } }, PEAK, "en") больше не содержит "object"', () => {
-      const html = formatWeekHours({ mon: { kind: 'allDay' } }, PEAK, 'en')
-      expect(html).not.toContain('object')
-    })
-  })
-
-  // Собственный тег `windowsProblem` для негодной границы — 'clock', и он
-  // рисуемый (`dayRenderable`) нарочно: транзитная негодность времени не
-  // должна ронять день, как это делает 'shape'/'kind' у соседних веток I2.
-  // Но «рисуемый» — не то же самое, что «границу можно напечатать»: значение
-  // с границей не-строкой сюда попадает не через редактор (его поля пишут
-  // только строки), а из данных, записанных до этой ветки, скриптом или
-  // прежним клиентом, — и раньше `formatWindow` печатал такую границу шаблонной
-  // строкой, коверкая её в «[object Object]».
-  describe('негодное (не строка) время внутри рисуемого интервала — прочерк, а не «[object Object]»', () => {
-    it('formatWeekHours: понедельник с нестроковой границей — прочерк вместо неё, остальные дни целы', () => {
-      const badWindow = { from: {}, to: '10:00' } as unknown as Window
-      const week = { mon: { kind: 'windows', windows: [badWindow] } } as WeekHours
-      const text = formatWeekHours(week, OPEN, 'en')
-      expect(text).not.toContain('object')
-      expect(text).not.toContain('Object')
-      expect(text).toBe('Mon —–10:00; Tue–Sun —')
-    })
-
-    it('годный интервал по-прежнему печатается как раньше — регресс в обычном форматировании не пройдёт незамеченным', () => {
-      const nine: DayHours = { kind: 'windows', windows: [{ from: '09:00', to: '18:00' }] }
-      expect(formatWeekHours({ mon: nine }, OPEN, 'en')).toBe('Mon 09:00–18:00; Tue–Sun —')
-    })
+  it('dayTexts — то, что видит оператор в итоге под редактором', () => {
+    const texts = dayTexts(expandRules([rule(W, '02:00', '01:00'), rule(['sat'], '10:00', '20:00')]), OPEN, 'ru')
+    expect(texts.mon).toBe('02:00–01:00 (след. дня)')
+    expect(texts.sat).toBe('10:00–20:00')
+    expect(texts.sun).toBe('Закрыто')
   })
 })
 

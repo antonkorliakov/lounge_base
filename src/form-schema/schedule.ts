@@ -487,39 +487,92 @@ export function formatDayHours(
   return formatWindows(hours.windows, locale)
 }
 
-/** Соседние дни с одинаковым текстом сливаются в отрезок: «Mon–Sat 09:00–18:00»
- *  вместо шести строк. Сравниваются именно ТЕКСТЫ дней, а не структуры: два дня,
- *  которые читаются одинаково, для читателя и есть одно и то же. */
-function compressDays(texts: Record<Weekday, string>, locale: 'en' | 'ru'): string {
-  const parts: string[] = []
-  let start = 0
-  for (let index = 1; index <= WEEKDAYS.length; index += 1) {
-    const same = index < WEEKDAYS.length && texts[WEEKDAYS[index]!] === texts[WEEKDAYS[start]!]
-    if (same) continue
-    const first = DAY_SHORT[WEEKDAYS[start]!][locale]
-    const last = DAY_SHORT[WEEKDAYS[index - 1]!][locale]
-    const span = index - start === 1 ? first : `${first}–${last}`
-    parts.push(`${span} ${texts[WEEKDAYS[start]!]}`)
-    start = index
-  }
-  return parts.join('; ')
-}
-
 function isLegacyText(value: unknown): value is string {
   return typeof value === 'string'
 }
 
+const NEXT_DAY: Localized = { en: 'next day', ru: 'след. дня' }
+
+/** Один диапазон правила — как его вводил оператор: ночь одной записью с
+ *  пометкой, маркеры словами, пустое начало — прочерк. */
+export function formatRange(range: Range, locale: 'en' | 'ru'): string {
+  if (range.from === '') return UNANSWERED
+  const text = formatWindow({ from: range.from, to: range.to }, locale)
+  return isNightRange(range) ? `${text} (${NEXT_DAY[locale]})` : text
+}
+
+function formatRuleHours(hours: RuleHours, locale: 'en' | 'ru'): string {
+  if (hours.kind === 'allDay') return ALL_DAY_LABEL[locale]
+  return hours.ranges.map((r) => formatRange(r, locale)).join(', ')
+}
+
 /**
- * Канонический текст недели. Деградирует ПО ДНЮ, той же мерой, что `asWeek` в
- * `WeekHoursEditor.tsx` (`dayRenderable`) — не всем текстом разом (Important
- * 2, сквозное ревью). Раньше единственной проверкой формы был
- * `weekHoursProblem(value, options) !== null` для ВСЕЙ недели, и он срабатывал
- * от одного плохого дня — `weekHoursProblem` возвращает тег первого
- * встреченного нарушения как тег недели целиком (см. её комментарий), так что
- * шесть настоящих ответов пропадали вместе с седьмым, а строкой печати
- * оказывался `String(value ?? '')` — на плоском объекте буквально
- * «[object Object]», и это доезжало до ревьюера (`renderValues`) и до файла
- * выгрузки (`export/rows.ts`, `single.ts`) как есть.
+ * Текст каждого дня В ПРЕДСТАВЛЕНИИ ПРАВИЛ: ночь склеена обратно (см.
+ * `collapseWeek`), закрытый день — словом поля, неотвеченный — прочерком.
+ * Это один источник и для канонического текста (экран проверки, лист одной
+ * анкеты), и для итога под редактором: оператор и проверяющий читают одно.
+ *
+ * `collapseWeek` читает `hours.kind`/`hours.windows` без проверки формы — это
+ * годится для Task 4, где она видит только уже валидное состояние редактора.
+ * Здесь же неделя приходит и с экрана проверки, и из выгрузки — то есть с
+ * сырыми сохранёнными ответами, где один день с неизвестным `kind` или
+ * `windows` не массивом уронил бы всю функцию (I2, сквозное ревью: деградация
+ * по дню, а не крах или порча всего текста). Поэтому в `collapseWeek` идут
+ * только дни, которые `dayRenderable` признаёт читаемыми; остальные остаются
+ * без правила и печатаются прочерком той же веткой, что настоящий
+ * неотвеченный день.
+ */
+export function dayTexts(week: WeekHours, options: HoursOptions, locale: 'en' | 'ru'): Record<Weekday, string> {
+  const renderable: WeekHours = {}
+  for (const day of WEEKDAYS) {
+    const hours = week[day]
+    if (dayRenderable(dayHoursProblem(hours, options))) renderable[day] = hours
+  }
+
+  const rules = collapseWeek(renderable)
+  const out = {} as Record<Weekday, string>
+  for (const day of WEEKDAYS) {
+    const rule = rules.find((r) => r.days.includes(day))
+    if (rule) out[day] = formatRuleHours(rule.hours, locale)
+    else if (week[day]?.kind === 'none') out[day] = options.noneLabel[locale]
+    else out[day] = UNANSWERED
+  }
+  return out
+}
+
+/** Дни с одинаковым текстом — одной группой в порядке недели: смежные —
+ *  отрезком («Mon–Thu»), несмежные — через запятую («Mon–Thu, Sat–Sun»). Порядок
+ *  групп — по первому дню. */
+function groupDaysByText(texts: Record<Weekday, string>, locale: 'en' | 'ru'): string {
+  const groups: { text: string; days: Weekday[] }[] = []
+  for (const day of WEEKDAYS) {
+    const group = groups.find((g) => g.text === texts[day])
+    if (group) group.days.push(day)
+    else groups.push({ text: texts[day], days: [day] })
+  }
+  return groups.map((g) => `${formatDaySpans(g.days, locale)} ${g.text}`).join('; ')
+}
+
+function formatDaySpans(days: Weekday[], locale: 'en' | 'ru'): string {
+  const spans: string[] = []
+  let start = 0
+  for (let i = 1; i <= days.length; i += 1) {
+    const adjacent = i < days.length && WEEKDAYS.indexOf(days[i]!) === WEEKDAYS.indexOf(days[i - 1]!) + 1
+    if (adjacent) continue
+    const first = DAY_SHORT[days[start]!][locale]
+    const last = DAY_SHORT[days[i - 1]!][locale]
+    spans.push(i - start === 1 ? first : `${first}–${last}`)
+    start = i
+  }
+  return spans.join(', ')
+}
+
+/**
+ * Канонический текст недели — то же, что видит оператор в правилах: ночь
+ * одной записью с пометкой «(next day)», дни с одинаковым текстом — одной
+ * группой в порядке недели (смежные отрезком, несмежные через запятую).
+ * Один источник с итогом под редактором (`dayTexts`, Task 4) — оператор и
+ * проверяющий читают одну и ту же строку.
  */
 export function formatWeekHours(
   value: unknown,
@@ -530,18 +583,7 @@ export function formatWeekHours(
   // оператор не введёт структуру (см. spec, «старые текстовые ответы»).
   if (isLegacyText(value)) return value
   if (!isPlainObject(value)) return ''
-
-  const week = value as WeekHours
-  const texts = Object.fromEntries(
-    WEEKDAYS.map((day) => {
-      const hours = week[day]
-      const text = dayRenderable(dayHoursProblem(hours, options))
-        ? formatDayHours(hours, options, locale)
-        : UNANSWERED
-      return [day, text]
-    }),
-  ) as Record<Weekday, string>
-  return compressDays(texts, locale)
+  return groupDaysByText(dayTexts(value as WeekHours, options, locale), locale)
 }
 
 /**
