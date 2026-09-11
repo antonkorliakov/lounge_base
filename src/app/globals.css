@@ -321,43 +321,20 @@ body {
    глобальное правило button. */
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
 
-/* Недельная сетка расписаний. Строка дня — подпись, сегментный контрол
-   состояний (общий вид с .avail-toggle) и, у состояния «по часам»,
-   интервалы под ними. На узком экране всё это встаёт в столбик: три
-   состояния и пара времени в одну строку 375px не помещаются. */
+/* Контейнер графика уборки (`CleaningScheduleEditor`): периодичность, сетка
+   правил или список интервалов — колонкой, тем же зазором, что у `.hr`
+   ниже (общий редактор часов правилами делит с ним визуальный язык). */
 .wh { display: flex; flex-direction: column; gap: 10px; }
-.wh-bulk { display: flex; flex-wrap: wrap; gap: 8px; }
-.wh-row {
-  display: grid;
-  grid-template-columns: 7.5rem auto 1fr;
-  align-items: center;
-  gap: 8px 10px;
-  padding: 8px 0;
-  border-top: 1px solid #e4e6ea;
-}
-.wh-day { font-weight: 600; }
-.wh-copy { font-size: 13px; }
-.wh-windows { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; }
-.wh-window { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.wh-window label { font-size: 13px; opacity: .7; }
-.wh-window input[type='time'] { width: auto; min-width: 8rem; }
-.wh-drop { min-width: 44px; }
-.wh-add { align-self: flex-start; font-size: 13px; }
-/* `aria-disabled`, не HTML `disabled` (см. WindowsEditor.tsx) — кнопка
-   остаётся в таб-порядке, поэтому общее `button:disabled { opacity: .4 }`
-   её не гасит само; тот же множитель применён явно по атрибуту ARIA.
-   Только opacity — цвета не заводит, значит и парного тёмного правила не
-   требуется. */
-.wh-add[aria-disabled='true'] { opacity: .4; cursor: default; }
-.wh-add-reason { margin-top: 2px; }
-.wh-legacy { border: 1px dashed #e4e6ea; border-radius: 8px; padding: 8px 10px; }
-.wh-legacy-value { margin: 0; white-space: pre-wrap; }
-
-@media (max-width: 640px) {
-  .wh-row { grid-template-columns: 1fr; }
-  .wh-states { display: flex; }
-  .wh-states button { flex: 1 1 0; }
-}
+/* Подпись «How often» перед кнопками периодичности — единственное, что
+   осталось от сетки по дням в этом компоненте (сама сетка ушла в `.hr`). */
+.cs-label { font-weight: 600; }
+/* Список интервалов daily/monthly/quarterly — колонка строк `.hr-row`. */
+.cs-windows { display: flex; flex-direction: column; gap: 8px; }
+/* Подписи `<label>` перед `<select>` «какой по счёту» / «день недели»
+   (см. `.hr-row` ниже) — приглушённый вид, тише самих селектов. Другие
+   `.hr-row` подписей не рисуют, так что сюда попадают только эти два
+   `<label>`. */
+.hr-row label { font-size: 13px; opacity: .7; }
 
 /* Редактор часов правилами. Полоска дней — сегментный ряд компактных чипов
    (тот же aria-pressed-стиль, что у .chip-row, через общее правило выше).
@@ -1170,12 +1147,8 @@ button:disabled { opacity: .4; }
   }
   .pass2-card,
   .fix-card { border-color: #2a2d34; }
-  .wh-row { border-top-color: #2a2d34; }
-  .wh-legacy { border-color: #2a2d34; }
-  /* Тот же приём, что у .wh-row/.wh-legacy выше — редактор часов правилами
-     переиспользует эти рамки под своими классами. Цвет ссылки — тот же
-     светлый синий, что уже держит .review-back на тёмном фоне (насыщенный
-     #2563eb тонет на тёмной странице). */
+  /* Цвет ссылки — тот же светлый синий, что уже держит .review-back на
+     тёмном фоне (насыщенный #2563eb тонет на тёмной странице). */
   .hr-rule { border-top-color: #2a2d34; }
   .hr-sum { border-top-color: #444441; }
   .hr-legacy { border-color: #2a2d34; }

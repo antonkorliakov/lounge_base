@@ -12,15 +12,24 @@ import { useLocale } from '@/i18n/context'
  *
  * Правил тут нет: ночной диапазон распознаёт `isNightRange`, разбивает по
  * суткам `expandRules`; компонент лишь подписывает его оператору.
+ *
+ * `night` (по умолчанию true) гасит только подпись «след. дня»: график
+ * уборки (`CleaningScheduleEditor`) пишет `windows` напрямую, без
+ * `expandRules`, так что у него `to < from` не раскладывается на завтра — это
+ * просто негодный интервал, который `windowsProblem` отклонит с
+ * `INVALID_CLEANING`, а не переход через полночь. Подпись, обещающая перенос,
+ * которого не будет, здесь была бы ложью.
  */
 export function RangeEditor(props: {
   range: Range
   options: HoursOptions
   onChange: (range: Range) => void
   id: string
+  night?: boolean
 }): React.JSX.Element {
   const { t } = useLocale()
   const { range, onChange } = props
+  const night = props.night ?? true
 
   const bound = (key: 'from' | 'to', marker: string, word: string, orWord: string): React.JSX.Element => {
     const value = range[key]
@@ -64,7 +73,7 @@ export function RangeEditor(props: {
       {bound('from', FIRST_FLIGHT, t('schedule.fromFirstFlight'), t('schedule.orFirstFlight'))}
       <span className="hr-prep">{t('schedule.to')}</span>
       {bound('to', LAST_FLIGHT, t('schedule.toLastFlight'), t('schedule.orLastFlight'))}
-      {isNightRange(range) && range.to && <span className="hr-night">{t('schedule.nextDay').replace('{to}', range.to)}</span>}
+      {night && isNightRange(range) && range.to && <span className="hr-night">{t('schedule.nextDay').replace('{to}', range.to)}</span>}
     </span>
   )
 }

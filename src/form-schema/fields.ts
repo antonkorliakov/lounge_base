@@ -16,7 +16,7 @@ export type FieldType =
   | 'phone'
   | 'email'
   // Расписания: правила — `schedule.ts`, проверка — `validateField`, ввод —
-  // `WeekHoursEditor`/`CleaningScheduleEditor`. Значение — структура в том же
+  // `HoursRulesEditor`/`CleaningScheduleEditor`. Значение — структура в том же
   // jsonb-столбце, миграции нет.
   | 'weekHours'
   | 'cleaningSchedule'

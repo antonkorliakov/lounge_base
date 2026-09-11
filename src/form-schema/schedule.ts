@@ -26,10 +26,12 @@ export type Nth = (typeof NTHS)[number]
 export const CADENCES = ['daily', 'weekly', 'monthly', 'quarterly'] as const
 export type Cadence = (typeof CADENCES)[number]
 
-/** Конец суток. `<input type="time">` такого значения не принимает, поэтому в
- *  редакторе он ставится кнопкой «до конца дня» (см. `WindowsEditor`), а здесь
- *  он законное значение `to` — иначе «работаем до полуночи» пришлось бы писать
- *  как 23:59 и терять минуту. */
+/** Конец суток. `<input type="time">` такого значения не принимает, поэтому
+ *  оператор его напрямую не набирает — оно появляется только через
+ *  `expandRules`, когда ночной диапазон («22:00–02:00») делится по суткам:
+ *  сегодняшняя половина закрывается им, а не 23:59, иначе «работаем до
+ *  полуночи» теряло бы минуту. Здесь это законное значение `to`, которое
+ *  сравнивают `clockMinutes` наравне с обычным временем. */
 export const END_OF_DAY = '24:00'
 
 export type Window = { from: string; to: string | null }
@@ -183,32 +185,6 @@ export function nextWindowStart(windows: Window[]): string | null {
   return last.to
 }
 
-export type NextWindowBlockedReason = 'unfinished' | 'full' | null
-
-/**
- * Почему `nextWindowStart` вернула `null` — компаньон, а не замена: правило
- * «когда именно нельзя предложить следующий интервал» по-прежнему целиком
- * живёт в `nextWindowStart` (эта функция его не повторяет и не проверяет
- * заново — просто смотрит на тот же последний интервал и называет причину).
- * Нужен `WindowsEditor`, чтобы показать читателю, ПОЧЕМУ «+ интервал»
- * недоступна (Important 1, сквозное ревью): `nextWindowStart` одного `null`
- * для этого мало — у него две разные причины, и обе значат разное действие
- * оператора: `'unfinished'` — сперва закончить текущий интервал (проставить
- * ему конец), `'full'` — день уже занят до конца суток, добавлять некуда.
- */
-export function nextWindowBlockedReason(windows: Window[]): NextWindowBlockedReason {
-  if (windows.length === 0) return null
-  const last = windows[windows.length - 1]!
-  // Функция удаляется в Task 5 вместе с `WindowsEditor`; маркерный интервал
-  // трактуется как «занято до конца» — второй причины (`'unfinished'`) у
-  // него нет, `to` маркера либо задан, либо это тот же случай, что и обычного
-  // недописанного интервала.
-  if (hasMarker(last)) return 'full'
-  if (last.to === null) return 'unfinished'
-  if (last.to === END_OF_DAY) return 'full'
-  return null
-}
-
 export type DayHoursProblem = 'shape' | 'kind' | 'allDayNotAllowed' | 'flightNotAllowed' | Exclude<WindowsProblem, null> | null
 
 /** Что не так с ОДНИМ днём, или `null`. Отдельно от недели, потому что у
@@ -314,8 +290,8 @@ const UNRENDERABLE_SCHEDULE_TAGS: ReadonlySet<CleaningProblem> = new Set(['shape
  * `'kind'`, `'allDayNotAllowed'`, `'clock'`, `'order'`, `'overlap'` — они
  * приходят с ОДНОГО испорченного дня еженедельной уборки (`weekHoursProblem`
  * возвращает тег этого дня как есть) и не должны гасить остальные шесть дней
- * и кнопки периодичности: `WeekHoursEditor`'s `asWeek` сама разберётся с этим
- * днём через `dayRenderable`, как только доберётся до него.
+ * и кнопки периодичности: редактор недели сам разберётся с этим днём через
+ * `dayRenderable`, как только доберётся до него.
  *
  * Раньше `CleaningScheduleEditor`'s `asSchedule` держала только `null`/
  * `'empty'` и на любом из этих тегов возвращала `schedule: null` — то есть
@@ -327,9 +303,6 @@ const UNRENDERABLE_SCHEDULE_TAGS: ReadonlySet<CleaningProblem> = new Set(['shape
 export function scheduleRenderable(problem: CleaningProblem): boolean {
   return problem === null || !UNRENDERABLE_SCHEDULE_TAGS.has(problem)
 }
-
-export const WEEKDAY_WORKDAYS: readonly Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri']
-export const WEEKDAY_WEEKEND: readonly Weekday[] = ['sat', 'sun']
 
 /** Все интервалы дописаны (`to` задан). Незаполненность — вопрос полноты
  *  анкеты, не формы значения; см. `windowsProblem`. */
@@ -368,51 +341,6 @@ export function cleaningComplete(value: unknown): boolean {
   const schedule = value as CleaningSchedule
   if (schedule.cadence === 'weekly') return weekHoursComplete(schedule.days, CLEANING_DAY_OPTIONS)
   return schedule.windows.length > 0 && windowsFinished(schedule.windows)
-}
-
-/** Годится ли день как ИСТОЧНИК копирования: он отвечен и несёт ответ. День в
- *  состоянии «по часам» с пустым списком интервалов не несёт ничего (и сервер
- *  такой день отвергает — `windowsProblem` → 'empty'), поэтому копировать его
- *  на другие дни значило бы стереть их ответы. Одно правило на два потребителя:
- *  `spread` ниже и выключенность кнопок в `WeekHoursEditor`. */
-export function dayCopyable(hours: DayHours | undefined): boolean {
-  if (!hours) return false
-  return hours.kind !== 'windows' || hours.windows.length > 0
-}
-
-function spread(week: WeekHours, from: Weekday, targets: readonly Weekday[]): WeekHours {
-  const source = week[from]
-  // Копировать нечего — неделя возвращается как есть, а не затирается
-  // пустотой: кнопка быстрого действия не должна уметь стереть введённое.
-  if (!dayCopyable(source)) return week
-  const out: WeekHours = { ...week }
-  for (const day of targets) out[day] = source
-  return out
-}
-
-/** «Одинаково всю неделю»: день-источник (в интерфейсе — понедельник) едет во
- *  все семь. Новый объект, источник не мутируется — результат кладут в
- *  состояние React, а мутация не вызвала бы перерисовку. */
-export function applyToAll(week: WeekHours, from: Weekday): WeekHours {
-  return spread(week, from, WEEKDAYS)
-}
-
-export function applyToWeekdays(week: WeekHours, from: Weekday): WeekHours {
-  return spread(week, from, WEEKDAY_WORKDAYS)
-}
-
-export function applyToWeekend(week: WeekHours, from: Weekday): WeekHours {
-  return spread(week, from, WEEKDAY_WEEKEND)
-}
-
-/** «Как в предыдущем дне»: сосед слева по `WEEKDAYS`. У понедельника соседа
- *  нет, а неотвеченный сосед копировать нечего — в обоих случаях неделя не
- *  меняется (кнопка в интерфейсе в это время выключена, но правило живёт
- *  здесь, а не в компоненте). */
-export function copyPreviousDay(week: WeekHours, day: Weekday): WeekHours {
-  const index = WEEKDAYS.indexOf(day)
-  if (index <= 0) return week
-  return spread(week, WEEKDAYS[index - 1]!, [day])
 }
 
 const DAY_SHORT: Record<Weekday, Localized> = {

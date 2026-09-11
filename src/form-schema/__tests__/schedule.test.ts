@@ -10,7 +10,6 @@ import {
   clockMinutes,
   windowsProblem,
   nextWindowStart,
-  nextWindowBlockedReason,
   dayHoursProblem,
   weekHoursProblem,
   cleaningProblem,
@@ -20,11 +19,6 @@ import {
   cleaningComplete,
   dayRenderable,
   scheduleRenderable,
-  applyToAll,
-  applyToWeekdays,
-  applyToWeekend,
-  copyPreviousDay,
-  dayCopyable,
   switchCadence,
   formatWindows,
   formatWeekHours,
@@ -32,8 +26,6 @@ import {
   formatCleaning,
   weekHoursCells,
   cleaningCells,
-  WEEKDAY_WORKDAYS,
-  WEEKDAY_WEEKEND,
   expandRules,
   collapseWeek,
   toggleDay,
@@ -209,40 +201,6 @@ describe('nextWindowStart — с какого времени предложит�
   })
 })
 
-describe('nextWindowBlockedReason — почему «+ интервал» недоступна (I1)', () => {
-  it('список пуст или последний интервал завершён — не заблокировано', () => {
-    expect(nextWindowBlockedReason([])).toBe(null)
-    expect(nextWindowBlockedReason([{ from: '01:00', to: '11:00' }])).toBe(null)
-  })
-
-  it('последний интервал не закрыт — «unfinished», не «full»', () => {
-    expect(nextWindowBlockedReason([{ from: '09:00', to: null }])).toBe('unfinished')
-  })
-
-  it('последний интервал доходит до конца суток — «full», не «unfinished»', () => {
-    expect(nextWindowBlockedReason([{ from: '03:00', to: '24:00' }])).toBe('full')
-  })
-
-  // Свойство, зеркальное тому, что уже проверено для nextWindowStart выше:
-  // ИМЕННО когда `nextWindowStart` вернул `null` (кнопка недоступна),
-  // `nextWindowBlockedReason` обязана назвать одну из двух причин, — и
-  // никогда не должна называть причину, когда кнопка доступна.
-  describe('свойство: заблокировано ⟺ есть причина', () => {
-    const fixtures: Window[][] = [
-      [],
-      [{ from: '01:00', to: '11:00' }],
-      [{ from: '01:00', to: '11:00' }, { from: '12:00', to: '23:00' }],
-      [{ from: '09:00', to: null }],
-      [{ from: '03:00', to: '24:00' }],
-    ]
-
-    it.each(fixtures.map((windows) => [windows] as const))('%j', (windows) => {
-      const blocked = nextWindowStart(windows) === null
-      expect(nextWindowBlockedReason(windows) !== null).toBe(blocked)
-    })
-  })
-})
-
 describe('weekHoursProblem', () => {
   it('частичная неделя корректна: незаполненный день — «не отвечено», а не ошибка', () => {
     expect(weekHoursProblem({ mon: { kind: 'allDay' } }, OPEN)).toBe(null)
@@ -395,78 +353,6 @@ describe('полнота графика уборки', () => {
 
   it('старый текстовый ответ — не заполнено: его надо ввести заново структурой', () => {
     expect(cleaningComplete('Every day: 14:30 – 15:00')).toBe(false)
-  })
-})
-
-describe('быстрые действия — чистые функции над неделей', () => {
-  // Явная аннотация вместо `as const`: `WeekHours`/`DayHours` требуют
-  // мутабельный `Window[]`, а `as const` сделал бы его readonly-кортежем —
-  // значение то же самое, просто типизировано под форму, которую редакторы
-  // реально кладут в состояние.
-  const mon: DayHours = { kind: 'windows', windows: [{ from: '09:00', to: '18:00' }] }
-
-  it('«одинаково всю неделю» раскладывает день-источник на все семь', () => {
-    const out = applyToAll({ mon, sun: { kind: 'none' } }, 'mon')
-    expect(Object.keys(out).sort()).toEqual([...WEEKDAYS].sort())
-    for (const day of WEEKDAYS) expect(out[day], day).toEqual(mon)
-  })
-
-  it('«на будни» не трогает выходные, «на выходные» не трогает будни', () => {
-    const week = applyToWeekdays({ mon, sat: { kind: 'none' } }, 'mon')
-    expect(WEEKDAY_WORKDAYS.every((d) => week[d]?.kind === 'windows')).toBe(true)
-    expect(week.sat).toEqual({ kind: 'none' })
-    expect(week.sun).toBeUndefined()
-
-    const weekend = applyToWeekend({ mon, sat: { kind: 'none' } }, 'mon')
-    expect(WEEKDAY_WEEKEND.every((d) => weekend[d]?.kind === 'windows')).toBe(true)
-    expect(weekend.tue).toBeUndefined()
-  })
-
-  it('«как в предыдущем дне» берёт соседа слева; у понедельника соседа нет', () => {
-    expect(copyPreviousDay({ mon }, 'tue').tue).toEqual(mon)
-    expect(copyPreviousDay({ mon }, 'mon')).toEqual({ mon })
-    // Предыдущий день не отвечен — копировать нечего, неделя не меняется.
-    expect(copyPreviousDay({ mon }, 'thu')).toEqual({ mon })
-  })
-
-  it('источник не мутируется — редактор кладёт результат в состояние React', () => {
-    const week = { mon }
-    applyToAll(week, 'mon')
-    expect(Object.keys(week)).toEqual(['mon'])
-  })
-
-  it('день-источник, который не отвечен, ничего не раскладывает', () => {
-    expect(applyToAll({}, 'mon')).toEqual({})
-  })
-
-  describe('dayCopyable — годится ли день как источник копирования', () => {
-    it('неотвеченный день — нет', () => {
-      expect(dayCopyable(undefined)).toBe(false)
-    })
-
-    it('«по часам» без единого интервала — нет: нести нечего, а сервер такой день отвергает', () => {
-      expect(dayCopyable({ kind: 'windows', windows: [] })).toBe(false)
-    })
-
-    it('«по часам» с недописанным интервалом — да: черновик уже несёт начатый ответ', () => {
-      expect(dayCopyable({ kind: 'windows', windows: [{ from: '09:00', to: null }] })).toBe(true)
-    })
-
-    it('«не работаем» и «круглосуточно» — да, это законные ответы', () => {
-      expect(dayCopyable({ kind: 'none' })).toBe(true)
-      expect(dayCopyable({ kind: 'allDay' })).toBe(true)
-    })
-  })
-
-  it('регресс: пустой «по часам» источник не стирает реальные ответы соседних дней', () => {
-    // Воспроизведение из ревью: понедельник нажат в «по часам» и остался без
-    // единого интервала (оператор удалил последний), вторник несёт настоящие
-    // часы. «Одинаково всю неделю» от понедельника не должен стереть вторник.
-    const week: WeekHours = {
-      mon: { kind: 'windows', windows: [] },
-      tue: { kind: 'windows', windows: [{ from: '09:00', to: '18:00' }] },
-    }
-    expect(applyToAll(week, 'mon')).toEqual(week)
   })
 })
 

@@ -262,15 +262,17 @@ export const UI = {
     en: 'This flagged answer cannot be edited on this screen. That is a bug on our side — please tell us, and mention the code below.',
     ru: 'Этот отмеченный ответ нельзя исправить на этом экране. Это ошибка на нашей стороне — сообщите нам и назовите код ниже.',
   },
+  // Текст диапазона в состоянии «круглосуточно» (`HoursRulesEditor`'s
+  // `hr-allday-text`) — единственный оставшийся читатель после Task 5: старая
+  // недельная сетка по дням, которая также показывала этот текст кнопкой
+  // состояния, удалена вместе с быстрыми действиями.
   'schedule.allDay': { en: '24 hours', ru: '24 часа' },
-  'schedule.byHours': { en: 'By hours', ru: 'По часам' },
-  'schedule.addWindow': { en: '+ interval', ru: '+ интервал' },
+  // «Убрать интервал» — aria-label «×» у одного окна графика уборки
+  // (`CleaningScheduleEditor`, daily/monthly/quarterly): единственный
+  // оставшийся читатель после Task 5 — старый редактор списка интервалов
+  // удалён вместе с сеткой по дням, но кнопка удаления интервала нужна и
+  // здесь, под тем же именем.
   'schedule.removeWindow': { en: 'Remove interval', ru: 'Убрать интервал' },
-  'schedule.untilEndOfDay': { en: 'until end of day', ru: 'до конца дня' },
-  'schedule.sameAllWeek': { en: 'Same all week', ru: 'Одинаково всю неделю' },
-  'schedule.copyPrevious': { en: 'Same as previous day', ru: 'Как в предыдущем дне' },
-  'schedule.copyToWorkdays': { en: 'Copy Mon to weekdays', ru: 'Скопировать пн на будни' },
-  'schedule.copyToWeekend': { en: 'Copy Mon to weekend', ru: 'Скопировать пн на выходные' },
   'schedule.from': { en: 'From', ru: 'С' },
   'schedule.to': { en: 'To', ru: 'До' },
   'schedule.cadence': { en: 'How often', ru: 'Как часто' },
@@ -295,23 +297,6 @@ export const UI = {
     en: 'Free-form answer from an earlier version',
     ru: 'Ответ в свободной форме, из прежней версии',
   },
-  // I1: «+ интервал» недоступна по двум разным причинам (см.
-  // `nextWindowBlockedReason` в `schedule.ts`) — раньше кнопка просто
-  // выключалась (`disabled`), выпадая из таб-порядка, и ни одна из причин
-  // нигде не была видна.
-  'schedule.finishPrevious': {
-    en: 'Finish the current interval first',
-    ru: 'Сначала закончите текущий интервал',
-  },
-  'schedule.dayIsFull': {
-    en: 'The day already runs to 24:00',
-    ru: 'День уже занят до 24:00',
-  },
-  // I4: маркеры незаполненного дня и недописанного интервала в сетке
-  // недельных часов — факт о значении, видимый всегда (не только когда
-  // отправка отказала), чтобы не тащить состояние отправки внутрь редактора.
-  'schedule.dayUnanswered': { en: 'Not answered', ru: 'Не отвечено' },
-  'schedule.windowUnfinished': { en: 'Not finished', ru: 'Не закончено' },
   // Полоска дней редактора правил (Task 4) показывает короткую подпись на
   // каждом чипе. `schedule.day.*` (полные названия) для этого не годятся:
   // `.slice(0, 2)` от «Понедельник» даёт «По», а не «Пн» — первые две буквы

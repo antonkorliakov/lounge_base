@@ -10,7 +10,7 @@ import {
   sanitizeEmailInput,
 } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
-import { WeekHoursEditor } from './WeekHoursEditor'
+import { HoursRulesEditor } from './HoursRulesEditor'
 import { CleaningScheduleEditor } from './CleaningScheduleEditor'
 
 /**
@@ -365,7 +365,7 @@ export function FieldInput(props: {
           {label}
           {hint}
           {field.hoursOptions && (
-            <WeekHoursEditor
+            <HoursRulesEditor
               value={value}
               options={field.hoursOptions}
               idPrefix={field.key}
