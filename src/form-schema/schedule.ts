@@ -470,9 +470,7 @@ export function dayTexts(week: WeekHours, options: HoursOptions, locale: 'en' | 
   const out = {} as Record<Weekday, string>
   for (const day of WEEKDAYS) {
     const rule = rules.find((r) => r.days.includes(day))
-    if (rule) out[day] = formatRuleHours(rule.hours, locale)
-    else if (week[day]?.kind === 'none') out[day] = options.noneLabel[locale]
-    else out[day] = UNANSWERED
+    out[day] = rule ? formatRuleHours(rule.hours, locale) : formatDayHours(renderable[day], options, locale)
   }
   return out
 }
