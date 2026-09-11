@@ -525,6 +525,35 @@ test('расписание правилами: ночной график вво�
   await expect(summaryRow('Tuesday')).toContainText('02:00–10:00')
 })
 
+/**
+ * I4 (whole-branch fix wave): the previous commit rewrote both schedule
+ * tests around `HoursRulesEditor` only, and the cleaning schedule
+ * (`CleaningScheduleEditor`) lost its own end-to-end coverage in the process
+ * — it writes `windows` directly, with its own `RangeEditor` instances, no
+ * `expandRules` layer to lean on. Restoring a short one: the "00:00 as end
+ * of day" convention (Critical, Task 5) applies to cleaning intervals too,
+ * and the raw `Window` it writes must still read back as `24:00` after a
+ * reload, not the internal "00:00" the input box shows.
+ */
+test('график уборки: ежедневно, окно до полуночи показывает «до конца дня» и переживает перезагрузку', async ({ page }) => {
+  const url = seed()
+  await page.goto(url)
+  await clickNext(page, 2)
+
+  const cleaning = page.locator('.field').filter({ hasText: 'Deep Cleaning Schedule' })
+  await cleaning.getByRole('button', { name: 'Daily' }).click()
+  await cleaning.getByRole('button', { name: 'Add an interval' }).click()
+  await cleaning.locator('input[type="time"]').first().fill('22:00')
+  await cleaning.locator('input[type="time"]').nth(1).fill('00:00')
+  await expect(cleaning.getByText('until the end of the day')).toBeVisible()
+  await expect(page.getByText('Saved')).toBeVisible()
+
+  await page.reload()
+  await clickNext(page, 2)
+  const cleaningAgain = page.locator('.field').filter({ hasText: 'Deep Cleaning Schedule' })
+  await expect(cleaningAgain.locator('input[type="time"]').nth(1)).toHaveValue('00:00')
+})
+
 test('перезагрузка сохраняет значение, введённое до срабатывания автосохранения', async ({ page }) => {
   const url = seed()
   await page.goto(url)

@@ -5,7 +5,7 @@ import { attributeApplies, isOfferedAvailability, requiredAttributesFor } from '
 import { OPTION_LISTS } from './option-lists'
 import { EMAIL_PLACEHOLDER, PHONE_PLACEHOLDER, isValidEmail, isValidPhone } from './contact'
 import {
-  cleaningComplete, cleaningProblem, weekHoursComplete, weekHoursProblem,
+  MARKER_BESIDE_TEXT, cleaningComplete, cleaningProblem, weekHoursComplete, weekHoursProblem,
 } from './schedule'
 
 export type ValidationResult = { ok: true } | { ok: false; error: Localized }
@@ -53,6 +53,11 @@ const INVALID_SCHEDULE = fail(
   'Check the schedule: times must run forward and windows must not overlap',
   'Проверьте расписание: время должно идти вперёд, интервалы не должны пересекаться',
 )
+// I3 (сквозное ревью): маркер («первый»/«последний рейс»), делящий день с
+// другим окном, получает СВОЮ причину отказа — обычно это ночной хвост
+// предыдущего дня, наехавший на маркерный день, и общий `INVALID_SCHEDULE`
+// не говорит оператору, что тут вообще можно сделать.
+const INVALID_SCHEDULE_MARKER = fail(MARKER_BESIDE_TEXT.en, MARKER_BESIDE_TEXT.ru)
 const INVALID_CLEANING = fail(
   'Check the cleaning schedule: pick a cadence and set the times',
   'Проверьте график уборки: выберите периодичность и укажите время',
@@ -288,7 +293,9 @@ export function validateField(field: Field, value: unknown): ValidationResult {
       if (typeof value === 'string') return ok
       const options = field.hoursOptions
       if (!options) return INVALID_SCHEDULE
-      return weekHoursProblem(value, options) === null ? ok : INVALID_SCHEDULE
+      const problem = weekHoursProblem(value, options)
+      if (problem === null) return ok
+      return problem === 'markerBeside' ? INVALID_SCHEDULE_MARKER : INVALID_SCHEDULE
     }
 
     case 'cleaningSchedule': {

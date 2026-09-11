@@ -1,9 +1,12 @@
 'use client'
 
-import { useEffect, useState, type JSX } from 'react'
+import { useEffect, useRef, useState, type JSX } from 'react'
 import {
+  MARKER_BESIDE_TEXT,
   WEEKDAYS,
   canAddRange,
+  dayHoursProblem,
+  dayRenderable,
   dayTexts,
   emptyRule,
   expandRules,
@@ -43,12 +46,10 @@ function initialRules(value: unknown, options: HoursOptions): HoursRule[] {
   for (const day of WEEKDAYS) {
     const hours = week[day]
     if (hours === undefined) continue
-    // Тот же вопрос, что `dayRenderable(dayHoursProblem(...))` в других
-    // редакторах недели («можно прочитать `kind`/интервалы, чтобы
-    // нарисовать»), заданный через `weekHoursProblem` на объекте с одним
-    // днём — она в списке того, что читает этот компонент (Task 4 consumes).
-    const problem = weekHoursProblem({ [day]: hours }, options)
-    if (problem !== 'shape' && problem !== 'kind') clean[day] = hours
+    // Тот же вопрос, что у других редакторов недели («можно прочитать
+    // `kind`/интервалы, чтобы нарисовать») — вызывается напрямую, а не через
+    // повторную реализацию её тела (Fix-before-merge minor, сквозное ревью).
+    if (dayRenderable(dayHoursProblem(hours, options))) clean[day] = hours
   }
   // `rulesFromWeek`, не `collapseWeek`: день, отсутствующий в `clean` (не
   // пришёл вовсе или отфильтрован как нерисуемый), — «не отвечено», легальный
@@ -64,7 +65,7 @@ export function HoursRulesEditor(props: {
   onChange: (week: WeekHours) => void
   idPrefix: string
 }): JSX.Element {
-  const { t, locale } = useLocale()
+  const { t, locale, pick } = useLocale()
   const { options, onChange } = props
   const legacy = typeof props.value === 'string' && props.value.trim() !== '' ? props.value : null
   const [rules, setRules] = useState<HoursRule[]>(() => initialRules(props.value, options))
@@ -72,18 +73,34 @@ export function HoursRulesEditor(props: {
   const incoming = weekKey(props.value)
   useEffect(() => {
     // `weekKey`, не `JSON.stringify`: сравнение по значению дней в
-    // каноническом порядке `WEEKDAYS`, а не по тексту JSON — Postgres jsonb
-    // не хранит порядок ключей объекта, и та же неделя, вернувшаяся с
-    // автосохранения в другом порядке ключей, раньше не совпадала со своей
-    // же строкой и заставляла пересобирать правила на каждой загрузке (I1).
-    // Гарантия та же, что и была: пересборка только от внешнего значения
-    // (`incoming`) — изменение самих `rules` (наше же сохранение) не
-    // перезапускает этот эффект и не стирает недозаполненные правила, которых
-    // `expandRules` не выводит.
+    // каноническом порядке `WEEKDAYS` и по канонической форме каждого дня
+    // (массив `[from, to]` на окно, а не объект) — Postgres jsonb не хранит
+    // порядок ключей ни у недели, ни ВНУТРИ объекта одного дня, и та же
+    // неделя, вернувшаяся с автосохранения в другом порядке ключей на любом
+    // из двух уровней, раньше не совпадала со своей же строкой и заставляла
+    // пересобирать правила на каждой загрузке (I1, затем I2 — тот же довод,
+    // на уровень глубже). Гарантия та же, что и была: пересборка только от
+    // внешнего значения (`incoming`) — изменение самих `rules` (наше же
+    // сохранение) не перезапускает этот эффект и не стирает недозаполненные
+    // правила, которых `expandRules` не выводит.
     if (weekKey(expandRules(rules)) !== incoming && typeof props.value !== 'string') {
       setRules(initialRules(props.value, options))
     }
   }, [incoming])
+
+  // I5: после `splitDay`/«другие часы» новое правило появляется в конце
+  // списка пустым — оператор уже видел, зачем оно возникло (нажал «изменить»
+  // у дня или «другие часы для части дней»), и это фокус, который он бы искал
+  // сам. Ref — на поле «с» первого диапазона ПОСЛЕДНЕГО правила; эффект
+  // срабатывает только когда список правил ВЫРОС, а не на любое изменение
+  // (иначе перевод дня между уже существующими правилами тоже дёргал бы
+  // фокус — там оператор уже там, где кликнул).
+  const lastFromInputRef = useRef<HTMLInputElement | null>(null)
+  const previousRuleCount = useRef(rules.length)
+  useEffect(() => {
+    if (rules.length > previousRuleCount.current) lastFromInputRef.current?.focus()
+    previousRuleCount.current = rules.length
+  }, [rules.length])
 
   const commit = (next: HoursRule[]): void => {
     setRules(next)
@@ -95,6 +112,11 @@ export function HoursRulesEditor(props: {
 
   const incomplete = rules.findIndex((r) => r.days.length === 0)
   const noTime = rules.findIndex((r) => r.hours.kind === 'windows' && r.hours.ranges.some((x) => x.from === ''))
+  // I3: маркер, делящий день с чужим окном (обычно — ночной хвост
+  // предыдущего дня), не сходится в правило независимо от того, как
+  // оператор переставляет дни между правилами — сервер всё равно откажет
+  // (`validation.ts`), клиент называет причину заранее.
+  const markerBeside = weekHoursProblem(week, options) === 'markerBeside'
 
   return (
     <div className="hr">
@@ -130,6 +152,10 @@ export function HoursRulesEditor(props: {
                   id={`${props.idPrefix}-r${i}-${k}`}
                   range={range}
                   options={options}
+                  // Только последнее правило, только его первый диапазон —
+                  // именно туда переезжает фокус, когда список правил растёт
+                  // (I5, см. эффект выше).
+                  fromRef={i === rules.length - 1 && k === 0 ? lastFromInputRef : undefined}
                   onChange={(next) => {
                     const ranges = (rule.hours as { ranges: Range[] }).ranges.map((x, m) => (m === k ? next : x))
                     setRule(i, { ...rule, hours: { kind: 'windows', ranges } })
@@ -190,11 +216,23 @@ export function HoursRulesEditor(props: {
           <div className="hr-sum-row" key={day}>
             <span className="hr-sum-day">{t(`schedule.day.${day}`)}</span>
             <span className={week[day]?.kind === 'none' ? 'hr-sum-closed' : undefined}>{texts[day]}</span>
-            <button type="button" className="hr-link" onClick={() => commit(splitDay(rules, day))}>
+            {/* I5: семь кнопок делили один accessible name («change») —
+                экранный читалка не могла сказать, какая строка какому дню
+                отвечает. `aria-label` называет и действие, и день. */}
+            <button
+              type="button"
+              className="hr-link"
+              aria-label={`${t('schedule.change')} — ${t(`schedule.day.${day}`)}`}
+              onClick={() => commit(splitDay(rules, day))}
+            >
               {t('schedule.change')}
             </button>
           </div>
         ))}
+        {/* I3: клиентский намёк под итогом — сервер остаётся воротами
+            (`validation.ts`'s `INVALID_SCHEDULE_MARKER`), это только чтобы
+            отказ не пришёл издалека после «отправить». */}
+        {markerBeside && <p className="field-hint">{pick(MARKER_BESIDE_TEXT)}</p>}
       </div>
     </div>
   )

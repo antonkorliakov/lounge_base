@@ -538,6 +538,13 @@ describe('formatRange — конец суток печатается «24:00», 
     const range: Range = { from: '22:00', to: '02:00' }
     expect(formatRange(range, 'en')).toBe('22:00–02:00 (next day)')
   })
+
+  // I1 (whole-branch fix wave): маркерное начало с «00:00» как конец — тоже
+  // конец суток (ночной перенос от маркера невозможен: у маркера нет
+  // «завтра», это не время), а не буквальное «00:00» словом маркера.
+  it('маркерный from, «00:00» как to — тоже конец суток, «24:00»', () => {
+    expect(formatRange({ from: FIRST_FLIGHT, to: '00:00' }, 'en')).toBe('first flight–24:00')
+  })
 })
 
 describe('канонический текст графика уборки', () => {
@@ -699,9 +706,20 @@ describe('границы «первый / последний рейс»', () => 
     expect(windowsProblem([{ from: FIRST_FLIGHT, to: null }])).toBe(null)
   })
 
-  it('интервал с маркером — единственный в дне', () => {
-    expect(windowsProblem([{ from: FIRST_FLIGHT, to: '12:00' }, { from: '13:00', to: '20:00' }])).toBe('order')
-    expect(windowsProblem([{ from: '06:00', to: '12:00' }, { from: '13:00', to: LAST_FLIGHT }])).toBe('order')
+  // I3 (whole-branch fix wave): маркер, делящий день с любым другим окном,
+  // раньше сливался с общим `order` — а причина у него не «время идёт не по
+  // порядку», а «маркер вообще не сравним со временем» (сюда обычно приходит
+  // ночной хвост предыдущего дня). Тег теперь свой — `markerBeside` —
+  // независимо от того, каким по счёту стоит маркерное окно в списке.
+  it('интервал с маркером — единственный в дне; второе окно рядом — свой тег markerBeside, не order (I3)', () => {
+    expect(windowsProblem([{ from: FIRST_FLIGHT, to: '12:00' }, { from: '13:00', to: '20:00' }])).toBe('markerBeside')
+    expect(windowsProblem([{ from: '06:00', to: '12:00' }, { from: '13:00', to: LAST_FLIGHT }])).toBe('markerBeside')
+  })
+
+  // I3: приёмочная фикстура из брифа — маркерное окно и хвост ночи
+  // предыдущего дня («00:00–01:00») в одном дне.
+  it('markerBeside: маркер и ночной хвост предыдущего дня в одном дне (I3)', () => {
+    expect(windowsProblem([{ from: FIRST_FLIGHT, to: '23:00' }, { from: '00:00', to: '01:00' }])).toBe('markerBeside')
   })
 
   it('маркер не на своей стороне — негодное время', () => {

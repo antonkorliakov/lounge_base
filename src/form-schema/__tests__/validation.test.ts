@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { validateField, validateServiceValue, needsDetail, fieldAnswered } from '../validation'
-import { fieldByKey, serviceItemByKey } from '../index'
+import { fieldByKey, serviceItemByKey, FIRST_FLIGHT, END_OF_DAY, MARKER_BESIDE_TEXT } from '../index'
 import type { Field } from '../index'
 
 const field = (key: string) => {
@@ -422,6 +422,22 @@ describe('расписания — сервер как ворота', () => {
     const justChosen = { cadence: 'monthly', nth: 1, weekday: 'mon', windows: [] }
     expect(validateField(field('III.1.4'), justChosen).ok).toBe(true)
     expect(fieldAnswered(field('III.1.4'), justChosen)).toBe(false)
+  })
+
+  // I3 (whole-branch fix wave): маркер, делящий день с чужим окном (обычно —
+  // ночной хвост предыдущего дня), заслуживает СВОЮ причину отказа, а не
+  // общий `INVALID_SCHEDULE` — оператору иначе негде узнать, что делать
+  // (сменить маркер на время или закрыть предыдущий день в 24:00).
+  it('маркер рядом с ночным хвостом предыдущего дня — отказ называет причину (I3)', () => {
+    const week = {
+      mon: { kind: 'none' }, tue: { kind: 'none' }, wed: { kind: 'none' }, thu: { kind: 'none' },
+      fri: { kind: 'windows', windows: [{ from: '02:00', to: END_OF_DAY }] },
+      sat: { kind: 'windows', windows: [{ from: FIRST_FLIGHT, to: '23:00' }, { from: '00:00', to: '01:00' }] },
+      sun: { kind: 'none' },
+    }
+    const refused = validateField(field('III.1.1'), week)
+    expect(refused.ok).toBe(false)
+    if (!refused.ok) expect(refused.error.en).toBe(MARKER_BESIDE_TEXT.en)
   })
 
   it('null — очищенный ответ, не отказ; строка — старый ответ, тоже не отказ', () => {

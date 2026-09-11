@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { FIRST_FLIGHT, LAST_FLIGHT, expandRules, type HoursOptions, type Weekday } from '@/form-schema'
+import { END_OF_DAY, FIRST_FLIGHT, LAST_FLIGHT, MARKER_BESIDE_TEXT, expandRules, type HoursOptions, type Weekday } from '@/form-schema'
 import { LocaleProvider } from '@/i18n/context'
 import { UI } from '@/i18n/dictionaries'
 import { HoursRulesEditor } from '../HoursRulesEditor'
@@ -49,7 +49,11 @@ describe('HoursRulesEditor', () => {
     expect(html).toContain(UI['schedule.weekSummary'].en)
     expect(html.match(/class="hr-sum-row"/g)).toHaveLength(7)
     expect(html).toContain('Closed') // воскресенье ни в одном правиле
-    expect(html.match(new RegExp(UI['schedule.change'].en, 'g'))).toHaveLength(7)
+    // Семь ссылок-текстов «change» (I5 добавил каждой свой `aria-label` —
+    // сам видимый текст кнопки остался тем же словом, ищем именно его, не
+    // aria-label, который теперь тоже содержит слово «change» и удвоил бы
+    // счёт при поиске голой подстроки).
+    expect(html.match(new RegExp(`>${UI['schedule.change'].en}<`, 'g'))).toHaveLength(7)
   })
 
   it('ссылки «или первый/последний рейс» только где поле их допускает', () => {
@@ -114,5 +118,33 @@ describe('HoursRulesEditor', () => {
     expect(tueRow).not.toContain('Closed')
     expect(tueRow).toContain('—')
     expect(html).toContain(UI['schedule.ruleSetTime'].en.replace('{n}', '2'))
+  })
+
+  // I3 (whole-branch fix wave): маркер, делящий день с чужим окном (здесь —
+  // ночной хвост пятницы), не сходится в правило и не пропадёт молча — сервер
+  // всё равно откажет (`validation.ts`), но клиент должен назвать причину
+  // ДО того, как оператор нажмёт «отправить» и получит общий отказ издалека.
+  // `expandRules(rules)` каждый раз пересобирает тот же хвост из правила
+  // пятницы — конфликт не «чинится» перестановкой правил, только сменой
+  // времени/маркера самим оператором.
+  it('маркер рядом с ночным хвостом предыдущего дня — виден клиентский намёк (I3)', () => {
+    const value = {
+      mon: { kind: 'none' }, tue: { kind: 'none' }, wed: { kind: 'none' }, thu: { kind: 'none' },
+      fri: { kind: 'windows', windows: [{ from: '02:00', to: END_OF_DAY }] },
+      sat: { kind: 'windows', windows: [{ from: FIRST_FLIGHT, to: '23:00' }, { from: '00:00', to: '01:00' }] },
+      sun: { kind: 'none' },
+    }
+    const html = render(value, OPEN)
+    expect(html).toContain(MARKER_BESIDE_TEXT.en)
+  })
+
+  // I5 (whole-branch fix wave): все семь кнопок «change» назывались одним и
+  // тем же accessible name — экранный читалка объявляла бы «change» семь раз
+  // подряд без единого способа понять, какая строка какому дню отвечает.
+  it('«change» у каждого дня называет свой день — семь разных aria-label (I5)', () => {
+    const html = render(expandRules([rule(W, '09:00', '21:00'), rule(E, '10:00', '20:00')]), OPEN)
+    for (const day of ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']) {
+      expect(html).toContain(`aria-label="change — ${day}"`)
+    }
   })
 })
