@@ -4,6 +4,8 @@ import {
   NTHS,
   CADENCES,
   END_OF_DAY,
+  FIRST_FLIGHT,
+  LAST_FLIGHT,
   isClock,
   clockMinutes,
   windowsProblem,
@@ -24,6 +26,7 @@ import {
   copyPreviousDay,
   dayCopyable,
   switchCadence,
+  formatWindows,
   formatWeekHours,
   formatCleaning,
   weekHoursCells,
@@ -36,8 +39,8 @@ import {
   type Window,
 } from '../schedule'
 
-const OPEN: HoursOptions = { allDay: true, noneLabel: { en: 'Closed', ru: 'Закрыто' } }
-const PEAK: HoursOptions = { allDay: false, noneLabel: { en: 'No peak', ru: 'Нет пика' } }
+const OPEN: HoursOptions = { allDay: true, flightBounds: true, noneLabel: { en: 'Closed', ru: 'Закрыто' } }
+const PEAK: HoursOptions = { allDay: false, flightBounds: false, noneLabel: { en: 'No peak', ru: 'Нет пика' } }
 
 type Weekday = (typeof WEEKDAYS)[number]
 
@@ -754,5 +757,51 @@ describe('ячейки выгрузки', () => {
     expect(cleaningCell).not.toContain('object')
     expect(cleaningCell).not.toContain('Object')
     expect(cleaningCell).toBe('—–10:00')
+  })
+})
+
+describe('границы «первый / последний рейс»', () => {
+  it('интервал с маркерами корректен по форме', () => {
+    expect(windowsProblem([{ from: FIRST_FLIGHT, to: LAST_FLIGHT }])).toBe(null)
+    expect(windowsProblem([{ from: FIRST_FLIGHT, to: '23:00' }])).toBe(null)
+    expect(windowsProblem([{ from: '01:00', to: LAST_FLIGHT }])).toBe(null)
+    expect(windowsProblem([{ from: FIRST_FLIGHT, to: null }])).toBe(null)
+  })
+
+  it('интервал с маркером — единственный в дне', () => {
+    expect(windowsProblem([{ from: FIRST_FLIGHT, to: '12:00' }, { from: '13:00', to: '20:00' }])).toBe('order')
+    expect(windowsProblem([{ from: '06:00', to: '12:00' }, { from: '13:00', to: LAST_FLIGHT }])).toBe('order')
+  })
+
+  it('маркер не на своей стороне — негодное время', () => {
+    expect(windowsProblem([{ from: LAST_FLIGHT, to: '12:00' }])).toBe('clock')
+    expect(windowsProblem([{ from: '06:00', to: FIRST_FLIGHT }])).toBe('clock')
+  })
+
+  it('маркеры разрешены только там, где поле их допускает', () => {
+    const day = { kind: 'windows', windows: [{ from: FIRST_FLIGHT, to: LAST_FLIGHT }] }
+    expect(dayHoursProblem(day, OPEN)).toBe(null)
+    expect(dayHoursProblem(day, PEAK)).toBe('flightNotAllowed')
+    expect(weekHoursProblem({ mon: day }, PEAK)).toBe('flightNotAllowed')
+  })
+
+  it('после интервала с маркером второй не предлагается', () => {
+    expect(nextWindowStart([{ from: '01:00', to: LAST_FLIGHT }])).toBe(null)
+    expect(nextWindowStart([{ from: FIRST_FLIGHT, to: '23:00' }])).toBe(null)
+  })
+
+  it('маркеры печатаются словами, на обоих языках', () => {
+    expect(formatWindows([{ from: FIRST_FLIGHT, to: LAST_FLIGHT }], 'en')).toBe('first flight–last flight')
+    expect(formatWindows([{ from: FIRST_FLIGHT, to: '23:00' }], 'en')).toBe('first flight–23:00')
+    expect(formatWindows([{ from: '01:00', to: LAST_FLIGHT }], 'ru')).toBe('с 01:00 до последнего рейса')
+    expect(formatWindows([{ from: FIRST_FLIGHT, to: LAST_FLIGHT }], 'ru')).toBe('с первого рейса до последнего')
+    expect(formatWindows([{ from: FIRST_FLIGHT, to: '23:00' }], 'ru')).toBe('с первого рейса до 23:00')
+    // Обычные времена по-русски — как раньше, тире без предлогов.
+    expect(formatWindows([{ from: '09:00', to: '21:00' }], 'ru')).toBe('09:00–21:00')
+  })
+
+  it('день с маркерами считается заполненным', () => {
+    const week = everyDay({ kind: 'windows', windows: [{ from: FIRST_FLIGHT, to: LAST_FLIGHT }] })
+    expect(weekHoursComplete(week, OPEN)).toBe(true)
   })
 })

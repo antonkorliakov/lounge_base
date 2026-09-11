@@ -349,7 +349,7 @@ export const FIELDS: Field[] = [
     block: 'III.1',
     type: 'weekHours',
     label: { en: 'Lounge Operating Hours', ru: 'Часы работы лаунжа' },
-    hoursOptions: { allDay: true, noneLabel: { en: 'Closed', ru: 'Закрыто' } },
+    hoursOptions: { allDay: true, flightBounds: true, noneLabel: { en: 'Closed', ru: 'Закрыто' } },
     required: true,
   },
   {
@@ -370,7 +370,7 @@ export const FIELDS: Field[] = [
     block: 'III.1',
     type: 'weekHours',
     label: { en: 'Peak Hours', ru: 'Часы пиковой нагрузки' },
-    hoursOptions: { allDay: false, noneLabel: { en: 'No peak', ru: 'Нет пика' } },
+    hoursOptions: { allDay: false, flightBounds: false, noneLabel: { en: 'No peak', ru: 'Нет пика' } },
     required: true,
   },
   {

@@ -168,10 +168,10 @@ describe('плоские поля', () => {
 
     // Круглосуточно есть только у часов работы: «пик круглые сутки» — не ответ.
     expect(byKey('III.1.1').hoursOptions).toEqual({
-      allDay: true, noneLabel: { en: 'Closed', ru: 'Закрыто' },
+      allDay: true, flightBounds: true, noneLabel: { en: 'Closed', ru: 'Закрыто' },
     })
     expect(byKey('III.1.3').hoursOptions).toEqual({
-      allDay: false, noneLabel: { en: 'No peak', ru: 'Нет пика' },
+      allDay: false, flightBounds: false, noneLabel: { en: 'No peak', ru: 'Нет пика' },
     })
 
     // `hoursOptions` — только у weekHours: у остальных типов он ничего не
@@ -179,5 +179,9 @@ describe('плоские поля', () => {
     for (const field of FIELDS) {
       expect(field.hoursOptions === null, field.key).toBe(field.type !== 'weekHours')
     }
+
+    // рейсы — ответ про часы работы лаунжа, у пиковых часов и уборки такого
+    // смысла нет.
+    expect(FIELDS.filter((f) => f.hoursOptions?.flightBounds)).toHaveLength(1)
   })
 })

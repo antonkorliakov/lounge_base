@@ -41,11 +41,23 @@ export type DayHours =
 
 export type WeekHours = Partial<Record<Weekday, DayHours>>
 
+/** Границы интервала, которые не время: «с первого рейса», «до последнего
+ *  рейса». Хранятся строками рядом с часами, потому что это ответ на тот же
+ *  вопрос («когда открыто»), только без цифр: у маленького аэропорта лаунж
+ *  живёт по расписанию рейсов, и заставлять оператора выдумывать время — ложь
+ *  в данных. Разрешены только там, где `HoursOptions.flightBounds`. */
+export const FIRST_FLIGHT = 'firstFlight'
+export const LAST_FLIGHT = 'lastFlight'
+
 export type HoursOptions = {
   /** Есть ли у дня состояние «круглосуточно». У часов работы есть, у пиковых
    *  часов и у еженедельной уборки — нет: «пик круглые сутки» и «уборка
    *  круглые сутки» это не ответы, а недоразумение. */
   allDay: boolean
+  /** Можно ли вместо времени поставить «первый рейс» / «последний рейс». Только
+   *  у часов работы: пик «с первого рейса» и уборка «до последнего рейса» —
+   *  не ответы. */
+  flightBounds: boolean
   /** Подпись пустого состояния дня: «Closed» у часов работы, «No peak» у
    *  пиковых. Одно и то же состояние (`kind: 'none'`) читается по-разному в
    *  зависимости от вопроса, поэтому подпись живёт у поля, а не в структуре. */
@@ -61,6 +73,7 @@ export type CleaningSchedule =
  *  «круглосуточно» и с подписью «без уборки». */
 export const CLEANING_DAY_OPTIONS: HoursOptions = {
   allDay: false,
+  flightBounds: false,
   noneLabel: { en: 'No cleaning', ru: 'Без уборки' },
 }
 
@@ -79,6 +92,20 @@ export function clockMinutes(clock: string): number {
   if (clock === END_OF_DAY) return 24 * 60
   const [hours, minutes] = clock.split(':')
   return Number(hours) * 60 + Number(minutes)
+}
+
+/** Годится ли значение как НАЧАЛО интервала: время (не конец суток) или «первый рейс». */
+export function isStartBound(value: unknown): boolean {
+  return value === FIRST_FLIGHT || (isClock(value) && value !== END_OF_DAY)
+}
+
+/** Годится ли значение как КОНЕЦ интервала: время (включая 24:00) или «последний рейс». */
+export function isEndBound(value: unknown): boolean {
+  return value === LAST_FLIGHT || isClock(value)
+}
+
+export function hasMarker(window: Window): boolean {
+  return window.from === FIRST_FLIGHT || window.to === LAST_FLIGHT
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -110,14 +137,23 @@ export function windowsProblem(value: unknown): WindowsProblem {
     if (!isPlainObject(window) || !('from' in window) || !('to' in window)) return 'shape'
     const { from, to } = window as { from: unknown; to: unknown }
     // `from` не может быть концом суток: интервал, начинающийся в 24:00, пуст.
-    if (!isClock(from) || from === END_OF_DAY) return 'clock'
-    if (to !== null && !isClock(to)) return 'clock'
+    if (!isStartBound(from)) return 'clock'
+    if (to !== null && !isEndBound(to)) return 'clock'
 
-    const start = clockMinutes(from)
+    // Интервал с маркером не сравним по времени ни с чем — он единственный
+    // в дне. Второй рядом с ним (до или после) — отказ порядка.
+    const marker = from === FIRST_FLIGHT || to === LAST_FLIGHT
+    if (marker && value.length > 1) return 'order'
+    if (marker) return null
+
+    const start = clockMinutes(from as string)
     if (start <= previousStart) return 'order'
     if (previousEnd > start) return 'overlap'
     if (to !== null) {
-      const end = clockMinutes(to)
+      // За этой строкой `to` не может быть `LAST_FLIGHT`: такой интервал —
+      // маркерный, и ветка `if (marker) return null` выше уже вернула бы
+      // раньше, чем выполнение дошло сюда.
+      const end = clockMinutes(to as string)
       if (end <= start) return 'order'
       previousEnd = end
     }
@@ -139,6 +175,9 @@ export function windowsProblem(value: unknown): WindowsProblem {
 export function nextWindowStart(windows: Window[]): string | null {
   if (windows.length === 0) return '09:00'
   const last = windows[windows.length - 1]!
+  // Интервал с маркером — единственный в дне (`windowsProblem`), достраивать
+  // рядом с ним нечего.
+  if (hasMarker(last)) return null
   if (last.to === null) return null
   if (last.to === END_OF_DAY) return null
   return last.to
@@ -160,12 +199,17 @@ export type NextWindowBlockedReason = 'unfinished' | 'full' | null
 export function nextWindowBlockedReason(windows: Window[]): NextWindowBlockedReason {
   if (windows.length === 0) return null
   const last = windows[windows.length - 1]!
+  // Функция удаляется в Task 5 вместе с `WindowsEditor`; маркерный интервал
+  // трактуется как «занято до конца» — второй причины (`'unfinished'`) у
+  // него нет, `to` маркера либо задан, либо это тот же случай, что и обычного
+  // недописанного интервала.
+  if (hasMarker(last)) return 'full'
   if (last.to === null) return 'unfinished'
   if (last.to === END_OF_DAY) return 'full'
   return null
 }
 
-export type DayHoursProblem = 'shape' | 'kind' | 'allDayNotAllowed' | Exclude<WindowsProblem, null> | null
+export type DayHoursProblem = 'shape' | 'kind' | 'allDayNotAllowed' | 'flightNotAllowed' | Exclude<WindowsProblem, null> | null
 
 /** Что не так с ОДНИМ днём, или `null`. Отдельно от недели, потому что у
  *  редактора и у ворот разные вопросы: воротам достаточно узнать, что неделя
@@ -177,7 +221,11 @@ export function dayHoursProblem(hours: unknown, options: HoursOptions): DayHours
   if (kind === 'allDay') return options.allDay ? null : 'allDayNotAllowed'
   if (kind === 'none') return null
   if (kind !== 'windows') return 'kind'
-  return windowsProblem((hours as { windows?: unknown }).windows)
+  const windows = (hours as { windows?: unknown }).windows
+  const problem = windowsProblem(windows)
+  if (problem) return problem
+  if (!options.flightBounds && (windows as Window[]).some(hasMarker)) return 'flightNotAllowed'
+  return null
 }
 
 /**
@@ -395,21 +443,37 @@ const NTH_LABEL: Record<string, Localized> = {
   '4': { en: '4th', ru: '4-й' }, last: { en: 'last', ru: 'последнее' },
 }
 
+const BOUND_WORD: Record<'en' | 'ru', { first: string; last: string }> = {
+  en: { first: 'first flight', last: 'last flight' },
+  ru: { first: 'первого рейса', last: 'последнего рейса' },
+}
+
 /** Один интервал; недописанный печатается с многоточием — читатель видит, что
  *  ответ начат и не закончен, а не что конец совпал с началом.
  *
  *  Пригодность к показу и пригодность к печати — разные вопросы: редактор
  *  нарочно продолжает показывать интервал с негодным временем (иначе день
  *  исчезал бы под курсором), а печать такого значения не имеет права выдать
- *  читателю внутреннее представление. */
-function formatWindow(window: Window): string {
-  const from = isClock(window.from) ? window.from : UNANSWERED
-  const to = window.to === null ? '…' : isClock(window.to) ? window.to : UNANSWERED
+ *  читателю внутреннее представление.
+ *
+ *  Маркер печатается словом, а не временем — «первый рейс» вместо часов,
+ *  которых у оператора нет. По-русски граница с маркером требует предлогов
+ *  («с первого рейса до 23:00»): голое тире перед словом читалось бы как
+ *  вычитание, а не интервал. По-английски тире читается и с ними, отдельная
+ *  ветка не нужна. */
+function formatWindow(window: Window, locale: 'en' | 'ru'): string {
+  const marker = hasMarker(window)
+  const from = window.from === FIRST_FLIGHT ? BOUND_WORD[locale].first : isClock(window.from) ? window.from : UNANSWERED
+  const to =
+    window.to === null ? '…'
+    : window.to === LAST_FLIGHT ? (locale === 'ru' && window.from === FIRST_FLIGHT ? 'последнего' : BOUND_WORD[locale].last)
+    : isClock(window.to) ? window.to : UNANSWERED
+  if (marker && locale === 'ru') return `с ${from} до ${to}`
   return `${from}–${to}`
 }
 
-export function formatWindows(windows: Window[]): string {
-  return windows.map(formatWindow).join(', ')
+export function formatWindows(windows: Window[], locale: 'en' | 'ru'): string {
+  return windows.map((window) => formatWindow(window, locale)).join(', ')
 }
 
 export function formatDayHours(
@@ -420,7 +484,7 @@ export function formatDayHours(
   if (!hours) return UNANSWERED
   if (hours.kind === 'allDay') return ALL_DAY_LABEL[locale]
   if (hours.kind === 'none') return options.noneLabel[locale]
-  return formatWindows(hours.windows)
+  return formatWindows(hours.windows, locale)
 }
 
 /** Соседние дни с одинаковым текстом сливаются в отрезок: «Mon–Sat 09:00–18:00»
@@ -509,7 +573,7 @@ export function formatCleaning(value: unknown, locale: 'en' | 'ru'): string {
   // разобрать) остаётся непечатаемым, а мимолётные 'clock'/'order'/'overlap'
   // и законное первое 'empty' печатаются как есть (пустой список → пустой
   // текст, ветки ниже сами решают, что показать без него).
-  const windowsText = dayRenderable(windowsProblem(value.windows)) ? formatWindows(value.windows as Window[]) : ''
+  const windowsText = dayRenderable(windowsProblem(value.windows)) ? formatWindows(value.windows as Window[], locale) : ''
 
   if (cadence === 'daily') {
     return windowsText ? `${cadenceLabel} ${windowsText}` : cadenceLabel
@@ -585,7 +649,9 @@ export function cleaningCells(
   // Та же деградация, что в `formatCleaning`: интервалы нерисуемые по форме
   // ('shape') не печатаются вовсе, но периодичность (а у monthly/quarterly —
   // и колонка дня) остаётся видна.
-  const text = dayRenderable(windowsProblem(value.windows)) ? formatWindows(value.windows as Window[]) : null
+  // Выгрузка всегда на английском (`rows.ts` печатает `locale: 'en'`), как и
+  // соседняя `weekHoursCells` выше.
+  const text = dayRenderable(windowsProblem(value.windows)) ? formatWindows(value.windows as Window[], 'en') : null
 
   if (cadence === 'daily') {
     const cells = Object.fromEntries(WEEKDAYS.map((day) => [day, text])) as Record<Weekday, string | null>

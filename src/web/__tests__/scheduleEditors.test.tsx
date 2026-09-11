@@ -8,8 +8,8 @@ import { FieldInput } from '../FieldInput'
 import { CleaningScheduleEditor } from '../CleaningScheduleEditor'
 import { WindowsEditor } from '../WindowsEditor'
 
-const OPEN: HoursOptions = { allDay: true, noneLabel: { en: 'Closed', ru: 'Закрыто' } }
-const PEAK: HoursOptions = { allDay: false, noneLabel: { en: 'No peak', ru: 'Нет пика' } }
+const OPEN: HoursOptions = { allDay: true, flightBounds: true, noneLabel: { en: 'Closed', ru: 'Закрыто' } }
+const PEAK: HoursOptions = { allDay: false, flightBounds: false, noneLabel: { en: 'No peak', ru: 'Нет пика' } }
 
 /**
  * Сетка в том виде, в каком её видит оператор. Среда node, DOM нет — рендер
