@@ -843,7 +843,14 @@ export function collapseWeek(week: WeekHours): HoursRule[] {
     if (tailIndex < 0) continue
     const prev = ranges[previousDay(day)]
     if (!Array.isArray(prev)) continue
-    const headIndex = prev.findIndex((r) => r.to === END_OF_DAY && isClock(r.from))
+    // `r.from !== '00:00'`, symmetric with the tail search one line above: a
+    // full day («00:00–24:00») is not a night HEAD either — it has no
+    // "yesterday" half to close, its `to` just happens to equal `END_OF_DAY`
+    // by coincidence of being open the whole day. Without this exclusion a
+    // full day donated its own end to the next day's tail (C1, whole-branch
+    // fix wave): `mon: 00:00–24:00, tue: 00:00–01:00` collapsed to a single
+    // "Mon 00:00–01:00; Tue —" rule, and the next save destroyed both days.
+    const headIndex = prev.findIndex((r) => r.to === END_OF_DAY && isClock(r.from) && r.from !== '00:00')
     if (headIndex < 0) continue
     const tail = list[tailIndex]!
     prev[headIndex] = { from: prev[headIndex]!.from, to: tail.to }

@@ -853,6 +853,23 @@ describe('collapseWeek — дни собираются в правила', () =>
     ])
   })
 
+  // C1 (whole-branch fix wave): headIndex искал «хвост-донор» прошлого дня
+  // тем же условием, что и текущий кандидат в хвост («заканчивается
+  // END_OF_DAY, начинается часами»), но БЕЗ исключения полного дня
+  // («00:00–24:00»), которое есть у соседнего поиска хвоста строкой выше.
+  // Полный день ошибочно читался как ночной хвост САМ ЗА СЕБЯ: понедельник
+  // «00:00–24:00» отдавал вторнику «00:00–01:00» свой собственный конец,
+  // теряя часы (было бы «Mon 00:00–01:00; Tue —» вместо двух разных дней).
+  it('C1: полный день «00:00–24:00» не отдаёт себя как ночной хвост следующему дню', () => {
+    const week: WeekHours = {
+      mon: { kind: 'windows', windows: [{ from: '00:00', to: END_OF_DAY }] },
+      tue: { kind: 'windows', windows: [{ from: '00:00', to: '01:00' }] },
+      wed: { kind: 'none' }, thu: { kind: 'none' }, fri: { kind: 'none' }, sat: { kind: 'none' }, sun: { kind: 'none' },
+    }
+    expect(expandRules(collapseWeek(week))).toEqual(week)
+    expect(formatWeekHours(week, OPEN, 'en')).toBe('Mon 00:00–24:00; Tue 00:00–01:00; Wed–Sun Closed')
+  })
+
   it('дни none и неотвеченные в правила не попадают', () => {
     expect(collapseWeek({ mon: { kind: 'none' }, tue: { kind: 'allDay' } })).toEqual([{ days: ['tue'], hours: { kind: 'allDay' } }])
     expect(collapseWeek({})).toEqual([])
