@@ -954,8 +954,30 @@ export function rulesFromWeek(week: WeekHours): HoursRule[] {
  * ровно одним значением, а не пропадала из массива и не сдвигала все
  * остальные индексы.
  */
+/** Один день в форме, у которой jsonb не может испортить сравнение: массив
+ *  `[from, to]` вместо объекта `{from, to}` для каждого окна — массив всегда
+ *  сериализуется в фиксированном порядке своих элементов, а порядок ключей
+ *  ОБЪЕКТА `{from, to}` Postgres не хранит (I2, сквозное ревью: предыдущий
+ *  фикс канонизировал порядок ДНЕЙ недели, но не тронул форму значения
+ *  каждого дня, и `{from,to}`, вернувшийся с сервера как `{to,from}`, всё ещё
+ *  давал другую строку для той же недели). Значение читается через
+ *  `w.from`/`w.to` — доступ к свойству объекта от порядка ключей не зависит,
+ *  различается только `JSON.stringify` объекта целиком. */
+function canonicalDayHours(hours: unknown): unknown {
+  if (!isPlainObject(hours)) return hours ?? null
+  const kind = (hours as { kind?: unknown }).kind
+  if (kind === 'allDay' || kind === 'none') return { kind }
+  if (kind === 'windows' && Array.isArray((hours as { windows?: unknown }).windows)) {
+    const windows = (hours as { windows: unknown[] }).windows
+    return { kind: 'windows', windows: windows.map((w) => (isPlainObject(w) ? [w.from, w.to] : w)) }
+  }
+  return hours
+}
+
 export function weekKey(week: unknown): string {
-  return JSON.stringify(WEEKDAYS.map((day) => (isPlainObject(week) ? (week as WeekHours)[day] ?? null : null)))
+  return JSON.stringify(
+    WEEKDAYS.map((day) => (isPlainObject(week) ? canonicalDayHours((week as WeekHours)[day] ?? null) : null)),
+  )
 }
 
 /** Нажатие дня в правиле `index`: если день там — снять; иначе — забрать у

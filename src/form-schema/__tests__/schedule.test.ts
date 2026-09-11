@@ -1071,4 +1071,17 @@ describe('weekKey — сравнение недели независимо от 
   it('разные часы одного дня дают разный ключ', () => {
     expect(weekKey({ mon: { kind: 'allDay' } })).not.toBe(weekKey({ mon: { kind: 'none' } }))
   })
+
+  // I2 (whole-branch fix wave): предыдущий фикс канонизировал порядок ДНЕЙ,
+  // но стрингифицировал `DayHours` каждого дня как есть — Postgres jsonb не
+  // хранит порядок ключей и ВНУТРИ объекта дня, так что `{from,to}` мог
+  // вернуться с сервера как `{to,from}` и дать другую строку для той же
+  // недели, хотя её значение не менялось. `HoursRulesEditor`'s эффект читал
+  // бы это как «сервер прислал другое» и стирал бы недописанные правила на
+  // ровном месте.
+  it('одна и та же неделя с разным порядком ключей ВНУТРИ дня (jsonb) даёт один и тот же ключ', () => {
+    const forward: WeekHours = { mon: { kind: 'windows', windows: [{ from: '09:00', to: '21:00' }] } }
+    const reordered = { mon: { kind: 'windows', windows: [{ to: '21:00', from: '09:00' } as unknown as Window] } } as WeekHours
+    expect(weekKey(reordered)).toBe(weekKey(forward))
+  })
 })
