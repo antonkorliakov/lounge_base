@@ -428,142 +428,101 @@ test('контактные поля: телефон отфильтрован п�
 })
 
 /**
- * Структурированные расписания (spec 2026-09-04): сетка вместо свободного
- * текста, быстрые действия и разрывной день — целиком через настоящий путь
- * (клики, автосохранение, перезагрузка). Правила формы и сжатия дней
- * закреплены юнитами (`src/form-schema/__tests__/schedule.test.ts`); здесь —
- * что оператор может это собрать и что собранное доживает до сервера.
+ * Расписание правилами (spec 2026-09-11, Task 6): грид заменён списком
+ * «эти дни — такой режим» (`HoursRulesEditor`/`RangeEditor`, Task 4). Правила
+ * формы, сжатие/раскладка дней и ночной перенос закреплены юнитами
+ * (`src/form-schema/__tests__/schedule.test.ts`); здесь — что оператор может
+ * собрать то же самое настоящими кликами и что оно доживает до сервера.
+ *
+ * Локаторы взяты из брифа Task 6 без изменений — они выверены построчно по
+ * `src/web/HoursRulesEditor.tsx`/`RangeEditor.tsx` (день — кнопка с полным
+ * именем в `aria-label`, «изменить»/«или первый рейс» — по видимому тексту,
+ * итоговая строка — `.hr-sum-row`) и по `src/i18n/dictionaries.ts` (тексты
+ * `schedule.*`, включая «24h», а не старое «24 hours» грида); отклонений от
+ * брифа не потребовалось.
  */
-test('расписание: неделя одним нажатием, разрывной день, закрытое воскресенье — и всё это переживает перезагрузку', async ({ page }) => {
+test('расписание правилами: время на все дни, «изменить» у субботы, «или первый рейс», ночь, итог — и всё это с сервера после перезагрузки', async ({ page }) => {
   const url = seed()
   await page.goto(url)
-
   await clickNext(page, 2)
   await expect(page.getByRole('heading', { name: 'Operating Schedule', level: 1 })).toBeVisible()
 
   const hours = page.locator('.field').filter({ hasText: 'Lounge Operating Hours' })
-  const dayRow = (label: string) => hours.locator('.wh-row').filter({ hasText: label })
+  const rules = hours.locator('.hr-rule')
+  const summaryRow = (day: string) => hours.locator('.hr-sum-row').filter({ hasText: day })
 
-  // Понедельник по часам: 01:00–11:00 и второй интервал 12:00–23:00.
-  await dayRow('Monday').getByRole('button', { name: 'By hours' }).click()
-  const monday = dayRow('Monday')
-  await monday.locator('input[type="time"]').first().fill('01:00')
-  await monday.locator('input[type="time"]').nth(1).fill('11:00')
-  await monday.getByRole('button', { name: '+ interval' }).click()
-  await monday.locator('input[type="time"]').nth(2).fill('12:00')
-  await monday.locator('input[type="time"]').nth(3).fill('23:00')
+  // Одно правило на все дни: ввёл время — итог заполнился на всю неделю.
+  await expect(rules).toHaveCount(1)
+  await rules.nth(0).locator('input[type="time"]').nth(0).fill('09:00')
+  await rules.nth(0).locator('input[type="time"]').nth(1).fill('21:00')
   await expect(page.getByText('Saved')).toBeVisible()
+  await expect(summaryRow('Sunday')).toContainText('09:00–21:00')
 
-  // C2 (сквозное ревью): исправление конца существующего интервала на время
-  // раньше его начала — обычное редактирование ("набирал 13:00, стёр
-  // последнюю цифру"), не порча. Раньше день целиком пропадал с экрана в этот
-  // момент (поля времени исчезали, кнопки состояния гасли), а следующий клик
-  // сохранял пропажу как «Сохранено». День и его поля должны остаться на
-  // месте, а отказ сервера — стать видимым рядом с полем.
-  await monday.locator('input[type="time"]').nth(3).fill('10:00') // конец второго интервала раньше его начала (12:00)
-  await expect(monday.locator('input[type="time"]')).toHaveCount(4)
-  await expect(
-    page.getByText('Check the schedule: times must run forward and windows must not overlap'),
-  ).toBeVisible()
-  // Починка: возвращаем конец интервала на место — отказ снимается, «Сохранено».
-  await monday.locator('input[type="time"]').nth(3).fill('23:00')
+  // «Изменить» у субботы рождает правило 2 уже с субботой.
+  await summaryRow('Saturday').getByRole('button', { name: 'change' }).click()
+  await expect(rules).toHaveCount(2)
+  await expect(rules.nth(1).getByRole('button', { name: 'Saturday' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(rules.nth(0).getByRole('button', { name: 'Saturday' })).toHaveAttribute('aria-pressed', 'false')
+  await expect(summaryRow('Saturday')).toContainText('—')
+
+  // Воскресенье — в правило 2 нажатием, оно гаснет в правиле 1.
+  await rules.nth(1).getByRole('button', { name: 'Sunday' }).click()
+  await expect(rules.nth(0).getByRole('button', { name: 'Sunday' })).toHaveAttribute('aria-pressed', 'false')
+
+  // Выходные: с первого рейса до 23:00.
+  await rules.nth(1).getByRole('button', { name: 'or first flight' }).click()
+  await expect(rules.nth(1).getByText('from first flight')).toBeVisible()
+  await rules.nth(1).locator('input[type="time"]').fill('23:00')
   await expect(page.getByText('Saved')).toBeVisible()
+  await expect(summaryRow('Saturday')).toContainText('first flight–23:00')
 
-  // Одна кнопка — вся неделя.
-  await hours.getByRole('button', { name: 'Same all week' }).click()
-  await expect(page.getByText('Saved')).toBeVisible()
-  for (const day of ['Tuesday', 'Sunday']) {
-    await expect(dayRow(day).locator('input[type="time"]').first()).toHaveValue('01:00')
-  }
-
-  // Воскресенье закрыто — и «Closed» нажато именно у него.
-  await dayRow('Sunday').getByRole('button', { name: 'Closed' }).click()
-  await expect(page.getByText('Saved')).toBeVisible()
-  await expect(dayRow('Sunday').getByRole('button', { name: 'Closed' })).toHaveAttribute('aria-pressed', 'true')
-  await expect(dayRow('Saturday').getByRole('button', { name: 'Closed' })).toHaveAttribute('aria-pressed', 'false')
-
-  // Пиковые часы: у них нет круглосуточного состояния, а пустое читается иначе.
+  // Пиковые: ни «24h», ни рейсов (`hoursOptions.allDay`/`flightBounds` — оба false у III.1.3).
   const peak = page.locator('.field').filter({ hasText: 'Peak Hours' })
-  await expect(peak.getByRole('button', { name: '24 hours' })).toHaveCount(0)
-  await expect(peak.locator('.wh-row').first().getByRole('button', { name: 'No peak' })).toBeVisible()
+  await expect(peak.getByRole('button', { name: '24h' })).toHaveCount(0)
+  await expect(peak.getByRole('button', { name: 'or first flight' })).toHaveCount(0)
 
-  // Уборка: ежемесячно, первый понедельник, 22:00–23:30.
-  const cleaning = page.locator('.field').filter({ hasText: 'Deep Cleaning Schedule' })
-  await cleaning.getByRole('button', { name: 'Monthly' }).click()
-  // Черновик (seed() без флагов) приходит без графика уборки, поэтому
-  // «Monthly» даёт `windows: []`, а «+ interval» создаёт ПЕРВЫЙ интервал —
-  // его же поля правят .first()/.nth(1) ниже. При засеянном графике
-  // (seed({ complete: true })) в списке уже было бы окно из фикстуры, и
-  // индексы указывали бы на него, а не на добавляемое.
-  await cleaning.getByRole('button', { name: '+ interval' }).click()
-  await cleaning.locator('input[type="time"]').first().fill('22:00')
-  await cleaning.locator('input[type="time"]').nth(1).fill('23:30')
-  await expect(page.getByText('Saved')).toBeVisible()
-
-  // Перечитываем с сервера: часы понедельника, закрытое воскресенье и график
-  // уборки с временем читаются с сервера после перезагрузки.
+  // Перезагрузка: два правила и тот же итог пришли с сервера.
   await page.reload()
   await clickNext(page, 2)
-  const monAgain = page.locator('.field').filter({ hasText: 'Lounge Operating Hours' }).locator('.wh-row').filter({ hasText: 'Monday' })
-  await expect(monAgain.locator('input[type="time"]')).toHaveCount(4)
-  await expect(monAgain.locator('input[type="time"]').nth(2)).toHaveValue('12:00')
-  await expect(
-    page.locator('.field').filter({ hasText: 'Lounge Operating Hours' }).locator('.wh-row').filter({ hasText: 'Sunday' })
-      .getByRole('button', { name: 'Closed' }),
-  ).toHaveAttribute('aria-pressed', 'true')
-  const cleaningAgain = page.locator('.field').filter({ hasText: 'Deep Cleaning Schedule' })
-  await expect(cleaningAgain.getByRole('button', { name: 'Monthly' })).toHaveAttribute('aria-pressed', 'true')
-  // Периодичность одна не доказывает, что интервал уборки пережил
-  // перезагрузку — только сами поля времени это доказывают.
-  await expect(cleaningAgain.locator('input[type="time"]')).toHaveCount(2)
-  await expect(cleaningAgain.locator('input[type="time"]').first()).toHaveValue('22:00')
-  await expect(cleaningAgain.locator('input[type="time"]').nth(1)).toHaveValue('23:30')
-  // Первый понедельник (значения по умолчанию из switchCadence) тоже должен
-  // пережить перезагрузку, не только периодичность и время.
-  await expect(cleaningAgain.getByLabel('Which one')).toHaveValue('1')
-  await expect(cleaningAgain.getByLabel('Day of week')).toHaveValue('mon')
+  await expect(hours.locator('.hr-rule')).toHaveCount(2)
+  await expect(summaryRow('Monday')).toContainText('09:00–21:00')
+  await expect(summaryRow('Sunday')).toContainText('first flight–23:00')
 })
 
 /**
- * I1 (сквозное ревью): «+ интервал» недоступна с первого мгновения после
- * «По часам» (первый интервал сразу не закрыт) — раньше это было выключенной
- * кнопкой без единого слова о причине. Теперь недоступность — `aria-disabled`
- * (кнопка остаётся в таб-порядке и физически кликабельна), а причина стоит
- * рядом текстом; здесь — что обе причины действительно видны и что клик по
- * недоступной кнопке НЕ добавляет интервал (проверить это можно только через
- * настоящий клик в браузере: `aria-disabled` не мешает Playwright нажать).
+ * Ночной диапазон («22:00–02:00» вводится как есть, без ручного расщепления
+ * на «сегодня до 24:00» + «завтра с 00:00») и его хвост, наезжающий на
+ * собственный интервал следующего дня — тот отказ, ради которого хвост в
+ * `expandRules` проверяется на пересечение наравне с обычным интервалом
+ * (см. WHY у `isNightRange`/`expandRules` в `src/form-schema/schedule.ts`).
  */
-test('«+ интервал»: недоступна с объяснением, остаётся в таб-порядке, клик по ней ничего не добавляет', async ({ page }) => {
+test('расписание правилами: ночной график вводится как есть и читается обратно; наезд хвоста на свой интервал не роняет редактор', async ({ page }) => {
   const url = seed()
   await page.goto(url)
   await clickNext(page, 2)
-
   const hours = page.locator('.field').filter({ hasText: 'Lounge Operating Hours' })
-  const monday = hours.locator('.wh-row').filter({ hasText: 'Monday' })
-  await monday.getByRole('button', { name: 'By hours' }).click()
+  const rules = hours.locator('.hr-rule')
+  const summaryRow = (day: string) => hours.locator('.hr-sum-row').filter({ hasText: day })
 
-  const addButton = monday.getByRole('button', { name: '+ interval' })
+  await rules.nth(0).locator('input[type="time"]').nth(0).fill('02:00')
+  await rules.nth(0).locator('input[type="time"]').nth(1).fill('01:00')
+  await expect(rules.nth(0).getByText('until 01:00 the next day')).toBeVisible()
+  await expect(page.getByText('Saved')).toBeVisible()
+  await expect(summaryRow('Monday')).toContainText('02:00–01:00 (next day)')
 
-  // Причина №1: первый интервал создан без конца — начинать следующий неоткуда.
-  await expect(addButton).toHaveAttribute('aria-disabled', 'true')
-  await expect(monday.getByText('Finish the current interval first')).toBeVisible()
-  await expect(addButton).not.toHaveAttribute('disabled', '')
-  // Playwright's own actionability check already refuses a plain `.click()`
-  // on `aria-disabled="true"` (treats it like `disabled` for the click
-  // itself) — exactly the point of the fix is that a SCREEN READER or
-  // keyboard user can still reach and activate the element, so `force: true`
-  // bypasses that guard here to prove the COMPONENT's own no-op, not
-  // Playwright's.
-  await addButton.click({ force: true })
-  await expect(monday.locator('input[type="time"]')).toHaveCount(2) // клик не добавил второй интервал
+  // Хвост понедельника (00:00–01:00 во вторник) наезжает на свой интервал вторника → отказ виден, правила на месте.
+  await summaryRow('Tuesday').getByRole('button', { name: 'change' }).click()
+  await rules.nth(1).locator('input[type="time"]').nth(0).fill('00:30')
+  await rules.nth(1).locator('input[type="time"]').nth(1).fill('10:00')
+  await expect(page.getByText('Check the schedule: times must run forward and windows must not overlap')).toBeVisible()
+  await expect(rules).toHaveCount(2)
+  await rules.nth(1).locator('input[type="time"]').nth(0).fill('02:00')
+  await expect(page.getByText('Saved')).toBeVisible()
 
-  // Причина №2: закрываем интервал до конца суток — день занят целиком.
-  await monday.getByRole('button', { name: 'until end of day' }).click()
-  await expect(addButton).toHaveAttribute('aria-disabled', 'true')
-  await expect(monday.getByText('The day already runs to 24:00')).toBeVisible()
-  await expect(monday.getByText('Finish the current interval first')).toHaveCount(0)
-  await addButton.click({ force: true })
-  await expect(monday.locator('input[type="time"]')).toHaveCount(2) // по-прежнему один интервал
+  await page.reload()
+  await clickNext(page, 2)
+  await expect(summaryRow('Monday')).toContainText('02:00–01:00 (next day)')
+  await expect(summaryRow('Tuesday')).toContainText('02:00–10:00')
 })
 
 test('перезагрузка сохраняет значение, введённое до срабатывания автосохранения', async ({ page }) => {
