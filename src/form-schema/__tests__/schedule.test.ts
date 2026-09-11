@@ -36,6 +36,8 @@ import {
   emptyRule,
   isNightRange,
   formatRange,
+  rangeToWindow,
+  windowToRange,
   type HoursOptions,
   type WeekHours,
   type DayHours,
@@ -936,6 +938,46 @@ describe('canAddRange — второй интервал правила (C1)', ()
   // должна занимать день так же, как раньше это делал буквальный `'24:00'`.
   it('интервал до конца суток, введённый как «00:00» — день занят до конца, добавлять некуда', () => {
     expect(canAddRange([{ from: '09:00', to: '00:00' }])).toBe(false)
+  })
+})
+
+// Fix round 2 (Task 5): `CleaningScheduleEditor` пишет `windows` из `RangeEditor`
+// напрямую, без слоя `Range`/`expandRules` — оператор, набравший «00:00» как
+// конец интервала уборки, получал бы буквальный `{from:X, to:'00:00'}` в
+// хранении, а `windowsProblem` отверг бы его правилом `order` (конец раньше
+// начала). Одно правило перевода диапазона в интервал (и обратно) для обоих
+// писателей — `expandRules` и уборки — живёт здесь, а не в двух местах.
+describe('rangeToWindow / windowToRange — диапазон редактора ↔ интервал хранения (Fix round 2)', () => {
+  it('rangeToWindow: часовой from, to «00:00» — конец суток, в хранении 24:00', () => {
+    expect(rangeToWindow({ from: '22:00', to: '00:00' })).toEqual({ from: '22:00', to: '24:00' })
+  })
+
+  it('rangeToWindow: ночной диапазон не тронут', () => {
+    expect(rangeToWindow({ from: '22:00', to: '02:00' })).toEqual({ from: '22:00', to: '02:00' })
+  })
+
+  it('rangeToWindow: маркерное начало («первый рейс») — не тронут, это не часовой from', () => {
+    expect(rangeToWindow({ from: FIRST_FLIGHT, to: '00:00' })).toEqual({ from: FIRST_FLIGHT, to: '00:00' })
+  })
+
+  it('windowToRange: 24:00 в хранении — «00:00» в редакторе', () => {
+    expect(windowToRange({ from: '22:00', to: '24:00' })).toEqual({ from: '22:00', to: '00:00' })
+  })
+
+  it.each([
+    ['конец суток', { from: '22:00', to: '00:00' }],
+    ['обычный интервал', { from: '09:00', to: '18:00' }],
+  ])('windowToRange(rangeToWindow(%s)) — круговой перевод без потерь', (_name, r) => {
+    expect(windowToRange(rangeToWindow(r))).toEqual(r)
+  })
+
+  // Приёмочный тест: то, что раньше писал напрямую `CleaningScheduleEditor`
+  // (сырой диапазон как интервал) `windowsProblem` отвергал правилом `order`;
+  // диапазон, прошедший через `rangeToWindow`, тот же список принимает.
+  it('приёмочный (защищает CleaningScheduleEditor): rangeToWindow делает «22:00–00:00» годным интервалом', () => {
+    const raw = { from: '22:00', to: '00:00' }
+    expect(windowsProblem([raw])).toBe('order')
+    expect(windowsProblem([rangeToWindow(raw)])).toBe(null)
   })
 })
 

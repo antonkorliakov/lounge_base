@@ -735,6 +735,28 @@ export function canAddRange(ranges: Range[]): boolean {
   return isClock(last.from) && isClock(last.to) && nextWindowStart([{ from: last.from, to: last.to }]) !== null
 }
 
+/** Диапазон редактора → интервал хранения: «до 00:00» — это до конца ЭТИХ
+ *  суток, поэтому в хранении стоит `24:00` (единственное значение, которое
+ *  `<input type="time">` показать не может — оператор набирает 00:00). Одно
+ *  правило для обоих писателей: правил часов (`expandRules`) и уборки
+ *  (`CleaningScheduleEditor`, которая пишет `windows` напрямую, минуя
+ *  `expandRules`, — без этой функции сырой диапазон уходил бы в хранение
+ *  буквально, и `windowsProblem` отвергал бы его правилом `order`, конец
+ *  раньше начала). Маркерное начало (`FIRST_FLIGHT`) не часовое — `isClock`
+ *  ложно для него, и `to: '00:00'` при нём остаётся как есть, а не
+ *  превращается в конец суток, которого у маркерной границы нет. */
+export function rangeToWindow(range: Range): Window {
+  return { from: range.from, to: range.to === '00:00' && isClock(range.from) ? END_OF_DAY : range.to }
+}
+
+/** Интервал хранения → диапазон редактора: зеркало `rangeToWindow`, для обоих
+ *  читателей — `collapseWeek` (недельные правила) и уборка, которая отдаёт
+ *  сырое окно `RangeEditor` напрямую. `24:00` обратно в `'00:00'` —
+ *  единственное значение, которое `<input type="time">` способен показать. */
+export function windowToRange(window: Window): Range {
+  return { from: window.from, to: window.to === END_OF_DAY && isClock(window.from) ? '00:00' : window.to }
+}
+
 function sortWindows(windows: Window[]): Window[] {
   return [...windows].sort((a, b) => {
     const start = (w: Window): number => (isClock(w.from) ? clockMinutes(w.from) : -1)
@@ -766,21 +788,17 @@ export function expandRules(rules: HoursRule[]): WeekHours {
         if (isNightRange(range)) {
           windows.push({ from: range.from, to: END_OF_DAY })
           ;(tails[nextDay(day)] ??= []).push({ from: '00:00', to: range.to })
-        } else if (range.to === '00:00' && isClock(range.from)) {
-          // Полночь как конец — конец ЭТИХ суток (см. `isNightRange`), не
-          // хвост на завтра: одно окно `from–END_OF_DAY`, ничего в `tails`.
-          // Ветка стоит перед общим случаем, а не заменяет его: маркерные
-          // границы (`FIRST_FLIGHT`) сюда не попадают — `isClock(range.from)`
-          // ложно для них, и они уходят в `else` как раньше.
-          //
-          // Обычное равенство `to === from` (не полночь, например
-          // «09:00–09:00») сюда не попадает — `range.to` не `'00:00'` — и
-          // остаётся в `else` ниже как окно нулевой длины, которое
-          // `windowsProblem` отклонит по правилу `order`; это и держит тест
-          // «09:00–09:00» как отказ, пока «00:00–00:00» стал целыми сутками.
-          windows.push({ from: range.from, to: END_OF_DAY })
         } else {
-          windows.push({ from: range.from, to: range.to })
+          // Полночь как конец («00:00» при часовом `from`, см. `isNightRange`)
+          // — конец ЭТИХ суток, не хвост на завтра; `rangeToWindow` — единое
+          // место, которое это знает (тот же перевод нужен и уборке,
+          // `CleaningScheduleEditor`, которая пишет `windows` напрямую, минуя
+          // `expandRules`). Обычное равенство `to === from` (не полночь,
+          // например «09:00–09:00») через `rangeToWindow` проходит без
+          // изменений — окном нулевой длины, которое `windowsProblem`
+          // отклонит правилом `order`; это и держит тест «09:00–09:00» как
+          // отказ, пока «00:00–00:00» стал целыми сутками.
+          windows.push(rangeToWindow(range))
         }
       }
       if (windows.length > 0) own[day] = { kind: 'windows', windows }
@@ -837,15 +855,17 @@ export function collapseWeek(week: WeekHours): HoursRule[] {
   // предыдущего дня либо нет своего окна с `00:00`, либо это законный полный
   // день «00:00–END_OF_DAY» — предыдущий проход его в кандидаты на хвост не
   // берёт вовсе), становится редактируемым диапазоном `{ from: Y, to: '00:00'
-  // }` — единственным представлением, которое `<input type="time">` способно
-  // показать (Critical, Task 5). `formatRange`/`isNightRange` знают про этот
+  // }` через `windowToRange` — единственным представлением, которое
+  // `<input type="time">` способно показать (Critical, Task 5; сама функция —
+  // Fix round 2, зеркало `rangeToWindow`, которым теперь пишет и
+  // `expandRules`, и уборка). `formatRange`/`isNightRange` знают про этот
   // диапазон и печатают/читают его как конец суток, а не как испорченную
   // полночь.
   for (const day of WEEKDAYS) {
     const list = ranges[day]
     if (!Array.isArray(list)) continue
     for (let i = 0; i < list.length; i += 1) {
-      if (list[i]!.to === END_OF_DAY) list[i] = { from: list[i]!.from, to: '00:00' }
+      if (list[i]!.to === END_OF_DAY) list[i] = windowToRange(list[i]!)
     }
   }
 

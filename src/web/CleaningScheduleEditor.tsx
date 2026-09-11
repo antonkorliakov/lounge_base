@@ -9,8 +9,10 @@ import {
   canAddRange,
   cleaningProblem,
   nextWindowStart,
+  rangeToWindow,
   scheduleRenderable,
   switchCadence,
+  windowToRange,
   type Cadence,
   type CleaningSchedule,
   type Nth,
@@ -155,18 +157,27 @@ export function CleaningScheduleEditor(props: {
           что каждое окно — свой `RangeEditor` с `night={false}` и, когда окон
           больше одного, своим «×»; `options={CLEANING_DAY_OPTIONS}` гасит и
           «24 часа» (её здесь и не было), и «или первый/последний рейс» —
-          уборка не привязана к рейсам. */}
+          уборка не привязана к рейсам.
+
+          `RangeEditor` работает в терминах `Range` (конвенция «до 00:00» —
+          конец суток), а хранение здесь — сырой `Window` без слоя
+          `expandRules`. Каждая передача окна редактору идёт через
+          `windowToRange` (24:00 → 00:00 для показа), каждый `onChange` —
+          обратно через `rangeToWindow` (00:00 → 24:00 для хранения); без
+          этого перевода «00:00», набранный оператором как конец интервала
+          уборки, писался бы в `windows` буквально, и `windowsProblem`
+          отверг бы такой день правилом `order` (Fix round 2). */}
       {schedule && schedule.cadence !== 'weekly' && (
         <div className="cs-windows">
           {schedule.windows.map((window, index) => (
             <div className="hr-row" key={index}>
               <RangeEditor
                 id={`${props.idPrefix}-w${index}`}
-                range={window}
+                range={windowToRange(window)}
                 options={CLEANING_DAY_OPTIONS}
                 night={false}
                 onChange={(next) => {
-                  const windows = schedule.windows.map((w, i) => (i === index ? next : w))
+                  const windows = schedule.windows.map((w, i) => (i === index ? rangeToWindow(next) : w))
                   props.onChange({ ...schedule, windows })
                 }}
               />
@@ -191,8 +202,15 @@ export function CleaningScheduleEditor(props: {
               выбора «Daily»/«Monthly»/«Quarterly», это не порча), и первый
               интервал должно быть чем предложить — иначе кнопка периодичности
               выглядела бы так, будто нажатие ничего не дало. Отсюда явная
-              вторая ветка `.length === 0`, а не одно `canAddRange`. */}
-          {(schedule.windows.length === 0 || canAddRange(schedule.windows)) && (
+              вторая ветка `.length === 0`, а не одно `canAddRange`.
+
+              `canAddRange` тоже работает в терминах `Range` (её собственная
+              «до 00:00» — конец суток ветка) — список переводится
+              `windowToRange`, иначе окно, кончающееся буквальным `24:00`
+              (уже конвертированным ранее оператором), не читалось бы как
+              «день занят до конца», и кнопка предложила бы второй интервал
+              туда, где `windowsProblem` его тут же отверг бы. */}
+          {(schedule.windows.length === 0 || canAddRange(schedule.windows.map(windowToRange))) && (
             <button
               type="button"
               className="hr-link"
