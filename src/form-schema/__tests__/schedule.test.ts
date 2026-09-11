@@ -997,17 +997,29 @@ describe('rangeToWindow / windowToRange — диапазон редактора 
     expect(rangeToWindow({ from: '22:00', to: '02:00' })).toEqual({ from: '22:00', to: '02:00' })
   })
 
-  it('rangeToWindow: маркерное начало («первый рейс») — не тронут, это не часовой from', () => {
-    expect(rangeToWindow({ from: FIRST_FLIGHT, to: '00:00' })).toEqual({ from: FIRST_FLIGHT, to: '00:00' })
+  // I1 (whole-branch fix wave): решение изменилось — маркерное начало с
+  // «00:00» как конец ТОЖЕ конец суток (ночного переноса от маркера не
+  // бывает, «завтра» у маркера нет), не отличается от часового `from`.
+  it('rangeToWindow: маркерное начало («первый рейс»), to «00:00» — тоже конец суток', () => {
+    expect(rangeToWindow({ from: FIRST_FLIGHT, to: '00:00' })).toEqual({ from: FIRST_FLIGHT, to: END_OF_DAY })
+  })
+
+  it('rangeToWindow: пустой from (день не отвечен) — «00:00» не трогаем, отвечать нечему', () => {
+    expect(rangeToWindow({ from: '', to: '00:00' })).toEqual({ from: '', to: '00:00' })
   })
 
   it('windowToRange: 24:00 в хранении — «00:00» в редакторе', () => {
     expect(windowToRange({ from: '22:00', to: '24:00' })).toEqual({ from: '22:00', to: '00:00' })
   })
 
+  it('windowToRange: маркерное начало, 24:00 в хранении — «00:00» в редакторе (зеркало rangeToWindow)', () => {
+    expect(windowToRange({ from: FIRST_FLIGHT, to: END_OF_DAY })).toEqual({ from: FIRST_FLIGHT, to: '00:00' })
+  })
+
   it.each([
     ['конец суток', { from: '22:00', to: '00:00' }],
     ['обычный интервал', { from: '09:00', to: '18:00' }],
+    ['маркерное начало, конец суток', { from: FIRST_FLIGHT, to: '00:00' }],
   ])('windowToRange(rangeToWindow(%s)) — круговой перевод без потерь', (_name, r) => {
     expect(windowToRange(rangeToWindow(r))).toEqual(r)
   })

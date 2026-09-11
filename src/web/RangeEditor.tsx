@@ -1,7 +1,7 @@
 'use client'
 
 import type React from 'react'
-import { END_OF_DAY, FIRST_FLIGHT, LAST_FLIGHT, isClock, isNightRange, type HoursOptions, type Range } from '@/form-schema'
+import { END_OF_DAY, FIRST_FLIGHT, LAST_FLIGHT, isNightRange, rangeToWindow, type HoursOptions, type Range } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 
 /**
@@ -22,12 +22,13 @@ import { useLocale } from '@/i18n/context'
  *
  * Подпись «до конца дня» (Critical, Task 5) показана в ОБОИХ редакторах, `night`
  * её не гасит: у графика уборки конец суток — законный ответ («уборка до
- * полуночи»), не ночной перенос. Само поле `to` принимает и `'00:00'`
- * (диапазон недельных часов, конвенция `Range` — см. `collapseWeek`), и
- * буквальный `'24:00'` (`Window` графика уборки хранится без слоя `Range` и
- * может нести `END_OF_DAY` напрямую, например из сида) — оба показаны как
- * «00:00» в самом поле времени, единственном значении, которое
- * `<input type="time">` способен принять, и подписаны одинаково.
+ * полуночи»), не ночной перенос. `rangeToWindow` (I1, сквозное ревью:
+ * единственное место, решающее «что значит "00:00" как конец») отвечает и на
+ * этот вопрос — само поле `to` в `Range` всегда `'00:00'`, а не буквальный
+ * `END_OF_DAY`: оба писателя (`expandRules` и уборка) отдают сюда диапазон
+ * уже через `windowToRange`, так что `<input type="time">` получает ровно то
+ * единственное значение, которое способен принять, без отдельной проверки
+ * здесь на буквальный `'24:00'`.
  */
 export function RangeEditor(props: {
   range: Range
@@ -35,17 +36,17 @@ export function RangeEditor(props: {
   onChange: (range: Range) => void
   id: string
   night?: boolean
+  /** Ref на `<input>` поля «с» — только для того диапазона, куда `HoursRulesEditor`
+   *  переводит фокус после `splitDay`/«другие часы» (I5). Не задан у всех
+   *  остальных диапазонов. */
+  fromRef?: React.Ref<HTMLInputElement>
 }): React.JSX.Element {
   const { t } = useLocale()
   const { range, onChange } = props
   const night = props.night ?? true
 
   const bound = (key: 'from' | 'to', marker: string, word: string, orWord: string): React.JSX.Element => {
-    // `<input type="time">` не принимает «24:00» (браузер санитизирует его до
-    // пустого поля) — единственное значение, которое ему под силу показать
-    // для конца суток, это «00:00»; буквальный `END_OF_DAY`, где бы он ни
-    // пришёл (`Window` графика уборки), отображается тем же «00:00».
-    const value = key === 'to' && range[key] === END_OF_DAY ? '00:00' : range[key]
+    const value = range[key]
     if (value === marker) {
       return (
         <span className="hr-marker">
@@ -65,6 +66,7 @@ export function RangeEditor(props: {
       <span className="hr-bound">
         <input
           id={`${props.id}-${key}`}
+          ref={key === 'from' ? props.fromRef : undefined}
           type="time"
           step={300}
           aria-label={t(key === 'from' ? 'schedule.from' : 'schedule.to')}
@@ -88,14 +90,12 @@ export function RangeEditor(props: {
       {bound('to', LAST_FLIGHT, t('schedule.toLastFlight'), t('schedule.orLastFlight'))}
       {night && isNightRange(range) && range.to && <span className="hr-night">{t('schedule.nextDay').replace('{to}', range.to)}</span>}
       {/* Не гасится `night`: конец суток — законный ответ у обоих
-          редакторов (см. WHY выше). `to === '00:00'` — конвенция `Range`
-          недельных часов, `to === END_OF_DAY` — буквальное хранение окна
-          графика уборки без слоя `Range`; оба читаются одинаково, и
-          `isNightRange` уже исключает первое из ночи, так что подписи не
-          пересекаются на одном диапазоне. */}
-      {(range.to === '00:00' || range.to === END_OF_DAY) && isClock(range.from) && (
-        <span className="hr-night">{t('schedule.endOfDay')}</span>
-      )}
+          редакторов (см. WHY выше). `rangeToWindow` — единственное место,
+          решающее «до 00:00» ли это (I1, часовое ИЛИ маркерное начало
+          — маркер после I3/I1 тоже может значить «до конца суток»);
+          `isNightRange` уже исключает этот же диапазон из ночи, так что
+          подписи не пересекаются на одном диапазоне. */}
+      {rangeToWindow(range).to === END_OF_DAY && <span className="hr-night">{t('schedule.endOfDay')}</span>}
     </span>
   )
 }
