@@ -678,6 +678,7 @@ export function cleaningCells(
  * оператора). `nth`/`weekday` при переходе daily → monthly берут первый
  * понедельник как отправную точку, которую видно и легко поменять.
  */
+
 export function switchCadence(current: CleaningSchedule | null, cadence: Cadence): CleaningSchedule {
   // Кнопки периодичности не выключаются, когда их периодичность уже выбрана
   // (оператор может нажать «Weekly», уже стоя на ней) — выбор ТОЙ ЖЕ
@@ -698,4 +699,152 @@ export function switchCadence(current: CleaningSchedule | null, cadence: Cadence
   const weekday =
     current && (current.cadence === 'monthly' || current.cadence === 'quarterly') ? current.weekday : 'mon'
   return { cadence, nth, weekday, windows: carried }
+}
+
+/**
+ * Правила — то, как оператор ДУМАЕТ о графике: «эти дни — такой режим».
+ * Хранение остаётся по дням (`WeekHours`); правила — представление, которое
+ * редактор показывает и через которое пишет. Две функции ниже переводят туда и
+ * обратно, и их обратимость закреплена тестами на живых графиках лаунжей.
+ *
+ * `Range.from === ''` — время ещё не введено: такой диапазон в неделю не
+ * ложится вовсе (день остаётся неотвеченным), потому что «правило без
+ * времени» — нормальное состояние черновика на полпути, а не ошибка формы.
+ */
+export type Range = { from: string; to: string | null }
+export type RuleHours = { kind: 'allDay' } | { kind: 'windows'; ranges: Range[] }
+export type HoursRule = { days: Weekday[]; hours: RuleHours }
+
+export function emptyRule(days: Weekday[]): HoursRule {
+  return { days, hours: { kind: 'windows', ranges: [{ from: '', to: null }] } }
+}
+
+export function nextDay(day: Weekday): Weekday {
+  return WEEKDAYS[(WEEKDAYS.indexOf(day) + 1) % 7]!
+}
+export function previousDay(day: Weekday): Weekday {
+  return WEEKDAYS[(WEEKDAYS.indexOf(day) + 6) % 7]!
+}
+
+/** Ночной диапазон: оба конца — времена и конец меньше начала («02:00–01:00»). */
+export function isNightRange(range: Range): boolean {
+  return isClock(range.from) && range.to !== null && isClock(range.to) && clockMinutes(range.to) < clockMinutes(range.from)
+}
+
+function sortWindows(windows: Window[]): Window[] {
+  return [...windows].sort((a, b) => {
+    const start = (w: Window): number => (isClock(w.from) ? clockMinutes(w.from) : -1)
+    return start(a) - start(b)
+  })
+}
+
+/**
+ * Правила → семь дней. Ночной диапазон делится по суткам: `from–24:00`
+ * сегодня и `00:00–to` ЗАВТРА (после воскресенья — понедельник). Именно
+ * завтра: «пн 02:00–01:00» — это закрытие во вторник в час ночи, и у лаунжа,
+ * закрытого по пятницам, ночь четверга честно даёт пятнице `00:00–01:00`.
+ * Дни без правила закрыты (`none`); дни в правиле без введённого времени —
+ * неотвечены (в неделю не попадают). Повторы дня между правилами редактор не
+ * допускает; для значения, пришедшего мимо него, побеждает последнее правило.
+ */
+export function expandRules(rules: HoursRule[]): WeekHours {
+  const own: Partial<Record<Weekday, DayHours>> = {}
+  const tails: Partial<Record<Weekday, Window[]>> = {}
+  const covered = new Set<Weekday>()
+
+  for (const rule of rules) {
+    for (const day of rule.days) {
+      covered.add(day)
+      if (rule.hours.kind === 'allDay') { own[day] = { kind: 'allDay' }; continue }
+      const windows: Window[] = []
+      for (const range of rule.hours.ranges) {
+        if (range.from === '') continue
+        if (isNightRange(range)) {
+          windows.push({ from: range.from, to: END_OF_DAY })
+          ;(tails[nextDay(day)] ??= []).push({ from: '00:00', to: range.to })
+        } else {
+          windows.push({ from: range.from, to: range.to })
+        }
+      }
+      if (windows.length > 0) own[day] = { kind: 'windows', windows }
+      else delete own[day]
+    }
+  }
+
+  const week: WeekHours = {}
+  for (const day of WEEKDAYS) {
+    const base = own[day]
+    const tail = tails[day] ?? []
+    if (base?.kind === 'windows') week[day] = { kind: 'windows', windows: sortWindows([...tail, ...base.windows]) }
+    else if (base) week[day] = base
+    else if (tail.length > 0) week[day] = { kind: 'windows', windows: sortWindows(tail) }
+    else if (!covered.has(day)) week[day] = { kind: 'none' }
+    // covered, но без времени — неотвечен: ключа нет.
+  }
+  return week
+}
+
+/**
+ * Семь дней → правила. Сначала склейка ночи: интервал `00:00–X` дня D — хвост
+ * интервала `Y–24:00` предыдущего дня, если такой есть; они становятся одним
+ * ночным диапазоном `Y–X` у предыдущего дня. Полный день `00:00–24:00`
+ * хвостом не считается. Потом дни с одинаковым набором диапазонов
+ * объединяются в правило; порядок правил — по первому дню. Закрытые и
+ * неотвеченные дни правил не образуют.
+ */
+export function collapseWeek(week: WeekHours): HoursRule[] {
+  const ranges: Partial<Record<Weekday, Range[] | 'allDay'>> = {}
+  for (const day of WEEKDAYS) {
+    const hours = week[day]
+    if (!hours || hours.kind === 'none') continue
+    if (hours.kind === 'allDay') { ranges[day] = 'allDay'; continue }
+    ranges[day] = hours.windows.map((w) => ({ from: w.from, to: w.to }))
+  }
+
+  for (const day of WEEKDAYS) {
+    const list = ranges[day]
+    if (!Array.isArray(list)) continue
+    const tailIndex = list.findIndex((r) => r.from === '00:00' && r.to !== null && isClock(r.to) && r.to !== END_OF_DAY)
+    if (tailIndex < 0) continue
+    const prev = ranges[previousDay(day)]
+    if (!Array.isArray(prev)) continue
+    const headIndex = prev.findIndex((r) => r.to === END_OF_DAY && isClock(r.from))
+    if (headIndex < 0) continue
+    const tail = list[tailIndex]!
+    prev[headIndex] = { from: prev[headIndex]!.from, to: tail.to }
+    list.splice(tailIndex, 1)
+    if (list.length === 0) delete ranges[day]
+  }
+
+  const rules: HoursRule[] = []
+  for (const day of WEEKDAYS) {
+    const value = ranges[day]
+    if (value === undefined) continue
+    const key = JSON.stringify(value)
+    const existing = rules.find((r) => JSON.stringify(r.hours.kind === 'allDay' ? 'allDay' : r.hours.ranges) === key)
+    if (existing) { existing.days.push(day); continue }
+    rules.push({ days: [day], hours: value === 'allDay' ? { kind: 'allDay' } : { kind: 'windows', ranges: value } })
+  }
+  return rules
+}
+
+/** Нажатие дня в правиле `index`: если день там — снять; иначе — забрать у
+ *  любого другого правила и добавить сюда. День принадлежит одному правилу.
+ *  Новый массив, входной не мутируется — результат кладут в состояние React. */
+export function toggleDay(rules: HoursRule[], index: number, day: Weekday): HoursRule[] {
+  return rules.map((rule, i) => {
+    const has = rule.days.includes(day)
+    if (i === index) return { ...rule, days: has ? rule.days.filter((d) => d !== day) : sortDays([...rule.days, day]) }
+    return has ? { ...rule, days: rule.days.filter((d) => d !== day) } : rule
+  })
+}
+
+/** «Изменить» у дня в итоге: день уходит из своего правила в новое, пустое,
+ *  в конец списка — оператор правит тот день, который в итоге не сошёлся. */
+export function splitDay(rules: HoursRule[], day: Weekday): HoursRule[] {
+  return [...rules.map((r) => ({ ...r, days: r.days.filter((d) => d !== day) })), emptyRule([day])]
+}
+
+function sortDays(days: Weekday[]): Weekday[] {
+  return [...days].sort((a, b) => WEEKDAYS.indexOf(a) - WEEKDAYS.indexOf(b))
 }

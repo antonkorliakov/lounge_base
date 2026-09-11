@@ -33,21 +33,33 @@ import {
   cleaningCells,
   WEEKDAY_WORKDAYS,
   WEEKDAY_WEEKEND,
+  expandRules,
+  collapseWeek,
+  toggleDay,
+  splitDay,
   type HoursOptions,
   type WeekHours,
   type DayHours,
   type Window,
+  type Weekday,
+  type HoursRule,
 } from '../schedule'
 
 const OPEN: HoursOptions = { allDay: true, flightBounds: true, noneLabel: { en: 'Closed', ru: 'Закрыто' } }
 const PEAK: HoursOptions = { allDay: false, flightBounds: false, noneLabel: { en: 'No peak', ru: 'Нет пика' } }
 
-type Weekday = (typeof WEEKDAYS)[number]
-
 /** Полная неделя одним видом — короче, чем перечислять семь ключей в каждом тесте. */
 function everyDay(day: WeekHours[Weekday]): WeekHours {
   return Object.fromEntries(WEEKDAYS.map((d) => [d, day])) as WeekHours
 }
+
+// Общие фикстуры для `expandRules`/`collapseWeek`: будни и выходные как два
+// правила, и конструктор `rule` для правила с одним диапазоном — несколько
+// describe-блоков ниже делят их между собой.
+const W = ['mon', 'tue', 'wed', 'thu', 'fri'] as const
+const E = ['sat', 'sun'] as const
+const rule = (days: readonly Weekday[], from: string, to: string | null): HoursRule =>
+  ({ days: [...days], hours: { kind: 'windows', ranges: [{ from, to }] } })
 
 describe('константы порядка', () => {
   it('дни недели — понедельник первым, семь штук', () => {
@@ -803,5 +815,123 @@ describe('границы «первый / последний рейс»', () => 
   it('день с маркерами считается заполненным', () => {
     const week = everyDay({ kind: 'windows', windows: [{ from: FIRST_FLIGHT, to: LAST_FLIGHT }] })
     expect(weekHoursComplete(week, OPEN)).toBe(true)
+  })
+})
+
+describe('expandRules — правила ложатся в дни', () => {
+  it('№1: будни и выходные', () => {
+    const week = expandRules([rule(W, '09:00', '21:00'), rule(E, '10:00', '20:00')])
+    expect(week.mon).toEqual({ kind: 'windows', windows: [{ from: '09:00', to: '21:00' }] })
+    expect(week.sun).toEqual({ kind: 'windows', windows: [{ from: '10:00', to: '20:00' }] })
+  })
+
+  it('№2: ночной график разбивается по суткам, хвост уходит в СЛЕДУЮЩИЙ день', () => {
+    const week = expandRules([rule(W, '02:00', '01:00'), rule(E, '05:00', '01:00')])
+    expect(week.mon).toEqual({ kind: 'windows', windows: [{ from: '00:00', to: '01:00' }, { from: '02:00', to: END_OF_DAY }] })
+    expect(week.sat).toEqual({ kind: 'windows', windows: [{ from: '00:00', to: '01:00' }, { from: '05:00', to: END_OF_DAY }] })
+    // Хвост воскресенья попадает в понедельник — неделя по кругу.
+    expect(week.mon!.kind === 'windows' && week.mon!.windows[0]).toEqual({ from: '00:00', to: '01:00' })
+  })
+
+  it('№3 и №4: все дни одинаково; круглосуточно', () => {
+    expect(expandRules([rule(WEEKDAYS, '07:00', '22:00')]).thu).toEqual({ kind: 'windows', windows: [{ from: '07:00', to: '22:00' }] })
+    expect(expandRules([{ days: [...WEEKDAYS], hours: { kind: 'allDay' } }]).sun).toEqual({ kind: 'allDay' })
+  })
+
+  it('№5: день без правила закрыт', () => {
+    const week = expandRules([rule(['mon', 'tue', 'wed', 'thu', 'sat', 'sun'], '09:00', '21:00')])
+    expect(week.fri).toEqual({ kind: 'none' })
+  })
+
+  it('№6: маркеры не разбиваются и ложатся как есть', () => {
+    const week = expandRules([rule(WEEKDAYS, FIRST_FLIGHT, LAST_FLIGHT)])
+    expect(week.wed).toEqual({ kind: 'windows', windows: [{ from: FIRST_FLIGHT, to: LAST_FLIGHT }] })
+    expect(expandRules([rule(E, FIRST_FLIGHT, '23:00')]).sat).toEqual({ kind: 'windows', windows: [{ from: FIRST_FLIGHT, to: '23:00' }] })
+  })
+
+  it('день в правиле без времени остаётся НЕОТВЕЧЕННЫМ, а не закрытым', () => {
+    const week = expandRules([rule(W, '09:00', '21:00'), rule(E, '', null)])
+    expect(week.sat).toBeUndefined()
+    expect(week.mon).toBeDefined()
+  })
+
+  it('незакрытый диапазон — незакрытый интервал (сохраняется, анкета неполна)', () => {
+    const week = expandRules([rule(WEEKDAYS, '09:00', null)])
+    expect(week.mon).toEqual({ kind: 'windows', windows: [{ from: '09:00', to: null }] })
+    expect(weekHoursComplete(week, OPEN)).toBe(false)
+  })
+
+  it('to === from — негодная форма, которую поймает ворота', () => {
+    const week = expandRules([rule(WEEKDAYS, '09:00', '09:00')])
+    expect(weekHoursProblem(week, OPEN)).toBe('order')
+  })
+
+  it('хвост ночи, наехавший на свой интервал следующего дня, — пересечение', () => {
+    const week = expandRules([rule(['mon'], '22:00', '03:00'), rule(['tue'], '02:00', '10:00')])
+    expect(weekHoursProblem(week, OPEN)).toBe('overlap')
+  })
+
+  it('интервалы дня упорядочены после раскладки', () => {
+    const week = expandRules([rule(['mon'], '22:00', '02:00'), rule(['tue'], '09:00', '18:00')])
+    expect(week.tue).toEqual({ kind: 'windows', windows: [{ from: '00:00', to: '02:00' }, { from: '09:00', to: '18:00' }] })
+  })
+})
+
+describe('collapseWeek — дни собираются в правила', () => {
+  const cases: [string, HoursRule[]][] = [
+    ['№1', [rule(W, '09:00', '21:00'), rule(E, '10:00', '20:00')]],
+    ['№2', [rule(W, '02:00', '01:00'), rule(E, '05:00', '01:00')]],
+    ['№3', [rule(WEEKDAYS, '07:00', '22:00')]],
+    ['№4', [{ days: [...WEEKDAYS], hours: { kind: 'allDay' } }]],
+    ['№5', [rule(['mon', 'tue', 'wed', 'thu', 'sat', 'sun'], '09:00', '21:00')]],
+    ['№6', [rule(WEEKDAYS, FIRST_FLIGHT, LAST_FLIGHT)]],
+    ['№6 смешанно', [rule(W, '01:00', LAST_FLIGHT), rule(E, FIRST_FLIGHT, '23:00')]],
+    ['разрывной день', [{ days: [...WEEKDAYS], hours: { kind: 'windows', ranges: [{ from: '01:00', to: '11:00' }, { from: '12:00', to: '23:00' }] } }]],
+  ]
+
+  it.each(cases)('%s: expand → collapse возвращает те же правила', (_name, rules) => {
+    expect(collapseWeek(expandRules(rules))).toEqual(rules)
+  })
+
+  it.each(cases)('%s: collapse → expand возвращает ту же неделю', (_name, rules) => {
+    const week = expandRules(rules)
+    expect(expandRules(collapseWeek(week))).toEqual(week)
+  })
+
+  it('полный день 00:00–24:00 не считается хвостом предыдущего', () => {
+    const week: WeekHours = { mon: { kind: 'windows', windows: [{ from: '20:00', to: END_OF_DAY }] }, tue: { kind: 'windows', windows: [{ from: '00:00', to: END_OF_DAY }] } }
+    const rules = collapseWeek(week)
+    expect(rules.find((r) => r.days.includes('mon'))!.hours).toEqual({ kind: 'windows', ranges: [{ from: '20:00', to: END_OF_DAY }] })
+  })
+
+  it('дни none и неотвеченные в правила не попадают', () => {
+    expect(collapseWeek({ mon: { kind: 'none' }, tue: { kind: 'allDay' } })).toEqual([{ days: ['tue'], hours: { kind: 'allDay' } }])
+    expect(collapseWeek({})).toEqual([])
+  })
+})
+
+describe('toggleDay и splitDay', () => {
+  it('день переходит из одного правила в другое', () => {
+    const out = toggleDay([rule(WEEKDAYS, '09:00', '21:00'), rule([], '', null)], 1, 'sat')
+    expect(out[0]!.days).toEqual(['mon', 'tue', 'wed', 'thu', 'fri', 'sun'])
+    expect(out[1]!.days).toEqual(['sat'])
+  })
+
+  it('повторное нажатие снимает день с его правила', () => {
+    const out = toggleDay([rule(WEEKDAYS, '09:00', '21:00')], 0, 'fri')
+    expect(out[0]!.days).not.toContain('fri')
+  })
+
+  it('splitDay уносит день в новое пустое правило в конце списка', () => {
+    const out = splitDay([rule(WEEKDAYS, '09:00', '21:00')], 'sat')
+    expect(out).toHaveLength(2)
+    expect(out[0]!.days).not.toContain('sat')
+    expect(out[1]).toEqual({ days: ['sat'], hours: { kind: 'windows', ranges: [{ from: '', to: null }] } })
+  })
+
+  it('входные правила не мутируются', () => {
+    const rules = [rule(WEEKDAYS, '09:00', '21:00')]
+    toggleDay(rules, 0, 'fri'); splitDay(rules, 'sat')
+    expect(rules[0]!.days).toHaveLength(7)
   })
 })
