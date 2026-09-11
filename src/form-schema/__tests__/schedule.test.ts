@@ -38,6 +38,10 @@ import {
   collapseWeek,
   toggleDay,
   splitDay,
+  canAddRange,
+  rulesFromWeek,
+  weekKey,
+  emptyRule,
   type HoursOptions,
   type WeekHours,
   type DayHours,
@@ -906,5 +910,66 @@ describe('toggleDay и splitDay', () => {
     const rules = [rule(WEEKDAYS, '09:00', '21:00')]
     toggleDay(rules, 0, 'fri'); splitDay(rules, 'sat')
     expect(rules[0]!.days).toHaveLength(7)
+  })
+})
+
+describe('canAddRange — второй интервал правила (C1)', () => {
+  it('ночной диапазон второго интервала не предлагает: следующий начинался бы уже завтра', () => {
+    expect(canAddRange([{ from: '22:00', to: '06:00' }])).toBe(false)
+  })
+
+  it('обычный закрытый интервал — второй предложить можно', () => {
+    expect(canAddRange([{ from: '01:00', to: '11:00' }])).toBe(true)
+  })
+
+  it('незакрытый интервал (to: null) — рано, второго ещё нет', () => {
+    expect(canAddRange([{ from: '09:00', to: null }])).toBe(false)
+  })
+
+  it('интервал с маркером — единственный в дне, второго не бывает', () => {
+    expect(canAddRange([{ from: FIRST_FLIGHT, to: '23:00' }])).toBe(false)
+  })
+
+  it('интервал до конца суток — день занят до конца, добавлять некуда', () => {
+    expect(canAddRange([{ from: '03:00', to: '24:00' }])).toBe(false)
+  })
+})
+
+describe('rulesFromWeek — неделя в правила, неотвеченный день не становится закрытым (C2)', () => {
+  it('ни один день не отвечен — одно правило на все семь дней', () => {
+    expect(rulesFromWeek({})).toEqual([emptyRule([...WEEKDAYS])])
+  })
+
+  it('один день отвечен — его правило плюс хвостовое пустое правило на остальные', () => {
+    const allDay: DayHours = { kind: 'allDay' }
+    const rest: Weekday[] = ['tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+    expect(rulesFromWeek({ mon: allDay })).toEqual([
+      { days: ['mon'], hours: { kind: 'allDay' } },
+      emptyRule(rest),
+    ])
+  })
+
+  it('обратный переход: неотвеченный день остаётся НЕОТВЕЧЕННЫМ, а не закрытым', () => {
+    const week: WeekHours = { mon: { kind: 'allDay' } }
+    // Под мутантом (без хвостового emptyRule) вторник получал бы `none` —
+    // ровно баг C2: несохранённый черновик выглядел бы как «закрыто».
+    expect(expandRules(rulesFromWeek(week))).toEqual(week)
+  })
+
+  it('неделя отвечена целиком — то же, что collapseWeek', () => {
+    const week = expandRules([rule(WEEKDAYS, '09:00', '21:00')])
+    expect(rulesFromWeek(week)).toEqual(collapseWeek(week))
+  })
+})
+
+describe('weekKey — сравнение недели независимо от порядка ключей jsonb (I1)', () => {
+  it('одна и та же неделя с разным порядком ключей даёт один и тот же ключ', () => {
+    const x: DayHours = { kind: 'allDay' }
+    const y: DayHours = { kind: 'none' }
+    expect(weekKey({ tue: x, mon: y })).toBe(weekKey({ mon: y, tue: x }))
+  })
+
+  it('разные часы одного дня дают разный ключ', () => {
+    expect(weekKey({ mon: { kind: 'allDay' } })).not.toBe(weekKey({ mon: { kind: 'none' } }))
   })
 })

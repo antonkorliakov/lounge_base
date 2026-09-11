@@ -375,6 +375,7 @@ body {
 .hr-prep { font-size: 14px; opacity: .7; text-transform: lowercase; }
 .hr-bound, .hr-marker { display: inline-flex; align-items: center; gap: 4px; }
 .hr-range input[type='time'] { width: auto; min-width: 7rem; min-height: 36px; padding: 6px 8px; }
+.hr-allday-text { font-size: 14px; }
 .hr-link { border: none; background: none; min-height: 0; padding: 0 2px; font-size: 13px; color: #2563eb; text-decoration: underline; cursor: pointer; }
 .hr-chip { min-height: 34px; padding: 0 10px; font-size: 13px; border-radius: 6px; }
 .hr-x { width: 34px; min-height: 34px; min-width: 0; padding: 0; font-size: 16px; opacity: .7; }

@@ -87,4 +87,16 @@ describe('HoursRulesEditor', () => {
   it('кнопка под правилами названа задачей оператора', () => {
     expect(render(undefined, OPEN)).toContain(UI['schedule.otherHours'].en)
   })
+
+  it('неотвеченный день хранимой недели остаётся неотвеченным, не закрытым (C2)', () => {
+    const html = render({ mon: { kind: 'allDay' } }, OPEN)
+    // Два правила: понедельник (24ч) отдельно, остальные шесть дней —
+    // хвостовое правило без времени. Под багом C2 был бы одно правило от
+    // collapseWeek, а вторник печатался бы словом «Closed» из noneLabel.
+    expect(html.match(/class="hr-rule"/g)).toHaveLength(2)
+    const tueRow = html.match(/<div class="hr-sum-row">[^]*?Tuesday[^]*?<\/div>/)?.[0] ?? ''
+    expect(tueRow).not.toContain('Closed')
+    expect(tueRow).toContain('—')
+    expect(html).toContain(UI['schedule.ruleSetTime'].en.replace('{n}', '2'))
+  })
 })

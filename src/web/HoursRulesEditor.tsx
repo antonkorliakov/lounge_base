@@ -3,21 +3,20 @@
 import { useEffect, useState, type JSX } from 'react'
 import {
   WEEKDAYS,
-  collapseWeek,
+  canAddRange,
   dayTexts,
   emptyRule,
   expandRules,
-  hasMarker,
-  isClock,
   nextWindowStart,
+  rulesFromWeek,
   splitDay,
   toggleDay,
   weekHoursProblem,
+  weekKey,
   type HoursOptions,
   type HoursRule,
   type Range,
   type WeekHours,
-  type Weekday,
 } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 import { RangeEditor } from './RangeEditor'
@@ -31,12 +30,14 @@ import { RangeEditor } from './RangeEditor'
  * `onChange`, что у любого поля; сервер видит только дни.
  *
  * Значение снаружи (первый рендер, правка командой, автосохранение вернуло
- * другое) пересобирает список через `collapseWeek`, но ТОЛЬКО когда оно
+ * другое) пересобирает список через `rulesFromWeek`, но ТОЛЬКО когда оно
  * отличается от того, что дали бы текущие правила: иначе каждое собственное
  * сохранение стирало бы недозаполненные правила.
  */
 function initialRules(value: unknown, options: HoursOptions): HoursRule[] {
-  if (typeof value === 'string' || !value || typeof value !== 'object') return [emptyRule([...WEEKDAYS])]
+  // Старый текстовый ответ и любое нечитаемое значение — тот же старт, что у
+  // пустого поля: `rulesFromWeek({})` даёт одно правило на все семь дней.
+  if (typeof value === 'string' || !value || typeof value !== 'object') return rulesFromWeek({})
   const week = value as WeekHours
   const clean: WeekHours = {}
   for (const day of WEEKDAYS) {
@@ -49,8 +50,12 @@ function initialRules(value: unknown, options: HoursOptions): HoursRule[] {
     const problem = weekHoursProblem({ [day]: hours }, options)
     if (problem !== 'shape' && problem !== 'kind') clean[day] = hours
   }
-  const rules = collapseWeek(clean)
-  return rules.length > 0 ? rules : [emptyRule([...WEEKDAYS])]
+  // `rulesFromWeek`, не `collapseWeek`: день, отсутствующий в `clean` (не
+  // пришёл вовсе или отфильтрован как нерисуемый), — «не отвечено», легальный
+  // черновик (C2). `collapseWeek` такой день молча роняет, `expandRules`
+  // читает его отсутствие как «нет правила → закрыто», и следующий `commit()`
+  // записал бы это закрытие как настоящий ответ оператора.
+  return rulesFromWeek(clean)
 }
 
 export function HoursRulesEditor(props: {
@@ -64,14 +69,20 @@ export function HoursRulesEditor(props: {
   const legacy = typeof props.value === 'string' && props.value.trim() !== '' ? props.value : null
   const [rules, setRules] = useState<HoursRule[]>(() => initialRules(props.value, options))
 
-  const incoming = JSON.stringify(props.value ?? null)
+  const incoming = weekKey(props.value)
   useEffect(() => {
-    if (JSON.stringify(expandRules(rules)) !== incoming && typeof props.value !== 'string') {
+    // `weekKey`, не `JSON.stringify`: сравнение по значению дней в
+    // каноническом порядке `WEEKDAYS`, а не по тексту JSON — Postgres jsonb
+    // не хранит порядок ключей объекта, и та же неделя, вернувшаяся с
+    // автосохранения в другом порядке ключей, раньше не совпадала со своей
+    // же строкой и заставляла пересобирать правила на каждой загрузке (I1).
+    // Гарантия та же, что и была: пересборка только от внешнего значения
+    // (`incoming`) — изменение самих `rules` (наше же сохранение) не
+    // перезапускает этот эффект и не стирает недозаполненные правила, которых
+    // `expandRules` не выводит.
+    if (weekKey(expandRules(rules)) !== incoming && typeof props.value !== 'string') {
       setRules(initialRules(props.value, options))
     }
-    // Пересборка только от внешнего значения (`incoming`) — иначе изменение
-    // самих `rules` (наше же сохранение) перезапускало бы этот эффект и
-    // стирало недозаполненные правила, которых `expandRules` не выводит.
   }, [incoming])
 
   const commit = (next: HoursRule[]): void => {
@@ -187,13 +198,4 @@ export function HoursRulesEditor(props: {
       </div>
     </div>
   )
-}
-
-/** Второй интервал предлагается только после полной пары времён без маркеров:
- *  у интервала с маркером второго не бывает (правило схемы), у ночного —
- *  следующий начинался бы уже завтра. */
-function canAddRange(ranges: Range[]): boolean {
-  const last = ranges[ranges.length - 1]
-  if (!last || last.to === null || hasMarker({ from: last.from, to: last.to })) return false
-  return isClock(last.from) && isClock(last.to) && nextWindowStart([{ from: last.from, to: last.to }]) !== null
 }

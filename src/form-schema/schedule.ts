@@ -772,6 +772,18 @@ export function isNightRange(range: Range): boolean {
   return isClock(range.from) && range.to !== null && isClock(range.to) && clockMinutes(range.to) < clockMinutes(range.from)
 }
 
+/** Показывать ли «+ интервал» под правилом: только после интервала, закрытого
+ *  обычным временем, без маркеров и без перехода через полночь. У интервала с
+ *  маркером второго не бывает (правило схемы, `windowsProblem`'s `order`), у
+ *  ночного (`isNightRange`) — следующий начинался бы уже завтра, а не сегодня,
+ *  так что предлагать его тут, вторым интервалом ЭТОГО правила, нечего. */
+export function canAddRange(ranges: Range[]): boolean {
+  const last = ranges[ranges.length - 1]
+  if (!last || last.to === null || hasMarker(last)) return false
+  if (isNightRange(last)) return false
+  return isClock(last.from) && isClock(last.to) && nextWindowStart([{ from: last.from, to: last.to }]) !== null
+}
+
 function sortWindows(windows: Window[]): Window[] {
   return [...windows].sort((a, b) => {
     const start = (w: Window): number => (isClock(w.from) ? clockMinutes(w.from) : -1)
@@ -867,6 +879,52 @@ export function collapseWeek(week: WeekHours): HoursRule[] {
     rules.push({ days: [day], hours: value === 'allDay' ? { kind: 'allDay' } : { kind: 'windows', ranges: value } })
   }
   return rules
+}
+
+/**
+ * Неделя → правила для редактора, с тем отличием от `collapseWeek`, что
+ * НЕОТВЕЧЕННЫЙ день (ключа в `week` нет вовсе) остаётся неотвеченным и после
+ * прохода через правила, а не становится закрытым.
+ *
+ * `collapseWeek` кладёт в правило только дни, у которых есть `hours` — день
+ * без ключа в неделю правил не попадает никак, и `expandRules` затем читает
+ * его отсутствие как «нет правила → `none`» (закрыто). Это верно для
+ * `dayTexts`/выгрузки, где закрытое и неотвеченное и так печатаются
+ * по-разному через `week[day]?.kind`, но неверно для РЕДАКТОРА: у него нет
+ * своего способа отличить «оператор явно закрыл день» от «до дня очередь не
+ * дошла» — оба видны ему одинаково как «дня нет в правилах». Поэтому здесь
+ * неотвеченные дни собираются в хвостовое правило БЕЗ времени (`from: ''`) —
+ * тот же приём, что `emptyRule`: `expandRules` пропускает диапазон без
+ * времени и оставляет день неопределённым, а не `none`, и в редакторе он
+ * рисуется как обычное недописанное правило («Режим N: укажите время»), а не
+ * тихо утекает в состояние «закрыто», которое следующий `commit()` бы
+ * записал на сервер.
+ *
+ * Свежее поле (ни один день не отвечен) — особый случай: хвостовое правило
+ * было бы первым и единственным, то есть тем же самым, что и один общий
+ * пустой рэйс на все семь дней — так и возвращаем, без пустого списка
+ * обычных правил перед ним.
+ */
+export function rulesFromWeek(week: WeekHours): HoursRule[] {
+  const unanswered = WEEKDAYS.filter((day) => week[day] === undefined)
+  if (unanswered.length === WEEKDAYS.length) return [emptyRule([...WEEKDAYS])]
+
+  const rules = collapseWeek(week)
+  if (unanswered.length > 0) rules.push(emptyRule(unanswered))
+  return rules
+}
+
+/**
+ * Сериализация недели в каноническом порядке `WEEKDAYS`, для сравнения ПО
+ * ЗНАЧЕНИЮ, а не по тексту JSON: Postgres jsonb не хранит порядок ключей
+ * объекта, и `JSON.stringify` одной и той же недели, пришедшей из базы с
+ * другим порядком ключей, даёт другую строку. Отсутствующий день — `null`,
+ * чтобы неделя без ключа отличалась от недели с явным `undefined`-эквивалентом
+ * ровно одним значением, а не пропадала из массива и не сдвигала все
+ * остальные индексы.
+ */
+export function weekKey(week: unknown): string {
+  return JSON.stringify(WEEKDAYS.map((day) => (isPlainObject(week) ? (week as WeekHours)[day] ?? null : null)))
 }
 
 /** Нажатие дня в правиле `index`: если день там — снять; иначе — забрать у
