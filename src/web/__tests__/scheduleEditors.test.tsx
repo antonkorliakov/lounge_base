@@ -79,6 +79,16 @@ describe('CleaningScheduleEditor', () => {
   // периодичность целиком, так что у него «×» нет вовсе (тот же довод, что у
   // единственного правила в `HoursRulesEditor` — см. её тест «единственное
   // правило не убрать»).
+  // Critical review finding (Task 5): the same «24:00 can't be entered/shown»
+  // bug applies to cleaning intervals — the widget shows «00:00» plus the
+  // end-of-day caption for a raw stored window ending at midnight (cleaning
+  // writes `windows` directly, no `Range`/`collapseWeek` layer to lean on).
+  it('daily: окно «22:00–24:00» показывает «00:00» и подпись «до конца дня» (Critical, Task 5)', () => {
+    const html = renderCleaning({ cadence: 'daily', windows: [{ from: '22:00', to: '24:00' }] })
+    expect(html).toContain('value="00:00"')
+    expect(html).toContain(UI['schedule.endOfDay'].en)
+  })
+
   it('daily: два интервала — два «×», один интервал — ни одного', () => {
     const two = renderCleaning({
       cadence: 'daily',

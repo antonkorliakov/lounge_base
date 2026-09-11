@@ -315,6 +315,7 @@ export const UI = {
   'schedule.toLastFlight': { en: 'to last flight', ru: 'до последнего рейса' },
   'schedule.useTime': { en: 'Enter a time instead', ru: 'Указать время' },
   'schedule.nextDay': { en: 'until {to} the next day', ru: 'до {to} следующего дня' },
+  'schedule.endOfDay': { en: 'until the end of the day', ru: 'до конца дня' },
   'schedule.otherHours': { en: 'Other hours for some days', ru: 'Другие часы для части дней' },
   'schedule.ruleN': { en: 'Schedule {n}', ru: 'Режим {n}' },
   'schedule.weekSummary': { en: 'Week at a glance', ru: 'Итог на неделю' },

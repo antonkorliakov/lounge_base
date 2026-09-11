@@ -1,7 +1,7 @@
 'use client'
 
 import type React from 'react'
-import { FIRST_FLIGHT, LAST_FLIGHT, isNightRange, type HoursOptions, type Range } from '@/form-schema'
+import { END_OF_DAY, FIRST_FLIGHT, LAST_FLIGHT, isClock, isNightRange, type HoursOptions, type Range } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
 
 /**
@@ -19,6 +19,15 @@ import { useLocale } from '@/i18n/context'
  * просто негодный интервал, который `windowsProblem` отклонит с
  * `INVALID_CLEANING`, а не переход через полночь. Подпись, обещающая перенос,
  * которого не будет, здесь была бы ложью.
+ *
+ * Подпись «до конца дня» (Critical, Task 5) показана в ОБОИХ редакторах, `night`
+ * её не гасит: у графика уборки конец суток — законный ответ («уборка до
+ * полуночи»), не ночной перенос. Само поле `to` принимает и `'00:00'`
+ * (диапазон недельных часов, конвенция `Range` — см. `collapseWeek`), и
+ * буквальный `'24:00'` (`Window` графика уборки хранится без слоя `Range` и
+ * может нести `END_OF_DAY` напрямую, например из сида) — оба показаны как
+ * «00:00» в самом поле времени, единственном значении, которое
+ * `<input type="time">` способен принять, и подписаны одинаково.
  */
 export function RangeEditor(props: {
   range: Range
@@ -32,7 +41,11 @@ export function RangeEditor(props: {
   const night = props.night ?? true
 
   const bound = (key: 'from' | 'to', marker: string, word: string, orWord: string): React.JSX.Element => {
-    const value = range[key]
+    // `<input type="time">` не принимает «24:00» (браузер санитизирует его до
+    // пустого поля) — единственное значение, которое ему под силу показать
+    // для конца суток, это «00:00»; буквальный `END_OF_DAY`, где бы он ни
+    // пришёл (`Window` графика уборки), отображается тем же «00:00».
+    const value = key === 'to' && range[key] === END_OF_DAY ? '00:00' : range[key]
     if (value === marker) {
       return (
         <span className="hr-marker">
@@ -74,6 +87,15 @@ export function RangeEditor(props: {
       <span className="hr-prep">{t('schedule.to')}</span>
       {bound('to', LAST_FLIGHT, t('schedule.toLastFlight'), t('schedule.orLastFlight'))}
       {night && isNightRange(range) && range.to && <span className="hr-night">{t('schedule.nextDay').replace('{to}', range.to)}</span>}
+      {/* Не гасится `night`: конец суток — законный ответ у обоих
+          редакторов (см. WHY выше). `to === '00:00'` — конвенция `Range`
+          недельных часов, `to === END_OF_DAY` — буквальное хранение окна
+          графика уборки без слоя `Range`; оба читаются одинаково, и
+          `isNightRange` уже исключает первое из ночи, так что подписи не
+          пересекаются на одном диапазоне. */}
+      {(range.to === '00:00' || range.to === END_OF_DAY) && isClock(range.from) && (
+        <span className="hr-night">{t('schedule.endOfDay')}</span>
+      )}
     </span>
   )
 }

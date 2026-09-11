@@ -88,6 +88,22 @@ describe('HoursRulesEditor', () => {
     expect(render(undefined, OPEN)).toContain(UI['schedule.otherHours'].en)
   })
 
+  // Critical review finding (Task 5): стёртая неделя из хранилища
+  // («X–24:00») должна показать «00:00» в поле конца, не пустое поле
+  // (браузер санитизирует буквальный «24:00»), и подпись «до конца дня»,
+  // а не пропавшую без следа полночь.
+  it('стёртое окно «09:00–24:00» показывает «00:00» и подпись «до конца дня» (Critical, Task 5)', () => {
+    const html = render({ mon: { kind: 'windows', windows: [{ from: '09:00', to: '24:00' }] } }, OPEN)
+    expect(html).toContain('value="00:00"')
+    expect(html).toContain(UI['schedule.endOfDay'].en)
+  })
+
+  it('ночной диапазон показывает подпись «next day», а не «до конца дня» (Critical, Task 5)', () => {
+    const html = render(expandRules([rule([...W, ...E], '22:00', '02:00')]), OPEN)
+    expect(html).toContain(UI['schedule.nextDay'].en.replace('{to}', '02:00'))
+    expect(html).not.toContain(UI['schedule.endOfDay'].en)
+  })
+
   it('неотвеченный день хранимой недели остаётся неотвеченным, не закрытым (C2)', () => {
     const html = render({ mon: { kind: 'allDay' } }, OPEN)
     // Два правила: понедельник (24ч) отдельно, остальные шесть дней —

@@ -34,12 +34,15 @@ import {
   rulesFromWeek,
   weekKey,
   emptyRule,
+  isNightRange,
+  formatRange,
   type HoursOptions,
   type WeekHours,
   type DayHours,
   type Window,
   type Weekday,
   type HoursRule,
+  type Range,
 } from '../schedule'
 
 const OPEN: HoursOptions = { allDay: true, flightBounds: true, noneLabel: { en: 'Closed', ru: 'Закрыто' } }
@@ -485,6 +488,30 @@ describe('канонический текст недельных часов', ()
     expect(texts.sat).toBe('10:00–20:00')
     expect(texts.sun).toBe('Закрыто')
   })
+
+  // Critical review finding (Task 5): «до конца суток» печатается «24:00», а
+  // не внутренним «00:00» диапазона — итог под редактором и канонический
+  // текст читают его так же, как читали бы буквальный `to: END_OF_DAY`.
+  it('dayTexts недели формы сида («00:00–24:00») печатает «24:00», не «00:00»', () => {
+    const week = everyDay({ kind: 'windows', windows: [{ from: '00:00', to: END_OF_DAY }] })
+    expect(dayTexts(week, OPEN, 'en').mon).toBe('00:00–24:00')
+  })
+})
+
+describe('formatRange — конец суток печатается «24:00», не внутренним «00:00» (Critical, Task 5)', () => {
+  it('часовой from, «00:00» как to — печатается «24:00», без пометки «next day»', () => {
+    expect(formatRange({ from: '09:00', to: '00:00' }, 'en')).toBe('09:00–24:00')
+    expect(formatRange({ from: '09:00', to: '00:00' }, 'ru')).toBe('09:00–24:00')
+  })
+
+  it('полный день 00:00–00:00 — «00:00–24:00»', () => {
+    expect(formatRange({ from: '00:00', to: '00:00' }, 'en')).toBe('00:00–24:00')
+  })
+
+  it('настоящая ночь не тронута — печатается с пометкой, как раньше', () => {
+    const range: Range = { from: '22:00', to: '02:00' }
+    expect(formatRange(range, 'en')).toBe('22:00–02:00 (next day)')
+  })
 })
 
 describe('канонический текст графика уборки', () => {
@@ -566,6 +593,14 @@ describe('ячейки выгрузки', () => {
 
   it('неотвеченный день — пустая ячейка, а не прочерк: в файле пусто это пусто', () => {
     expect(weekHoursCells({ mon: { kind: 'none' } }, OPEN).tue).toBe(null)
+  })
+
+  // Critical review finding (Task 5): ячейка читает `Window.to` напрямую, не
+  // через диапазон редактора — «24:00» здесь и раньше печаталось верно,
+  // фиксируем как регресс-проверку, что правка `Range` его не задела.
+  it('ячейка недели формы сида («00:00–24:00») печатает «24:00» (не задета правкой Range)', () => {
+    const week = everyDay({ kind: 'windows', windows: [{ from: '00:00', to: END_OF_DAY }] })
+    expect(weekHoursCells(week, OPEN).mon).toBe('00:00–24:00')
   })
 
   it('уборка: ежедневная заполняет все семь дней', () => {
@@ -676,6 +711,25 @@ describe('границы «первый / последний рейс»', () => 
   })
 })
 
+// Critical review finding (Task 5): `<input type="time">` не может держать
+// «24:00» — единственное значение `to`, которым оператор мог бы выразить
+// «до конца суток», раз он набирает его сам. Правило (принято): `to: '00:00'`
+// при часовом `from` значит «конец ЭТИХ суток», а не ночь через полночь — это
+// касается и полного дня `00:00–00:00` (полночь-в-полночь).
+describe('isNightRange — полночь как конец суток не ночь (Critical, Task 5)', () => {
+  it('часовой from, to «00:00» — конец суток, не ночь', () => {
+    expect(isNightRange({ from: '09:00', to: '00:00' })).toBe(false)
+  })
+
+  it('полный день 00:00–00:00 — тоже не ночь', () => {
+    expect(isNightRange({ from: '00:00', to: '00:00' })).toBe(false)
+  })
+
+  it('настоящая ночь через полночь — не тронута', () => {
+    expect(isNightRange({ from: '22:00', to: '02:00' })).toBe(true)
+  })
+})
+
 describe('expandRules — правила ложатся в дни', () => {
   it('№1: будни и выходные', () => {
     const week = expandRules([rule(W, '09:00', '21:00'), rule(E, '10:00', '20:00')])
@@ -733,6 +787,33 @@ describe('expandRules — правила ложатся в дни', () => {
     const week = expandRules([rule(['mon'], '22:00', '02:00'), rule(['tue'], '09:00', '18:00')])
     expect(week.tue).toEqual({ kind: 'windows', windows: [{ from: '00:00', to: '02:00' }, { from: '09:00', to: '18:00' }] })
   })
+
+  // Critical review finding (Task 5): `to: '00:00'` — конец ЭТИХ суток, без
+  // хвоста на завтра. Раньше `isNightRange` считала это ночью и `expandRules`
+  // раскладывала на «09:00–24:00» сегодня плюс пустой хвост «00:00–00:00»
+  // завтра, который `windowsProblem` отвергал правилом order — неделя не
+  // сохранялась ровно на том единственном значении, которым оператор мог
+  // выразить «до конца суток».
+  describe('«00:00» как конец интервала — конец суток, без хвоста (Critical, Task 5)', () => {
+    it('часовой from — один интервал до конца суток, никакого хвоста завтра', () => {
+      const week = expandRules([rule(WEEKDAYS, '09:00', '00:00')])
+      expect(week.mon).toEqual({ kind: 'windows', windows: [{ from: '09:00', to: END_OF_DAY }] })
+      expect(week.tue).toEqual({ kind: 'windows', windows: [{ from: '09:00', to: END_OF_DAY }] })
+      expect((week.tue as { kind: 'windows'; windows: Window[] }).windows).toHaveLength(1) // нет хвоста «00:00–…»
+      expect(weekHoursProblem(week, OPEN)).toBe(null)
+    })
+
+    it('полный день 00:00–00:00 — целые сутки, не отказ', () => {
+      const week = expandRules([rule(WEEKDAYS, '00:00', '00:00')])
+      expect(week.mon).toEqual({ kind: 'windows', windows: [{ from: '00:00', to: END_OF_DAY }] })
+      expect(weekHoursProblem(week, OPEN)).toBe(null)
+    })
+
+    it('обычное равенство from и to (не полночь) — отказ order по-прежнему', () => {
+      const week = expandRules([rule(WEEKDAYS, '09:00', '09:00')])
+      expect(weekHoursProblem(week, OPEN)).toBe('order')
+    })
+  })
 })
 
 describe('collapseWeek — дни собираются в правила', () => {
@@ -760,16 +841,46 @@ describe('collapseWeek — дни собираются в правила', () =>
     const week: WeekHours = { mon: { kind: 'windows', windows: [{ from: '20:00', to: END_OF_DAY }] }, tue: { kind: 'windows', windows: [{ from: '00:00', to: END_OF_DAY }] } }
     const rules = collapseWeek(week)
     // Под мутантом вторник исчезал из списка, а понедельник читался тем же —
-    // проверять надо весь список, а не один день.
+    // проверять надо весь список, а не один день. `to: END_OF_DAY`, не
+    // впитавший хвост при слиянии, становится РЕДАКТИРУЕМЫМ `to: '00:00'`
+    // (Critical, Task 5) — единственное представление, которое
+    // `<input type="time">` способен показать; у обоих дней здесь его и нет.
     expect(rules).toEqual([
-      { days: ['mon'], hours: { kind: 'windows', ranges: [{ from: '20:00', to: END_OF_DAY }] } },
-      { days: ['tue'], hours: { kind: 'windows', ranges: [{ from: '00:00', to: END_OF_DAY }] } },
+      { days: ['mon'], hours: { kind: 'windows', ranges: [{ from: '20:00', to: '00:00' }] } },
+      { days: ['tue'], hours: { kind: 'windows', ranges: [{ from: '00:00', to: '00:00' }] } },
     ])
   })
 
   it('дни none и неотвеченные в правила не попадают', () => {
     expect(collapseWeek({ mon: { kind: 'none' }, tue: { kind: 'allDay' } })).toEqual([{ days: ['tue'], hours: { kind: 'allDay' } }])
     expect(collapseWeek({})).toEqual([])
+  })
+
+  // Critical review finding (Task 5) — «Read»: неделя из сида хранит
+  // `X–24:00`; без этой ветки диапазон вышел бы `{ from: X, to: END_OF_DAY }`,
+  // который `<input type="time">` показал бы ПУСТЫМ (браузер санитизирует
+  // «24:00» до ничего), хотя итог под редактором и так печатает «24:00».
+  it('окно до конца суток, не впитавшее хвост, — редактируемый диапазон «Y–00:00»', () => {
+    expect(collapseWeek({ mon: { kind: 'windows', windows: [{ from: '09:00', to: END_OF_DAY }] } })).toEqual([
+      { days: ['mon'], hours: { kind: 'windows', ranges: [{ from: '09:00', to: '00:00' }] } },
+    ])
+  })
+
+  // Ночная фикстура №2 (пары «Y–X» через полночь) продолжает склеивать хвост
+  // как раньше — правка выше касается только окон, у которых хвоста НЕ было.
+  it('ночная фикстура №2 всё ещё склеивается в «02:00–01:00» (склейка хвоста не тронута)', () => {
+    const week = expandRules([rule(W, '02:00', '01:00'), rule(E, '05:00', '01:00')])
+    expect(collapseWeek(week)).toEqual([rule(W, '02:00', '01:00'), rule(E, '05:00', '01:00')])
+  })
+
+  // Раунд-трип на форме сида (`scripts/seed-dev.ts`): будни «00:00–24:00»,
+  // выходные «03:00–24:00» — оба переживают collapse → expand без изменений.
+  it('раунд-трип: неделя «до конца суток» формы сида переживает collapse → expand', () => {
+    const week: WeekHours = {
+      ...(Object.fromEntries(W.map((d) => [d, { kind: 'windows' as const, windows: [{ from: '00:00', to: END_OF_DAY }] }])) as WeekHours),
+      ...(Object.fromEntries(E.map((d) => [d, { kind: 'windows' as const, windows: [{ from: '03:00', to: END_OF_DAY }] }])) as WeekHours),
+    }
+    expect(expandRules(collapseWeek(week))).toEqual(week)
   })
 })
 
@@ -818,6 +929,13 @@ describe('canAddRange — второй интервал правила (C1)', ()
 
   it('интервал до конца суток — день занят до конца, добавлять некуда', () => {
     expect(canAddRange([{ from: '03:00', to: '24:00' }])).toBe(false)
+  })
+
+  // Critical review finding (Task 5): `to: '00:00'` — единственная форма
+  // «до конца суток», которую `<input type="time">` способен показать —
+  // должна занимать день так же, как раньше это делал буквальный `'24:00'`.
+  it('интервал до конца суток, введённый как «00:00» — день занят до конца, добавлять некуда', () => {
+    expect(canAddRange([{ from: '09:00', to: '00:00' }])).toBe(false)
   })
 })
 

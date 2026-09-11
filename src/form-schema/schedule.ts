@@ -422,10 +422,19 @@ function isLegacyText(value: unknown): value is string {
 const NEXT_DAY: Localized = { en: 'next day', ru: 'след. дня' }
 
 /** Один диапазон правила — как его вводил оператор: ночь одной записью с
- *  пометкой, маркеры словами, пустое начало — прочерк. */
+ *  пометкой, маркеры словами, пустое начало — прочерк.
+ *
+ *  `to === '00:00'` при часовом `from` печатается как `END_OF_DAY` («24:00») —
+ *  внутреннее представление диапазона (единственное, которое понимает
+ *  `<input type="time">`) не имеет права утечь читателю: сохранённая неделя и
+ *  так хранит настоящее «24:00» (`expandRules`), и текст обязан читаться
+ *  одинаково независимо от того, пришло ли значение из формы или прямо из
+ *  базы. Без пометки «(next day)» — это не ночь, `isNightRange` уже вернула
+ *  бы `false` для такого диапазона. */
 export function formatRange(range: Range, locale: 'en' | 'ru'): string {
   if (range.from === '') return UNANSWERED
-  const text = formatWindow({ from: range.from, to: range.to }, locale)
+  const to = range.to === '00:00' && isClock(range.from) ? END_OF_DAY : range.to
+  const text = formatWindow({ from: range.from, to }, locale)
   return isNightRange(range) ? `${text} (${NEXT_DAY[locale]})` : text
 }
 
@@ -695,8 +704,16 @@ export function previousDay(day: Weekday): Weekday {
   return WEEKDAYS[(WEEKDAYS.indexOf(day) + 6) % 7]!
 }
 
-/** Ночной диапазон: оба конца — времена и конец меньше начала («02:00–01:00»). */
+/** Ночной диапазон: оба конца — времена и конец меньше начала («02:00–01:00»).
+ *
+ *  `to === '00:00'` — НИКОГДА ночь, каким бы ни было `from` (в том числе
+ *  «00:00–00:00»): полночь как конец — это конец СЕГОДНЯШНИХ суток
+ *  (`END_OF_DAY`, единственное представление, которое `<input type="time">`
+ *  не может набрать напрямую), а не начало следующего дня. Ночной хвост,
+ *  который получился бы по общей формуле («00:00–00:00» завтра), был бы
+ *  пустым интервалом длиной в ноль минут — не диапазон, а испорченная форма. */
 export function isNightRange(range: Range): boolean {
+  if (range.to === '00:00') return false
   return isClock(range.from) && range.to !== null && isClock(range.to) && clockMinutes(range.to) < clockMinutes(range.from)
 }
 
@@ -709,6 +726,12 @@ export function canAddRange(ranges: Range[]): boolean {
   const last = ranges[ranges.length - 1]
   if (!last || last.to === null || hasMarker(last)) return false
   if (isNightRange(last)) return false
+  // Конец суток (`to === '00:00'`, см. `isNightRange`) — день занят до конца,
+  // как и буквальный `END_OF_DAY`; без этой ветки `nextWindowStart` не узнал
+  // бы '00:00' как конец суток (это делает только сравнение с `END_OF_DAY`)
+  // и предложил бы «00:00» началом второго интервала — тот час же отверг бы
+  // `windowsProblem` правилом order.
+  if (last.to === '00:00') return false
   return isClock(last.from) && isClock(last.to) && nextWindowStart([{ from: last.from, to: last.to }]) !== null
 }
 
@@ -743,6 +766,19 @@ export function expandRules(rules: HoursRule[]): WeekHours {
         if (isNightRange(range)) {
           windows.push({ from: range.from, to: END_OF_DAY })
           ;(tails[nextDay(day)] ??= []).push({ from: '00:00', to: range.to })
+        } else if (range.to === '00:00' && isClock(range.from)) {
+          // Полночь как конец — конец ЭТИХ суток (см. `isNightRange`), не
+          // хвост на завтра: одно окно `from–END_OF_DAY`, ничего в `tails`.
+          // Ветка стоит перед общим случаем, а не заменяет его: маркерные
+          // границы (`FIRST_FLIGHT`) сюда не попадают — `isClock(range.from)`
+          // ложно для них, и они уходят в `else` как раньше.
+          //
+          // Обычное равенство `to === from` (не полночь, например
+          // «09:00–09:00») сюда не попадает — `range.to` не `'00:00'` — и
+          // остаётся в `else` ниже как окно нулевой длины, которое
+          // `windowsProblem` отклонит по правилу `order`; это и держит тест
+          // «09:00–09:00» как отказ, пока «00:00–00:00» стал целыми сутками.
+          windows.push({ from: range.from, to: END_OF_DAY })
         } else {
           windows.push({ from: range.from, to: range.to })
         }
@@ -795,6 +831,22 @@ export function collapseWeek(week: WeekHours): HoursRule[] {
     prev[headIndex] = { from: prev[headIndex]!.from, to: tail.to }
     list.splice(tailIndex, 1)
     if (list.length === 0) delete ranges[day]
+  }
+
+  // Окно `Y–END_OF_DAY`, которое НЕ впитало хвост в проходе выше (значит, у
+  // предыдущего дня либо нет своего окна с `00:00`, либо это законный полный
+  // день «00:00–END_OF_DAY» — предыдущий проход его в кандидаты на хвост не
+  // берёт вовсе), становится редактируемым диапазоном `{ from: Y, to: '00:00'
+  // }` — единственным представлением, которое `<input type="time">` способно
+  // показать (Critical, Task 5). `formatRange`/`isNightRange` знают про этот
+  // диапазон и печатают/читают его как конец суток, а не как испорченную
+  // полночь.
+  for (const day of WEEKDAYS) {
+    const list = ranges[day]
+    if (!Array.isArray(list)) continue
+    for (let i = 0; i < list.length; i += 1) {
+      if (list[i]!.to === END_OF_DAY) list[i] = { from: list[i]!.from, to: '00:00' }
+    }
   }
 
   const rules: HoursRule[] = []
