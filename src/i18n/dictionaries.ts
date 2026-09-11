@@ -312,6 +312,33 @@ export const UI = {
   // отправка отказала), чтобы не тащить состояние отправки внутрь редактора.
   'schedule.dayUnanswered': { en: 'Not answered', ru: 'Не отвечено' },
   'schedule.windowUnfinished': { en: 'Not finished', ru: 'Не закончено' },
+  // Полоска дней редактора правил (Task 4) показывает короткую подпись на
+  // каждом чипе. `schedule.day.*` (полные названия) для этого не годятся:
+  // `.slice(0, 2)` от «Понедельник» даёт «По», а не «Пн» — первые две буквы
+  // русского названия не совпадают с привычным сокращением. Короткие ключи
+  // отдельные от полных: полное имя остаётся в `aria-label` чипа.
+  'schedule.dayShort.mon': { en: 'Mon', ru: 'Пн' },
+  'schedule.dayShort.tue': { en: 'Tue', ru: 'Вт' },
+  'schedule.dayShort.wed': { en: 'Wed', ru: 'Ср' },
+  'schedule.dayShort.thu': { en: 'Thu', ru: 'Чт' },
+  'schedule.dayShort.fri': { en: 'Fri', ru: 'Пт' },
+  'schedule.dayShort.sat': { en: 'Sat', ru: 'Сб' },
+  'schedule.dayShort.sun': { en: 'Sun', ru: 'Вс' },
+  'schedule.orFirstFlight': { en: 'or first flight', ru: 'или первый рейс' },
+  'schedule.orLastFlight': { en: 'or last flight', ru: 'или последний рейс' },
+  'schedule.fromFirstFlight': { en: 'from first flight', ru: 'с первого рейса' },
+  'schedule.toLastFlight': { en: 'to last flight', ru: 'до последнего рейса' },
+  'schedule.useTime': { en: 'Enter a time instead', ru: 'Указать время' },
+  'schedule.nextDay': { en: 'until {to} the next day', ru: 'до {to} следующего дня' },
+  'schedule.otherHours': { en: 'Other hours for some days', ru: 'Другие часы для части дней' },
+  'schedule.ruleN': { en: 'Schedule {n}', ru: 'Режим {n}' },
+  'schedule.weekSummary': { en: 'Week at a glance', ru: 'Итог на неделю' },
+  'schedule.change': { en: 'change', ru: 'изменить' },
+  'schedule.rulePickDays': { en: 'Schedule {n}: pick the days', ru: 'Режим {n}: выберите дни' },
+  'schedule.ruleSetTime': { en: 'Schedule {n}: set the time', ru: 'Режим {n}: укажите время' },
+  'schedule.allDayShort': { en: '24h', ru: '24ч' },
+  'schedule.removeRule': { en: 'Remove this schedule', ru: 'Убрать режим' },
+  'schedule.addRange': { en: 'Add an interval', ru: 'Добавить интервал' },
 } as const satisfies Record<string, Localized>
 
 export type UiKey = keyof typeof UI

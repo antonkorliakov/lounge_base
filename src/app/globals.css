@@ -359,12 +359,45 @@ body {
   .wh-states button { flex: 1 1 0; }
 }
 
+/* Редактор часов правилами. Полоска дней — сегментный ряд компактных чипов
+   (тот же aria-pressed-стиль, что у .chip-row, через общее правило выше).
+   Ссылки-действия («или первый рейс», «изменить», «другие часы») — текстовые,
+   а не кнопки: действие второго плана не должно спорить весом с полями
+   времени. */
+.hr { display: flex; flex-direction: column; gap: 10px; }
+.hr-rule { padding: 8px 0; border-top: 1px solid #e4e6ea; }
+.hr-rule:first-of-type { border-top: none; padding-top: 0; }
+.hr-name { font-size: 12px; opacity: .6; margin: 0 0 6px; }
+.hr-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.hr-days { gap: 3px; }
+.hr-days button { width: 34px; height: 34px; min-width: 0; padding: 0; font-size: 13px; border-radius: 6px; }
+.hr-range { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.hr-prep { font-size: 14px; opacity: .7; text-transform: lowercase; }
+.hr-bound, .hr-marker { display: inline-flex; align-items: center; gap: 4px; }
+.hr-range input[type='time'] { width: auto; min-width: 7rem; min-height: 36px; padding: 6px 8px; }
+.hr-link { border: none; background: none; min-height: 0; padding: 0 2px; font-size: 13px; color: #2563eb; text-decoration: underline; cursor: pointer; }
+.hr-chip { min-height: 34px; padding: 0 10px; font-size: 13px; border-radius: 6px; }
+.hr-x { width: 34px; min-height: 34px; min-width: 0; padding: 0; font-size: 16px; opacity: .7; }
+.hr-night { flex-basis: 100%; font-size: 13px; opacity: .7; }
+.hr-add { align-self: flex-start; font-size: 14px; }
+.hr-sum { margin-top: 6px; padding-top: 10px; border-top: 1px solid #d3d1c7; }
+.hr-sum-title { font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+.hr-sum-row { display: grid; grid-template-columns: 7.5rem 1fr auto; gap: 6px 12px; font-size: 14px; padding: 2px 0; }
+.hr-sum-day { opacity: .7; }
+.hr-sum-closed { opacity: .55; }
+.hr-legacy { border: 1px dashed #e4e6ea; border-radius: 8px; padding: 8px 10px; }
+.hr-legacy-value { margin: 0; white-space: pre-wrap; }
+@media (max-width: 640px) {
+  .hr-sum-row { grid-template-columns: 5.5rem 1fr auto; }
+}
+
 /* Нажатое состояние — ОДНО правило на оба aria-pressed-контрола формы (пара
    Да|Нет и чипы), а не вторая копия тех же трёх строк: акцент, рамка и белый
    текст — общий визуальный язык (тот же #2563eb, что у .shell-primary и
    сегментов прогресса; ~4.5:1, работает и в тёмной теме — см. пару выше). */
 .avail-toggle button[aria-pressed='true'],
-.chip-row button[aria-pressed='true'] {
+.chip-row button[aria-pressed='true'],
+.hr-chip[aria-pressed='true'] {
   background: #2563eb;
   border-color: #2563eb;
   color: #fff;
@@ -1128,7 +1161,8 @@ button:disabled { opacity: .4; }
      aria-pressed controls (the Yes|No pair and the multi_select chips),
      mirroring the shared light-mode rule. */
   .avail-toggle button[aria-pressed='true'],
-  .chip-row button[aria-pressed='true'] {
+  .chip-row button[aria-pressed='true'],
+  .hr-chip[aria-pressed='true'] {
     background: #2563eb;
     border-color: #2563eb;
     color: #fff;
@@ -1137,6 +1171,14 @@ button:disabled { opacity: .4; }
   .fix-card { border-color: #2a2d34; }
   .wh-row { border-top-color: #2a2d34; }
   .wh-legacy { border-color: #2a2d34; }
+  /* Тот же приём, что у .wh-row/.wh-legacy выше — редактор часов правилами
+     переиспользует эти рамки под своими классами. Цвет ссылки — тот же
+     светлый синий, что уже держит .review-back на тёмном фоне (насыщенный
+     #2563eb тонет на тёмной странице). */
+  .hr-rule { border-top-color: #2a2d34; }
+  .hr-sum { border-top-color: #444441; }
+  .hr-legacy { border-color: #2a2d34; }
+  .hr-link { color: #7ab3ff; }
   /* Тот же довод, что у пастельных фонов экрана проверки ниже: светлая
      подложка .fix-unmatched на тёмной странице стала бы светлым пятном с
      нечитаемым тёмно-красным текстом. */
