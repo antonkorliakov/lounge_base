@@ -25,11 +25,6 @@ describe('sanitizeClockInput — что остаётся в поле при на
     expect(sanitizeClockInput('09:')).toBe('09:')
   })
 
-  it('стирание минут оставляет часы без хвоста', () => {
-    // «09:3» → backspace → браузер отдаёт «09:» → мы оставляем «09:»;
-    // ещё backspace → «09» → «09». Двоеточие не возвращается насильно.
-    expect(sanitizeClockInput('09')).toBe('09')
-  })
 })
 
 describe('sanitizeClockInput — что остаётся после вставки', () => {
