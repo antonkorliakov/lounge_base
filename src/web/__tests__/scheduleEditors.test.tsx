@@ -233,7 +233,11 @@ function renderRange(range: { from: string; to: string | null }): string {
 describe('RangeEditor: поле времени', () => {
   it('текстовое, с цифровой клавиатурой, без автозаполнения, с подсказкой формата', () => {
     const html = renderRange({ from: '', to: null })
-    expect(html).not.toContain('type="time"')
+    // Родной контрол остался только скрытой точкой под кнопкой-часиками:
+    // не в табе, без имени для диктора, ровно один на границу.
+    expect(html.match(/type="time"/g)).toHaveLength(2)
+    expect(html.match(/tabindex="-1"/g)).toHaveLength(2)
+    expect(html.match(new RegExp(`aria-label="${UI['schedule.pickTime'].en}"`, 'g'))).toHaveLength(2)
     expect(html.match(/type="text"/g)).toHaveLength(2)
     expect(html.match(/inputMode="numeric"/g)).toHaveLength(2)
     expect(html.match(/autoComplete="off"/g)).toHaveLength(2)

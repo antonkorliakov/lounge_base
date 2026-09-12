@@ -77,6 +77,7 @@ export function RangeEditor(props: {
           value={typeof value === 'string' ? value : ''}
           label={t(key === 'from' ? 'schedule.from' : 'schedule.to')}
           placeholder={t('schedule.clockPlaceholder')}
+          pickLabel={t('schedule.pickTime')}
           onCommit={(next) => onChange({ ...range, [key]: key === 'from' ? (next ?? '') : next })}
         />
         {props.options.flightBounds && (

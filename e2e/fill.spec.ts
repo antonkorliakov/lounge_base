@@ -574,6 +574,14 @@ test('поле времени текстом: вставка « 09.00 », выд
   await expect(from).toHaveValue('10:00')
   await expect(summaryRow('Monday')).toContainText('10:00–21:00')
 
+  // Кнопка-часики открывает родной выбор времени через скрытый
+  // <input type="time">; сам всплывающий список Playwright не откроет, но
+  // путь «значение из родного контрола → текстовое поле → расписание»
+  // проверяется записью в него напрямую.
+  await rule.locator('input.hr-clock-native').first().fill('07:15')
+  await expect(from).toHaveValue('07:15')
+  await expect(summaryRow('Monday')).toContainText('07:15–21:00')
+
   // Негодное время: подсвечено, границы в расписании нет, черновик жив.
   await to.fill('25:00')
   await expect(to).toHaveAttribute('aria-invalid', 'true')
@@ -582,10 +590,10 @@ test('поле времени текстом: вставка « 09.00 », выд
   await expect(to).toHaveValue('25:00')
   await expect(to).toHaveAttribute('aria-invalid', 'true')
 
-  // Перезагрузка: сервер держит «с 10:00», конца нет — поле «до» пустое.
+  // Перезагрузка: сервер держит «с 07:15» (последнее годное, из родного контрола), конца нет — поле «до» пустое.
   await page.reload()
   await clickNext(page, 2)
-  await expect(hours.locator('.hr-rule').nth(0).getByLabel('From', { exact: true })).toHaveValue('10:00')
+  await expect(hours.locator('.hr-rule').nth(0).getByLabel('From', { exact: true })).toHaveValue('07:15')
   await expect(hours.locator('.hr-rule').nth(0).getByLabel('To', { exact: true })).toHaveValue('')
 })
 

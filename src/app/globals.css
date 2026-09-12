@@ -365,6 +365,13 @@ body {
    дёргались. `.field input { width: 100% }` выше перекрывается по
    специфичности этим же селектором внутри .hr-range. */
 .hr-range .hr-clock { width: 5.5rem; min-height: 36px; padding: 6px 8px; font-variant-numeric: tabular-nums; }
+/* Поле + кнопка-часики + скрытый родной контрол — один узел. Родной
+   `<input type="time">` не display:none (иначе showPicker() отказывает в
+   части браузеров), а точка в 1px без событий мыши под кнопкой: всплывающий
+   список Chrome якорится на неё, то есть рядом с кнопкой. */
+.hr-clock-wrap { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+.hr-range .hr-pick { min-height: 36px; min-width: 36px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; color: #2563eb; }
+.hr-range .hr-clock-native { position: absolute; right: 0; bottom: 0; width: 1px; height: 1px; min-height: 0; padding: 0; border: 0; opacity: 0; pointer-events: none; }
 /* Незаконченное или негодное время: красная рамка вместо текста ошибки —
    подсказка «укажите время» под редактором уже говорит словами. */
 .hr-range .hr-clock[aria-invalid='true'] { border-color: #b91c1c; }
@@ -1169,6 +1176,7 @@ button:disabled { opacity: .4; }
   .hr-legacy { border-color: #2a2d34; }
   .hr-link { color: #7ab3ff; }
   .hr-marker { border-color: #2a2d34; }
+  .hr-range .hr-pick { color: #7ab3ff; }
   .hr-range .hr-clock[aria-invalid='true'] { border-color: #fca5a5; }
   /* Тот же довод, что у пастельных фонов экрана проверки ниже: светлая
      подложка .fix-unmatched на тёмной странице стала бы светлым пятном с
