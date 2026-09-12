@@ -270,6 +270,9 @@ export const UI = {
   'schedule.removeWindow': { en: 'Remove interval', ru: 'Убрать интервал' },
   'schedule.from': { en: 'From', ru: 'С' },
   'schedule.to': { en: 'To', ru: 'До' },
+  // Подсказка формата в поле времени: текстовое поле с маской (Anton,
+  // 2026-09-12: у <input type="time"> нельзя ни вставить, ни выделить всё).
+  'schedule.clockPlaceholder': { en: 'HH:MM', ru: 'ЧЧ:ММ' },
   'schedule.cadence': { en: 'How often', ru: 'Как часто' },
   'schedule.nth': { en: 'Which one', ru: 'Какой по счёту' },
   'schedule.weekday': { en: 'Day of week', ru: 'День недели' },

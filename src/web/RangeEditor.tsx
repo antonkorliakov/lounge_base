@@ -3,10 +3,12 @@
 import type React from 'react'
 import { END_OF_DAY, FIRST_FLIGHT, LAST_FLIGHT, isNightRange, rangeToWindow, type HoursOptions, type Range } from '@/form-schema'
 import { useLocale } from '@/i18n/context'
+import { ClockInput } from './ClockInput'
 
 /**
- * Одна пара границ «с … до …». Граница — либо `<input type="time">`, либо
- * слово-маркер («с первого рейса») с возвратом к времени. Ссылка «или
+ * Одна пара границ «с … до …». Граница — либо текстовое поле времени
+ * (`ClockInput`, маска ЧЧ:ММ), либо слово-маркер («с первого рейса») с
+ * возвратом к времени. Ссылка «или
  * первый рейс» стоит ПОСЛЕ поля времени и только где поле её допускает
  * (`options.flightBounds`): у пиковых часов рейсов нет.
  *
@@ -64,14 +66,14 @@ export function RangeEditor(props: {
     }
     return (
       <span className="hr-bound">
-        <input
+        <ClockInput
           id={`${props.id}-${key}`}
-          ref={key === 'from' ? props.fromRef : undefined}
-          type="time"
-          step={300}
-          aria-label={t(key === 'from' ? 'schedule.from' : 'schedule.to')}
+          inputRef={key === 'from' ? props.fromRef : undefined}
+          bound={key}
           value={typeof value === 'string' ? value : ''}
-          onChange={(e) => onChange({ ...range, [key]: key === 'to' && e.target.value === '' ? null : e.target.value })}
+          label={t(key === 'from' ? 'schedule.from' : 'schedule.to')}
+          placeholder={t('schedule.clockPlaceholder')}
+          onCommit={(next) => onChange({ ...range, [key]: key === 'from' ? (next ?? '') : next })}
         />
         {props.options.flightBounds && (
           <button type="button" className="hr-link" onClick={() => onChange({ ...range, [key]: marker })}>

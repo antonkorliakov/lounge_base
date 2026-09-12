@@ -66,7 +66,7 @@ describe('HoursRulesEditor', () => {
     const html = render(expandRules([rule([...W, ...E], FIRST_FLIGHT, LAST_FLIGHT)]), OPEN)
     expect(html).toContain(UI['schedule.fromFirstFlight'].en)
     expect(html).toContain(UI['schedule.toLastFlight'].en)
-    expect(html).not.toContain('type="time"')
+    expect(html).not.toContain('class="hr-clock"')
     expect(html.match(new RegExp(UI['schedule.useTime'].en, 'g'))).toHaveLength(2)
   })
 

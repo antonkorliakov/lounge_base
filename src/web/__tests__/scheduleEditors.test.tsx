@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { fieldByKey } from '@/form-schema'
+import { fieldByKey, type HoursOptions } from '@/form-schema'
 import { LocaleProvider } from '@/i18n/context'
 import { UI } from '@/i18n/dictionaries'
 import { FieldInput } from '../FieldInput'
 import { CleaningScheduleEditor } from '../CleaningScheduleEditor'
+import { RangeEditor } from '../RangeEditor'
 
 /**
  * Расписания в том виде, в каком их видит оператор. Среда node, DOM нет —
@@ -204,5 +205,51 @@ describe('FieldInput отдаёт расписания своим редакто
     )
     expect(html).toContain('class="fix-comment"')
     expect(html).toContain('Check the schedule')
+  })
+})
+
+/**
+ * Поле времени — текстовое с маской, не `<input type="time">`: у браузерного
+ * контрола нельзя ни вставить «09:00», ни выделить всё (Anton, 2026-09-12).
+ * Здесь — разметка, которую видит оператор; поведение набора закреплено на
+ * чистых функциях (`clockInput.test.ts`) и сквозным сценарием
+ * (`e2e/fill.spec.ts`). Атрибуты проверяются в JSX-регистре
+ * (`inputMode`, `autoComplete`), как в fieldInputContact.test.tsx — так их
+ * отдаёт установленный react-dom/server.
+ */
+// `noneLabel` is required on `HoursOptions` (strict: no optional escape
+// hatch here) even though this suite never renders the "closed" state —
+// filled in to match the same OPEN pattern in hoursRulesEditor.test.tsx.
+const OPEN: HoursOptions = { allDay: true, flightBounds: true, noneLabel: { en: 'Closed', ru: 'Закрыто' } }
+
+function renderRange(range: { from: string; to: string | null }): string {
+  return renderToStaticMarkup(
+    <LocaleProvider initial="en">
+      <RangeEditor id="r" range={range} options={OPEN} onChange={() => {}} />
+    </LocaleProvider>,
+  )
+}
+
+describe('RangeEditor: поле времени', () => {
+  it('текстовое, с цифровой клавиатурой, без автозаполнения, с подсказкой формата', () => {
+    const html = renderRange({ from: '', to: null })
+    expect(html).not.toContain('type="time"')
+    expect(html.match(/type="text"/g)).toHaveLength(2)
+    expect(html.match(/inputMode="numeric"/g)).toHaveLength(2)
+    expect(html.match(/autoComplete="off"/g)).toHaveLength(2)
+    expect(html.match(/maxLength="5"/g)).toHaveLength(2)
+    expect(html.match(new RegExp(`placeholder="${UI['schedule.clockPlaceholder'].en}"`, 'g'))).toHaveLength(2)
+    expect(html.match(/class="hr-clock"/g)).toHaveLength(2)
+  })
+
+  it('заданное время показано как есть и не подсвечено', () => {
+    const html = renderRange({ from: '09:00', to: '00:00' })
+    expect(html).toContain('value="09:00"')
+    expect(html).toContain('value="00:00"')
+    expect(html).not.toContain('aria-invalid')
+  })
+
+  it('пустое поле не подсвечено: пусто — это «ещё не ответил», не ошибка', () => {
+    expect(renderRange({ from: '', to: null })).not.toContain('aria-invalid')
   })
 })
