@@ -7,9 +7,12 @@ import { ClockInput } from './ClockInput'
 
 /**
  * Одна пара границ «с … до …». Граница — либо текстовое поле времени
- * (`ClockInput`, маска ЧЧ:ММ), либо слово-маркер («с первого рейса») с
- * возвратом к времени. Ссылка «или первый рейс» стоит ПОСЛЕ поля времени и
- * только где поле её допускает (`options.flightBounds`): у пиковых часов
+ * (`ClockInput`, маска ЧЧ:ММ), либо слово-маркер («первого рейса») в такой же
+ * рамке, с возвратом к времени. Оба состояния — «рамка + ссылка справа»: у
+ * времени ссылка «или первый рейс», у маркера — «или время». Одинаковая
+ * форма нужна, чтобы строка не меняла ширину при переключении и чип «24h»
+ * не перескакивал на другую строку (Anton, 2026-09-13). Ссылка стоит ПОСЛЕ
+ * поля времени и только где поле её допускает (`options.flightBounds`): у пиковых часов
  * рейсов нет.
  *
  * Правил тут нет: ночной диапазон распознаёт `isNightRange`, разбивает по
@@ -52,15 +55,10 @@ export function RangeEditor(props: {
     const value = range[key]
     if (value === marker) {
       return (
-        <span className="hr-marker">
-          {word}
-          <button
-            type="button"
-            className="hr-link"
-            aria-label={t('schedule.useTime')}
-            onClick={() => onChange({ ...range, [key]: key === 'from' ? '' : null })}
-          >
-            ×
+        <span className="hr-bound">
+          <span className="hr-marker">{word}</span>
+          <button type="button" className="hr-link" onClick={() => onChange({ ...range, [key]: key === 'from' ? '' : null })}>
+            {t('schedule.useTime')}
           </button>
         </span>
       )
@@ -87,10 +85,16 @@ export function RangeEditor(props: {
 
   return (
     <span className="hr-range">
-      <span className="hr-prep">{t('schedule.from')}</span>
-      {bound('from', FIRST_FLIGHT, t('schedule.fromFirstFlight'), t('schedule.orFirstFlight'))}
-      <span className="hr-prep">{t('schedule.to')}</span>
-      {bound('to', LAST_FLIGHT, t('schedule.toLastFlight'), t('schedule.orLastFlight'))}
+      {/* Предлог и его граница — один неразрывный узел: при переносе на узком
+          экране «до» не остаётся висеть в конце строки отдельно от рамки. */}
+      <span className="hr-part">
+        <span className="hr-prep">{t('schedule.from')}</span>
+        {bound('from', FIRST_FLIGHT, t('schedule.fromFirstFlight'), t('schedule.orFirstFlight'))}
+      </span>
+      <span className="hr-part">
+        <span className="hr-prep">{t('schedule.to')}</span>
+        {bound('to', LAST_FLIGHT, t('schedule.toLastFlight'), t('schedule.orLastFlight'))}
+      </span>
       {night && isNightRange(range) && range.to && <span className="hr-night">{t('schedule.nextDay').replace('{to}', range.to)}</span>}
       {/* Не гасится `night`: конец суток — законный ответ у обоих
           редакторов (см. WHY выше). `rangeToWindow` — единственное место,

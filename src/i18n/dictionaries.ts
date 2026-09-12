@@ -309,9 +309,14 @@ export const UI = {
   'schedule.dayShort.sun': { en: 'Sun', ru: 'Вс' },
   'schedule.orFirstFlight': { en: 'or first flight', ru: 'или первый рейс' },
   'schedule.orLastFlight': { en: 'or last flight', ru: 'или последний рейс' },
-  'schedule.fromFirstFlight': { en: 'from first flight', ru: 'с первого рейса' },
-  'schedule.toLastFlight': { en: 'to last flight', ru: 'до последнего рейса' },
-  'schedule.useTime': { en: 'Enter a time instead', ru: 'Указать время' },
+  // Слово-маркер в рамке границы БЕЗ предлога: предлог («from»/«с») уже
+  // стоит в строке перед рамкой, иначе читалось «from from first flight»
+  // (Anton, 2026-09-13).
+  'schedule.fromFirstFlight': { en: 'first flight', ru: 'первого рейса' },
+  'schedule.toLastFlight': { en: 'last flight', ru: 'последнего рейса' },
+  // Возврат к времени — ссылка на том же месте, где стояла «или первый рейс»:
+  // строка не меняет ширину при переключении, ничего не прыгает.
+  'schedule.useTime': { en: 'or a time', ru: 'или время' },
   'schedule.nextDay': { en: 'until {to} the next day', ru: 'до {to} следующего дня' },
   'schedule.endOfDay': { en: 'until the end of the day', ru: 'до конца дня' },
   'schedule.otherHours': { en: 'Other hours for some days', ru: 'Другие часы для части дней' },

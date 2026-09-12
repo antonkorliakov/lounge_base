@@ -471,7 +471,7 @@ test('расписание правилами: время на все дни, «
 
   // Выходные: с первого рейса до 23:00.
   await rules.nth(1).getByRole('button', { name: 'or first flight' }).click()
-  await expect(rules.nth(1).getByText('from first flight')).toBeVisible()
+  await expect(rules.nth(1).getByText('first flight', { exact: true })).toBeVisible()
   await rules.nth(1).getByLabel('To', { exact: true }).fill('23:00')
   await expect(page.getByText('Saved')).toBeVisible()
   await expect(summaryRow('Saturday')).toContainText('first flight–23:00')

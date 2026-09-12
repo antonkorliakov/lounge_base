@@ -347,10 +347,19 @@ body {
 .hr-name { font-size: 12px; opacity: .6; margin: 0 0 6px; }
 .hr-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .hr-days { gap: 3px; }
+/* Дни — всегда своей строкой, часы — строкой ниже. Иначе перенос зависел от
+   ширины содержимого: рамка «первого рейса» уже поля времени, и при
+   переключении часы перескакивали к дням, а «24h» — на следующую строку
+   (Anton, 2026-09-13). */
+.hr-row > .hr-days { flex-basis: 100%; }
 .hr-days button { width: 34px; height: 34px; min-width: 0; padding: 0; font-size: 13px; border-radius: 6px; }
 .hr-range { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .hr-prep { font-size: 14px; opacity: .7; text-transform: lowercase; }
-.hr-bound, .hr-marker { display: inline-flex; align-items: center; gap: 4px; }
+.hr-part, .hr-bound { display: inline-flex; align-items: center; gap: 4px; }
+.hr-part { gap: 6px; }
+/* Маркер «первого рейса» — в той же рамке и той же высоты, что поле времени:
+   переключение время ↔ рейс не меняет форму строки. */
+.hr-marker { display: inline-flex; align-items: center; min-height: 36px; min-width: 5.5rem; padding: 6px 8px; border: 1px solid #c9ced6; border-radius: 8px; font-size: 14px; white-space: nowrap; }
 /* Текстовое поле времени: под пять знаков «ЧЧ:ММ» плюс отступы; табличные
    цифры — чтобы «11:11» и «00:00» были одной ширины и колонки правил не
    дёргались. `.field input { width: 100% }` выше перекрывается по
@@ -1159,6 +1168,7 @@ button:disabled { opacity: .4; }
   .hr-sum { border-top-color: #444441; }
   .hr-legacy { border-color: #2a2d34; }
   .hr-link { color: #7ab3ff; }
+  .hr-marker { border-color: #2a2d34; }
   .hr-range .hr-clock[aria-invalid='true'] { border-color: #fca5a5; }
   /* Тот же довод, что у пастельных фонов экрана проверки ниже: светлая
      подложка .fix-unmatched на тёмной странице стала бы светлым пятном с
