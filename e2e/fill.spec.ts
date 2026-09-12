@@ -533,7 +533,7 @@ test('расписание правилами: ночной график вво�
  * расписание не попадает. Правила формата закреплены юнитами
  * (`clockInput.test.ts`); здесь — что они доходят до оператора и до сервера.
  */
-test('поле времени текстом: вставка «9.00», выделить всё и перепечатать, «21» → «21:00» на blur, «25:00» подсвечено и не сохраняется', async ({ page }) => {
+test('поле времени текстом: вставка « 09.00 », выделить всё и перепечатать, «21» → «21:00» на blur, «25:00» подсвечено и не сохраняется', async ({ page }) => {
   const url = seed()
   await page.goto(url)
   await clickNext(page, 2)
@@ -543,16 +543,26 @@ test('поле времени текстом: вставка «9.00», выде�
   const to = rule.getByLabel('To', { exact: true })
   const summaryRow = (day: string) => hours.locator('.hr-sum-row').filter({ hasText: day })
 
-  // Вставка «9.00» → «09:00» сразу, без blur.
-  await from.fill('9.00')
+  // Вставка « 09.00 » (семь символов — больше старого предела в пять,
+  // проверяет, что `maxLength` не вернулся: с ним браузер обрезал бы вставку
+  // ДО `onChange`, и в поле попало бы «09.0» — обрезка снимает настоящую
+  // цифру минут, а не только хвостовой пробел, так что "09:00" не получилось
+  // бы даже после санитайзера). Заодно проверяет вставку через точку.
+  await from.fill(' 09.00 ')
   await expect(from).toHaveValue('09:00')
 
   // «21» + Tab → «21:00»: часы без минут достраиваются при уходе из поля.
+  // Подсказка ищется внутри `hours` (не голым `page`), иначе тот же текст
+  // совпал бы с подсказкой Peak Hours на этом же шаге — её второе поле
+  // `weekHours` тоже пустое (Important, whole-branch fix wave, Finding 2).
   await to.fill('21')
   await expect(to).toHaveAttribute('aria-invalid', 'true')
-  await expect(page.getByText('Schedule 1: set the time')).toBeVisible()
+  await expect(hours.getByText('Schedule 1: set the time')).toBeVisible()
   await to.press('Tab')
   await expect(to).toHaveValue('21:00')
+  // Подсказка гаснет вместе с валидным «до» (пин на Finding 2 — раньше
+  // `noTime` не смотрел на `to` вовсе и молчала бы, даже будь он негодным).
+  await expect(hours.getByText('Schedule 1: set the time')).toHaveCount(0)
   await expect(to).not.toHaveAttribute('aria-invalid', 'true')
   await expect(page.getByText('Saved')).toBeVisible()
   await expect(summaryRow('Monday')).toContainText('09:00–21:00')
@@ -567,7 +577,7 @@ test('поле времени текстом: вставка «9.00», выде�
   // Негодное время: подсвечено, границы в расписании нет, черновик жив.
   await to.fill('25:00')
   await expect(to).toHaveAttribute('aria-invalid', 'true')
-  await expect(page.getByText('Schedule 1: set the time')).toBeVisible()
+  await expect(hours.getByText('Schedule 1: set the time')).toBeVisible()
   await to.press('Tab')
   await expect(to).toHaveValue('25:00')
   await expect(to).toHaveAttribute('aria-invalid', 'true')

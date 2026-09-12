@@ -46,7 +46,10 @@ export function ClockInput(props: {
       type="text"
       inputMode="numeric"
       autoComplete="off"
-      maxLength={5}
+      // Нет `maxLength`: браузер обрезал бы вставку ДО того, как её увидит
+      // `onChange` (' 21:00 ' → '21:0' при maxLength=5) — `sanitizeClockInput`
+      // уже сама режет лишнее, отдельный предел на длину только мешает
+      // вставке (Important, whole-branch fix wave, Finding 1).
       placeholder={props.placeholder}
       aria-label={props.label}
       aria-invalid={invalid || undefined}

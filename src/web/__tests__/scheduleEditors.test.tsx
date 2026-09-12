@@ -237,7 +237,9 @@ describe('RangeEditor: поле времени', () => {
     expect(html.match(/type="text"/g)).toHaveLength(2)
     expect(html.match(/inputMode="numeric"/g)).toHaveLength(2)
     expect(html.match(/autoComplete="off"/g)).toHaveLength(2)
-    expect(html.match(/maxLength="5"/g)).toHaveLength(2)
+    // No `maxLength`: the browser would truncate a paste before the
+    // sanitizer ever sees it (Important, whole-branch fix wave, Finding 1).
+    expect(html).not.toContain('maxLength')
     expect(html.match(new RegExp(`placeholder="${UI['schedule.clockPlaceholder'].en}"`, 'g'))).toHaveLength(2)
     expect(html.match(/class="hr-clock"/g)).toHaveLength(2)
   })

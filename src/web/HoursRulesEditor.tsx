@@ -111,7 +111,12 @@ export function HoursRulesEditor(props: {
   const texts = dayTexts(week, options, locale)
 
   const incomplete = rules.findIndex((r) => r.days.length === 0)
-  const noTime = rules.findIndex((r) => r.hours.kind === 'windows' && r.hours.ranges.some((x) => x.from === ''))
+  // Обе границы: раньше здесь смотрели только на `from === ''` — правило
+  // с заданным началом и негодным/пустым концом (`to === null`) молчало,
+  // хотя граница так же не отвечена (Important, whole-branch fix wave,
+  // Finding 2). Текст подсказки один на оба конца — `schedule.ruleSetTime`
+  // не называет, какая граница не набрана, только что правило не готово.
+  const noTime = rules.findIndex((r) => r.hours.kind === 'windows' && r.hours.ranges.some((x) => x.from === '' || x.to === null))
   // I3: маркер, делящий день с чужим окном (обычно — ночной хвост
   // предыдущего дня), не сходится в правило независимо от того, как
   // оператор переставляет дни между правилами — сервер всё равно откажет

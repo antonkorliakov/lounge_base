@@ -108,6 +108,22 @@ describe('HoursRulesEditor', () => {
     expect(html).not.toContain(UI['schedule.endOfDay'].en)
   })
 
+  // Finding 2 (whole-branch fix wave): `noTime` раньше смотрел только на
+  // пустое «с» — правило с заданным началом и незаданным концом молчало,
+  // хотя граница так же не отвечена. Текст подсказки один на оба конца, имя
+  // границы в нём не называется — довод в `HoursRulesEditor.tsx` рядом с
+  // `noTime`. Break-verify: откат `noTime` к «только from === ''» роняет
+  // именно позитивный тест ниже.
+  it('заданное «с», не набранное «до» — подсказка «set the time» видна (Finding 2)', () => {
+    const html = render(expandRules([rule([...W, ...E], '09:00', null)]), OPEN)
+    expect(html).toContain(UI['schedule.ruleSetTime'].en.replace('{n}', '1'))
+  })
+
+  it('обе границы заданы — подсказки «set the time» нет (Finding 2)', () => {
+    const html = render(expandRules([rule([...W, ...E], '09:00', '21:00')]), OPEN)
+    expect(html).not.toContain(UI['schedule.ruleSetTime'].en.replace('{n}', '1'))
+  })
+
   it('неотвеченный день хранимой недели остаётся неотвеченным, не закрытым (C2)', () => {
     const html = render({ mon: { kind: 'allDay' } }, OPEN)
     // Два правила: понедельник (24ч) отдельно, остальные шесть дней —
