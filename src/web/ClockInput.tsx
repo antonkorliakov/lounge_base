@@ -1,12 +1,7 @@
-"use client";
+'use client'
 
-import { useEffect, useRef, useState, type JSX, type Ref } from "react";
-import {
-  completeClockInput,
-  parseClockInput,
-  sanitizeClockInput,
-  type ClockBound,
-} from "@/form-schema";
+import { useEffect, useRef, useState, type JSX, type Ref } from 'react'
+import { completeClockInput, parseClockInput, sanitizeClockInput, type ClockBound } from '@/form-schema'
 
 /**
  * Текстовое поле времени с маской «ЧЧ:ММ». Заменяет `<input type="time">`:
@@ -34,44 +29,45 @@ import {
  * имени для диктора — граница одна, у неё одно имя (текстовое поле).
  */
 export function ClockInput(props: {
-  value: string;
-  bound: ClockBound;
-  onCommit: (value: string | null) => void;
-  id: string;
-  label: string;
-  placeholder: string;
+  value: string
+  bound: ClockBound
+  onCommit: (value: string | null) => void
+  id: string
+  label: string
+  placeholder: string
   /** Имя кнопки-часиков для диктора («Выбрать время»). */
-  pickLabel: string;
-  inputRef?: Ref<HTMLInputElement>;
+  pickLabel: string
+  inputRef?: Ref<HTMLInputElement>
 }): JSX.Element {
-  const [text, setText] = useState(props.value);
-  const focused = useRef(false);
-  const picker = useRef<HTMLInputElement>(null);
+  const [text, setText] = useState(props.value)
+  const focused = useRef(false)
+  const picker = useRef<HTMLInputElement>(null)
 
   const accept = (raw: string): void => {
-    const next = sanitizeClockInput(raw);
-    setText(next);
-    props.onCommit(parseClockInput(next, props.bound));
-  };
+    const next = sanitizeClockInput(raw)
+    setText(next)
+    props.onCommit(parseClockInput(next, props.bound))
+  }
 
   const openPicker = (): void => {
-    const el = picker.current;
-    if (!el) return;
-    // `showPicker` есть в Chrome 99+, Safari 16+, Firefox 101+; где его нет
-    // или он отказывает (нужен жест пользователя — он тут есть), остаётся
-    // фокус на скрытом поле: на телефоне и это открывает барабаны.
+    // `showPicker` есть в Chrome 99+, Safari 16+, Firefox 101+ и требует
+    // жеста пользователя — он тут есть (клик по кнопке). Где метода нет или
+    // он отказал, кнопка просто ничего не делает: переводить фокус на
+    // скрытый `aria-hidden` контрол нельзя (диктор потеряет фокус), а
+    // текстовое поле рядом остаётся полноценным способом ввода.
     try {
-      el.showPicker();
+      picker.current?.showPicker()
     } catch {
-      el.focus();
+      /* см. выше */
     }
-  };
+  }
 
   useEffect(() => {
-    if (!focused.current) setText(props.value);
-  }, [props.value]);
+    if (!focused.current) setText(props.value)
+  }, [props.value])
 
-  const invalid = text !== "" && parseClockInput(text, props.bound) === null;
+  const parsed = parseClockInput(text, props.bound)
+  const invalid = text !== '' && parsed === null
 
   return (
     <span className="hr-clock-wrap">
@@ -91,26 +87,21 @@ export function ClockInput(props: {
         aria-invalid={invalid || undefined}
         value={text}
         onFocus={() => {
-          focused.current = true;
+          focused.current = true
         }}
         onChange={(e) => accept(e.target.value)}
         onBlur={() => {
-          focused.current = false;
-          const completed = completeClockInput(text);
-          const parsed = parseClockInput(completed, props.bound);
-          if (parsed === null) return;
-          setText(parsed);
+          focused.current = false
+          const completed = completeClockInput(text)
+          const parsed = parseClockInput(completed, props.bound)
+          if (parsed === null) return
+          setText(parsed)
           // Достроенное («9» → «09:00») наверх ещё не уходило; уже годное
           // («24:00» → «00:00») ушло на onChange, повторять его незачем.
-          if (completed !== text) props.onCommit(parsed);
+          if (completed !== text) props.onCommit(parsed)
         }}
       />
-      <button
-        type="button"
-        className="hr-pick"
-        aria-label={props.pickLabel}
-        onClick={openPicker}
-      >
+      <button type="button" className="hr-pick" aria-label={props.pickLabel} onClick={openPicker}>
         <svg
           width="18"
           height="18"
@@ -126,17 +117,19 @@ export function ClockInput(props: {
         </svg>
       </button>
       {/* Родной контрол живёт скрытым: видимое поле — текст, а это лишь то,
-        что `showPicker()` раскрывает. Значение — последнее годное время,
-        чтобы барабаны открывались на нём, а не на 00:00. */}
+        что `showPicker()` раскрывает. Значение — последнее годное время в
+        том виде, что лежит в `Range` (набранное «24:00» → «00:00»: голое
+        «24:00» родной контрол не примет), чтобы барабаны открывались на
+        нём, а не на 00:00. */}
       <input
         ref={picker}
         className="hr-clock-native"
         type="time"
         tabIndex={-1}
         aria-hidden="true"
-        value={parseClockInput(text, props.bound) === null ? "" : text}
+        value={parsed ?? ''}
         onChange={(e) => accept(e.target.value)}
       />
     </span>
-  );
+  )
 }
