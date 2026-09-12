@@ -84,6 +84,14 @@ describe('HoursRulesEditor', () => {
     expect(html.match(new RegExp(`>${UI['schedule.removeRange'].en}<`, 'g'))).toHaveLength(2)
   })
 
+  it('маркер в правиле с двумя интервалами показан словом, без переключателя: значение не прячется', () => {
+    const mixed = { days: [...W, ...E], hours: { kind: 'windows' as const, ranges: [{ from: FIRST_FLIGHT, to: '12:00' }, { from: '14:00', to: '20:00' }] } }
+    const html = render(expandRules([mixed]), OPEN)
+    expect(html.match(/class="hr-int"/g)).toHaveLength(2)
+    expect(html).toContain(`class="hr-static">${UI['schedule.firstFlight'].en}<`)
+    expect(html).not.toContain(`aria-pressed="true">${UI['schedule.firstFlight'].en}<`)
+  })
+
   it('ночной диапазон подписан «до … следующего дня»', () => {
     const html = render(expandRules([rule([...W, ...E], '02:00', '01:00')]), OPEN)
     expect(html).toContain(UI['schedule.nextDay'].en.replace('{to}', '01:00'))

@@ -166,7 +166,7 @@ export function HoursRulesEditor(props: {
                 «По часам» раскрывает интервалы. Пиковые часы и уборка режима
                 не имеют (`options.allDay` false) — у них сразу интервалы. */}
             {options.allDay && (
-              <span className="hr-seg hr-mode" role="group">
+              <span className="hr-seg hr-mode" role="group" aria-label={name}>
                 <button type="button" aria-pressed={rule.hours.kind === 'allDay'} onClick={() => rule.hours.kind !== 'allDay' && setRule(i, { ...rule, hours: { kind: 'allDay' } })}>
                   {t('schedule.allDayMode')}
                 </button>
@@ -185,7 +185,14 @@ export function HoursRulesEditor(props: {
                     {ranges.length > 1 && (
                       <div className="hr-int-head">
                         <p className="hr-int-name">{t('schedule.intervalN').replace('{n}', String(k + 1))}</p>
-                        <button type="button" className="hr-link" onClick={() => setRanges(ranges.filter((_, m) => m !== k))}>
+                        {/* Как у «изменить» в итоге (I5): несколько ссылок «убрать»
+                            с одним именем неразличимы для диктора — имя несёт номер. */}
+                        <button
+                          type="button"
+                          className="hr-link"
+                          aria-label={`${t('schedule.removeRange')} — ${t('schedule.intervalN').replace('{n}', String(k + 1))}`}
+                          onClick={() => setRanges(ranges.filter((_, m) => m !== k))}
+                        >
                           {t('schedule.removeRange')}
                         </button>
                       </div>

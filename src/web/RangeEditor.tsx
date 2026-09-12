@@ -52,12 +52,19 @@ export function RangeEditor(props: {
     // «Не задано» у двух границ пишется по-разному — так было и до этого
     // редактора: `from: ''`, `to: null` (`Range`).
     const unset = key === 'from' ? '' : null
+    const label = t(key === 'from' ? 'schedule.from' : 'schedule.to')
     return (
       <div className="hr-col">
-        <p className="hr-col-label">{t(key === 'from' ? 'schedule.from' : 'schedule.to')}</p>
+        <p className="hr-col-label">{label}</p>
         <div className="hr-col-row">
+          {/* Маркер без переключателя — например, у дня с двумя окнами, одно из
+              которых рейс (старые данные, до правила «рейсы только у
+              единственного интервала»): значение должно быть ВИДНО, иначе
+              колонка пуста, а сервер отказывает непонятно чему. Сменить его
+              здесь нельзя — только убрать интервал. */}
+          {!props.options.flightBounds && isMarker && <span className="hr-static">{markerWord}</span>}
           {props.options.flightBounds && (
-            <span className="hr-seg" role="group">
+            <span className="hr-seg" role="group" aria-label={`${label} — ${t('schedule.timeMode')} / ${markerWord}`}>
               <button type="button" aria-pressed={!isMarker} onClick={() => isMarker && onChange({ ...range, [key]: unset })}>
                 {t('schedule.timeMode')}
               </button>

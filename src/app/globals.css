@@ -366,6 +366,7 @@ body {
 .hr-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px 16px; }
 .hr-col-label { font-size: 13px; opacity: .7; margin: 0 0 6px; }
 .hr-col-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.hr-static { min-height: 36px; display: inline-flex; align-items: center; font-size: 14px; }
 .hr-note { margin: 6px 0 0; font-size: 13px; opacity: .7; }
 .hr-add-int { font-size: 14px; }
 .hr-range .hr-clock { width: 5.5rem; min-height: 36px; padding: 6px 8px; font-variant-numeric: tabular-nums; }
