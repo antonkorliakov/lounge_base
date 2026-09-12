@@ -470,16 +470,17 @@ test('расписание правилами: время на все дни, «
   await expect(rules.nth(0).getByRole('button', { name: 'Sunday' })).toHaveAttribute('aria-pressed', 'false')
 
   // Выходные: с первого рейса до 23:00.
-  await rules.nth(1).getByRole('button', { name: 'or first flight' }).click()
-  await expect(rules.nth(1).getByText('first flight', { exact: true })).toBeVisible()
+  await rules.nth(1).getByRole('button', { name: 'First flight' }).click()
+  await expect(rules.nth(1).getByRole('button', { name: 'First flight' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(rules.nth(1).getByLabel('From', { exact: true })).toHaveCount(0)
   await rules.nth(1).getByLabel('To', { exact: true }).fill('23:00')
   await expect(page.getByText('Saved')).toBeVisible()
   await expect(summaryRow('Saturday')).toContainText('first flight–23:00')
 
   // Пиковые: ни «24h», ни рейсов (`hoursOptions.allDay`/`flightBounds` — оба false у III.1.3).
   const peak = page.locator('.field').filter({ hasText: 'Peak Hours' })
-  await expect(peak.getByRole('button', { name: '24h' })).toHaveCount(0)
-  await expect(peak.getByRole('button', { name: 'or first flight' })).toHaveCount(0)
+  await expect(peak.getByRole('button', { name: 'Open 24 hours' })).toHaveCount(0)
+  await expect(peak.getByRole('button', { name: 'First flight' })).toHaveCount(0)
 
   // Перезагрузка: два правила и тот же итог пришли с сервера.
   await page.reload()

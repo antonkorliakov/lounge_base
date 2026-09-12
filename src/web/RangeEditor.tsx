@@ -6,14 +6,12 @@ import { useLocale } from '@/i18n/context'
 import { ClockInput } from './ClockInput'
 
 /**
- * Одна пара границ «с … до …». Граница — либо текстовое поле времени
- * (`ClockInput`, маска ЧЧ:ММ), либо слово-маркер («первого рейса») в такой же
- * рамке, с возвратом к времени. Оба состояния — «рамка + ссылка справа»: у
- * времени ссылка «или первый рейс», у маркера — «или время». Одинаковая
- * форма нужна, чтобы строка не меняла ширину при переключении и чип «24h»
- * не перескакивал на другую строку (Anton, 2026-09-13). Ссылка стоит ПОСЛЕ
- * поля времени и только где поле её допускает (`options.flightBounds`): у пиковых часов
- * рейсов нет.
+ * Одна пара границ «с … до …» — две колонки, у каждой подпись и ряд
+ * управления. Где поле допускает рейсы (`options.flightBounds`), ряд
+ * начинается переключателем «Время | Первый рейс» (или «Последний рейс»):
+ * нажатая кнопка и есть ответ, при рейсе поле времени не рисуется вовсе —
+ * подпись рядом дублировала бы кнопку (Anton, 2026-09-13, макет). Где рейсов
+ * нет (пиковые часы, уборка), остаётся одно поле времени (`ClockInput`).
  *
  * Правил тут нет: ночной диапазон распознаёт `isNightRange`, разбивает по
  * суткам `expandRules`; компонент лишь подписывает его оператору.
@@ -25,16 +23,13 @@ import { ClockInput } from './ClockInput'
  * `INVALID_CLEANING`, а не переход через полночь. Подпись, обещающая перенос,
  * которого не будет, здесь была бы ложью.
  *
- * Подпись «до конца дня» (Critical, Task 5) показана в ОБОИХ редакторах, `night`
- * её не гасит: у графика уборки конец суток — законный ответ («уборка до
- * полуночи»), не ночной перенос. `rangeToWindow` (I1, сквозное ревью:
- * единственное место, решающее «что значит "00:00" как конец») отвечает и на
- * этот вопрос — само поле `to` в `Range` всегда `'00:00'`, а не буквальный
- * `END_OF_DAY`: оба писателя (`expandRules` и уборка) отдают сюда диапазон
- * уже через `windowToRange`, так что `ClockInput` показывает ровно то, что
- * лежит в `Range` — набранный оператором «24:00» `parseClockInput` переводит
- * в «00:00» ещё до того, как он попадёт в `Range`, так что буквальный
- * `'24:00'` здесь проверять незачем.
+ * Подпись «до конца дня» показана в ОБОИХ редакторах, `night` её не гасит:
+ * у графика уборки конец суток — законный ответ («уборка до полуночи»), не
+ * ночной перенос. `rangeToWindow` (I1: единственное место, решающее «что
+ * значит "00:00" как конец») отвечает и на этот вопрос — `Range.to` держит
+ * ровно одно представление конца суток, `'00:00'`, а не буквальный
+ * `END_OF_DAY`: набранное «24:00» `parseClockInput` переводит в него ещё до
+ * `Range`, так что отдельной проверки на `'24:00'` здесь нет.
  */
 export function RangeEditor(props: {
   range: Range
@@ -51,64 +46,55 @@ export function RangeEditor(props: {
   const { range, onChange } = props
   const night = props.night ?? true
 
-  const bound = (key: 'from' | 'to', marker: string, word: string, orWord: string): React.JSX.Element => {
+  const bound = (key: 'from' | 'to', marker: string, markerWord: string): React.JSX.Element => {
     const value = range[key]
-    if (value === marker) {
-      return (
-        <span className="hr-bound">
-          <span className="hr-marker">{word}</span>
-          <button
-            type="button"
-            className="hr-link"
-            aria-label={t('schedule.useTimeLabel')}
-            onClick={() => onChange({ ...range, [key]: key === 'from' ? '' : null })}
-          >
-            {t('schedule.useTime')}
-          </button>
-        </span>
-      )
-    }
+    const isMarker = value === marker
+    // «Не задано» у двух границ пишется по-разному — так было и до этого
+    // редактора: `from: ''`, `to: null` (`Range`).
+    const unset = key === 'from' ? '' : null
     return (
-      <span className="hr-bound">
-        <ClockInput
-          id={`${props.id}-${key}`}
-          inputRef={key === 'from' ? props.fromRef : undefined}
-          bound={key}
-          value={typeof value === 'string' ? value : ''}
-          label={t(key === 'from' ? 'schedule.from' : 'schedule.to')}
-          placeholder={t('schedule.clockPlaceholder')}
-          pickLabel={t('schedule.pickTime')}
-          onCommit={(next) => onChange({ ...range, [key]: key === 'from' ? (next ?? '') : next })}
-        />
-        {props.options.flightBounds && (
-          <button type="button" className="hr-link" onClick={() => onChange({ ...range, [key]: marker })}>
-            {orWord}
-          </button>
-        )}
-      </span>
+      <div className="hr-col">
+        <p className="hr-col-label">{t(key === 'from' ? 'schedule.from' : 'schedule.to')}</p>
+        <div className="hr-col-row">
+          {props.options.flightBounds && (
+            <span className="hr-seg" role="group">
+              <button type="button" aria-pressed={!isMarker} onClick={() => isMarker && onChange({ ...range, [key]: unset })}>
+                {t('schedule.timeMode')}
+              </button>
+              <button type="button" aria-pressed={isMarker} onClick={() => !isMarker && onChange({ ...range, [key]: marker })}>
+                {markerWord}
+              </button>
+            </span>
+          )}
+          {!isMarker && (
+            <ClockInput
+              id={`${props.id}-${key}`}
+              inputRef={key === 'from' ? props.fromRef : undefined}
+              bound={key}
+              value={typeof value === 'string' ? value : ''}
+              label={t(key === 'from' ? 'schedule.from' : 'schedule.to')}
+              placeholder={t('schedule.clockPlaceholder')}
+              pickLabel={t('schedule.pickTime')}
+              onCommit={(next) => onChange({ ...range, [key]: key === 'from' ? (next ?? '') : next })}
+            />
+          )}
+        </div>
+      </div>
     )
   }
 
   return (
-    <span className="hr-range">
-      {/* Предлог и его граница — один неразрывный узел: при переносе на узком
-          экране «до» не остаётся висеть в конце строки отдельно от рамки. */}
-      <span className="hr-part">
-        <span className="hr-prep">{t('schedule.from')}</span>
-        {bound('from', FIRST_FLIGHT, t('schedule.fromFirstFlight'), t('schedule.orFirstFlight'))}
-      </span>
-      <span className="hr-part">
-        <span className="hr-prep">{t('schedule.to')}</span>
-        {bound('to', LAST_FLIGHT, t('schedule.toLastFlight'), t('schedule.orLastFlight'))}
-      </span>
-      {night && isNightRange(range) && range.to && <span className="hr-night">{t('schedule.nextDay').replace('{to}', range.to)}</span>}
+    <div className="hr-range">
+      <div className="hr-cols">
+        {bound('from', FIRST_FLIGHT, t('schedule.firstFlight'))}
+        {bound('to', LAST_FLIGHT, t('schedule.lastFlight'))}
+      </div>
+      {night && isNightRange(range) && range.to && <p className="hr-note">{t('schedule.nextDay').replace('{to}', range.to)}</p>}
       {/* Не гасится `night`: конец суток — законный ответ у обоих
           редакторов (см. WHY выше). `rangeToWindow` — единственное место,
-          решающее «до 00:00» ли это (I1, часовое ИЛИ маркерное начало
-          — маркер после I3/I1 тоже может значить «до конца суток»);
-          `isNightRange` уже исключает этот же диапазон из ночи, так что
-          подписи не пересекаются на одном диапазоне. */}
-      {rangeToWindow(range).to === END_OF_DAY && <span className="hr-night">{t('schedule.endOfDay')}</span>}
-    </span>
+          решающее «до 00:00» ли это (I1); `isNightRange` уже исключает этот
+          же диапазон из ночи, так что подписи не пересекаются. */}
+      {rangeToWindow(range).to === END_OF_DAY && <p className="hr-note">{t('schedule.endOfDay')}</p>}
+    </div>
   )
 }

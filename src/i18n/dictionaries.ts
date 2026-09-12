@@ -274,6 +274,18 @@ export const UI = {
   // 2026-09-12: у <input type="time"> нельзя ни вставить, ни выделить всё).
   'schedule.clockPlaceholder': { en: 'HH:MM', ru: 'ЧЧ:ММ' },
   'schedule.pickTime': { en: 'Pick a time', ru: 'Выбрать время' },
+  // Режим дня и границы — переключателями (Anton, 2026-09-13, макет):
+  // нажатая кнопка и есть ответ, подписи-дубли не нужны.
+  'schedule.allDayMode': { en: 'Open 24 hours', ru: 'Круглосуточно' },
+  'schedule.hoursMode': { en: 'Set hours', ru: 'По часам' },
+  'schedule.timeMode': { en: 'Time', ru: 'Время' },
+  'schedule.firstFlight': { en: 'First flight', ru: 'Первый рейс' },
+  'schedule.lastFlight': { en: 'Last flight', ru: 'Последний рейс' },
+  'schedule.intervalN': { en: 'Interval {n}', ru: 'Интервал {n}' },
+  'schedule.removeRange': { en: 'remove', ru: 'убрать' },
+  // Второй интервал у часов работы — это перерыв в дне; у графика уборки
+  // (`schedule.addRange`) интервалы просто перечисляются.
+  'schedule.addBreak': { en: 'Another interval (a break in the day)', ru: 'Ещё интервал (перерыв в течение дня)' },
   'schedule.cadence': { en: 'How often', ru: 'Как часто' },
   'schedule.nth': { en: 'Which one', ru: 'Какой по счёту' },
   'schedule.weekday': { en: 'Day of week', ru: 'День недели' },
@@ -308,18 +320,6 @@ export const UI = {
   'schedule.dayShort.fri': { en: 'Fri', ru: 'Пт' },
   'schedule.dayShort.sat': { en: 'Sat', ru: 'Сб' },
   'schedule.dayShort.sun': { en: 'Sun', ru: 'Вс' },
-  'schedule.orFirstFlight': { en: 'or first flight', ru: 'или первый рейс' },
-  'schedule.orLastFlight': { en: 'or last flight', ru: 'или последний рейс' },
-  // Слово-маркер в рамке границы БЕЗ предлога: предлог («from»/«с») уже
-  // стоит в строке перед рамкой, иначе читалось «from from first flight»
-  // (Anton, 2026-09-13).
-  'schedule.fromFirstFlight': { en: 'first flight', ru: 'первого рейса' },
-  'schedule.toLastFlight': { en: 'last flight', ru: 'последнего рейса' },
-  // Возврат к времени — ссылка на том же месте, где стояла «или первый рейс»:
-  // строка не меняет ширину при переключении, ничего не прыгает.
-  'schedule.useTime': { en: 'or a time', ru: 'или время' },
-  // Имя для экранного диктора: «или время» вне строки ничего не говорит.
-  'schedule.useTimeLabel': { en: 'Enter a time instead', ru: 'Указать время' },
   'schedule.nextDay': { en: 'until {to} the next day', ru: 'до {to} следующего дня' },
   'schedule.endOfDay': { en: 'until the end of the day', ru: 'до конца дня' },
   'schedule.otherHours': { en: 'Other hours for some days', ru: 'Другие часы для части дней' },
@@ -328,7 +328,6 @@ export const UI = {
   'schedule.change': { en: 'change', ru: 'изменить' },
   'schedule.rulePickDays': { en: 'Schedule {n}: pick the days', ru: 'Режим {n}: выберите дни' },
   'schedule.ruleSetTime': { en: 'Schedule {n}: set the time', ru: 'Режим {n}: укажите время' },
-  'schedule.allDayShort': { en: '24h', ru: '24ч' },
   'schedule.removeRule': { en: 'Remove this schedule', ru: 'Убрать режим' },
   'schedule.addRange': { en: 'Add an interval', ru: 'Добавить интервал' },
 } as const satisfies Record<string, Localized>

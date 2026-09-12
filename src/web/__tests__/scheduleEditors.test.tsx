@@ -57,8 +57,8 @@ describe('CleaningScheduleEditor', () => {
       days: { mon: week, tue: week, wed: week, thu: week, fri: week, sat: week, sun: { kind: 'none' as const } },
     })
     expect(html.match(/class="hr-rule"/g)).toHaveLength(1)
-    expect(html).not.toContain(UI['schedule.allDayShort'].en)
-    expect(html).not.toContain(UI['schedule.orFirstFlight'].en)
+    expect(html).not.toContain(UI['schedule.allDayMode'].en)
+    expect(html).not.toContain(UI['schedule.firstFlight'].en)
     expect(html).toContain('No cleaning')
   })
 
@@ -174,16 +174,16 @@ describe('FieldInput отдаёт расписания своим редакто
   it('III.1.1 — hr-rule с «24h» и «или первый рейс»', () => {
     const html = render('III.1.1', {})
     expect(html.match(/class="hr-rule"/g)).toHaveLength(1)
-    expect(html).toContain(UI['schedule.allDayShort'].en)
-    expect(html).toContain(UI['schedule.orFirstFlight'].en)
+    expect(html).toContain(UI['schedule.allDayMode'].en)
+    expect(html).toContain(UI['schedule.firstFlight'].en)
     expect(html).toContain('Lounge Operating Hours')
   })
 
   it('III.1.3 — тот же hr-rule, без «24h» и без «или первый рейс»', () => {
     const html = render('III.1.3', {})
     expect(html.match(/class="hr-rule"/g)).toHaveLength(1)
-    expect(html).not.toContain(UI['schedule.allDayShort'].en)
-    expect(html).not.toContain(UI['schedule.orFirstFlight'].en)
+    expect(html).not.toContain(UI['schedule.allDayMode'].en)
+    expect(html).not.toContain(UI['schedule.firstFlight'].en)
   })
 
   it('III.1.4 — редактор уборки: только что выбранная «Daily» видна нажатой, с «Add an interval»', () => {

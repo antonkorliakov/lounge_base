@@ -24,7 +24,9 @@ function render(value: unknown, options: HoursOptions): string {
     </LocaleProvider>,
   )
 }
-const pressed = (html: string) => (html.match(/aria-pressed="true"/g) ?? []).length
+// Только чипы дней: у них за `aria-pressed` идёт `aria-label` с полным именем
+// дня; переключатели режима и границ (`.hr-seg`) подписей не несут.
+const pressed = (html: string) => (html.match(/aria-pressed="true" aria-label="/g) ?? []).length
 
 describe('HoursRulesEditor', () => {
   it('пустое поле открывается одним правилом на все семь дней', () => {
@@ -57,17 +59,29 @@ describe('HoursRulesEditor', () => {
   })
 
   it('ссылки «или первый/последний рейс» только где поле их допускает', () => {
-    expect(render(undefined, OPEN)).toContain(UI['schedule.orFirstFlight'].en)
-    expect(render(undefined, PEAK)).not.toContain(UI['schedule.orFirstFlight'].en)
-    expect(render(undefined, PEAK)).not.toContain(UI['schedule.allDayShort'].en)
+    expect(render(undefined, OPEN)).toContain(UI['schedule.firstFlight'].en)
+    expect(render(undefined, OPEN)).toContain(UI['schedule.allDayMode'].en)
+    expect(render(undefined, PEAK)).not.toContain(UI['schedule.firstFlight'].en)
+    expect(render(undefined, PEAK)).not.toContain(UI['schedule.allDayMode'].en)
   })
 
   it('маркер показан словами с возвратом к времени, без поля времени', () => {
     const html = render(expandRules([rule([...W, ...E], FIRST_FLIGHT, LAST_FLIGHT)]), OPEN)
-    expect(html).toContain(UI['schedule.fromFirstFlight'].en)
-    expect(html).toContain(UI['schedule.toLastFlight'].en)
+    // Обе границы — рейсами: в каждом переключателе нажата кнопка рейса,
+    // кнопка «Время» отжата, поля времени не рисуются вовсе.
+    expect(html).toContain(`aria-pressed="true">${UI['schedule.firstFlight'].en}<`)
+    expect(html).toContain(`aria-pressed="true">${UI['schedule.lastFlight'].en}<`)
+    expect(html.match(new RegExp(`aria-pressed="false">${UI['schedule.timeMode'].en}<`, 'g'))).toHaveLength(2)
     expect(html).not.toContain('class="hr-clock"')
-    expect(html.match(new RegExp(UI['schedule.useTime'].en, 'g'))).toHaveLength(2)
+  })
+
+  it('при двух интервалах кнопок рейсов нет: маркерное окно должно быть единственным в дне', () => {
+    const two = { days: [...W, ...E], hours: { kind: 'windows' as const, ranges: [{ from: '09:00', to: '13:00' }, { from: '14:00', to: '20:00' }] } }
+    const html = render(expandRules([two]), OPEN)
+    expect(html.match(/class="hr-int"/g)).toHaveLength(2)
+    expect(html).not.toContain(UI['schedule.firstFlight'].en)
+    expect(html).toContain(UI['schedule.intervalN'].en.replace('{n}', '2'))
+    expect(html.match(new RegExp(`>${UI['schedule.removeRange'].en}<`, 'g'))).toHaveLength(2)
   })
 
   it('ночной диапазон подписан «до … следующего дня»', () => {
@@ -76,9 +90,9 @@ describe('HoursRulesEditor', () => {
   })
 
   it('«добавить интервал» показана только при заполненной паре времён без маркеров', () => {
-    expect(render(expandRules([rule([...W, ...E], '01:00', '11:00')]), OPEN)).toContain(UI['schedule.addRange'].en)
-    expect(render(expandRules([rule([...W, ...E], '09:00', null)]), OPEN)).not.toContain(UI['schedule.addRange'].en)
-    expect(render(expandRules([rule([...W, ...E], FIRST_FLIGHT, '23:00')]), OPEN)).not.toContain(UI['schedule.addRange'].en)
+    expect(render(expandRules([rule([...W, ...E], '01:00', '11:00')]), OPEN)).toContain(UI['schedule.addBreak'].en)
+    expect(render(expandRules([rule([...W, ...E], '09:00', null)]), OPEN)).not.toContain(UI['schedule.addBreak'].en)
+    expect(render(expandRules([rule([...W, ...E], FIRST_FLIGHT, '23:00')]), OPEN)).not.toContain(UI['schedule.addBreak'].en)
   })
 
   it('старый текстовый ответ показан с пометкой над обычным первым правилом', () => {

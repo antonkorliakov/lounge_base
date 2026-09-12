@@ -132,11 +132,22 @@ export function HoursRulesEditor(props: {
         </div>
       )}
 
-      {rules.map((rule, i) => (
-        <div className="hr-rule" key={i}>
-          <p className="hr-name">{t('schedule.ruleN').replace('{n}', String(i + 1))}</p>
-          <div className="hr-row">
-            <span className="chip-row hr-days" role="group" aria-label={t('schedule.ruleN').replace('{n}', String(i + 1))}>
+      {rules.map((rule, i) => {
+        const name = t('schedule.ruleN').replace('{n}', String(i + 1))
+        const ranges = rule.hours.kind === 'windows' ? rule.hours.ranges : []
+        const setRanges = (next: Range[]): void => setRule(i, { ...rule, hours: { kind: 'windows', ranges: next } })
+        return (
+          <div className="hr-rule" key={i}>
+            <div className="hr-head">
+              <p className="hr-name">{name}</p>
+              {rules.length > 1 && (
+                <button type="button" className="hr-x" aria-label={t('schedule.removeRule')} onClick={() => commit(rules.filter((_, k) => k !== i))}>
+                  ×
+                </button>
+              )}
+            </div>
+
+            <span className="chip-row hr-days" role="group" aria-label={name}>
               {WEEKDAYS.map((day) => (
                 <button
                   key={day}
@@ -150,62 +161,70 @@ export function HoursRulesEditor(props: {
               ))}
             </span>
 
-            {rule.hours.kind === 'windows' &&
-              rule.hours.ranges.map((range, k) => (
-                <RangeEditor
-                  key={k}
-                  id={`${props.idPrefix}-r${i}-${k}`}
-                  range={range}
-                  options={options}
-                  // Только последнее правило, только его первый диапазон —
-                  // именно туда переезжает фокус, когда список правил растёт
-                  // (I5, см. эффект выше).
-                  fromRef={i === rules.length - 1 && k === 0 ? lastFromInputRef : undefined}
-                  onChange={(next) => {
-                    const ranges = (rule.hours as { ranges: Range[] }).ranges.map((x, m) => (m === k ? next : x))
-                    setRule(i, { ...rule, hours: { kind: 'windows', ranges } })
-                  }}
-                />
-              ))}
-
+            {/* Режим дня — переключатель под днями, а не чип посреди строки
+                с часами (Anton, 2026-09-13): «Круглосуточно» — ответ целиком,
+                «По часам» раскрывает интервалы. Пиковые часы и уборка режима
+                не имеют (`options.allDay` false) — у них сразу интервалы. */}
             {options.allDay && (
-              <button
-                type="button"
-                className="hr-chip"
-                aria-pressed={rule.hours.kind === 'allDay'}
-                onClick={() =>
-                  setRule(i, {
-                    ...rule,
-                    hours: rule.hours.kind === 'allDay' ? { kind: 'windows', ranges: [{ from: '', to: null }] } : { kind: 'allDay' },
-                  })
-                }
-              >
-                {t('schedule.allDayShort')}
-              </button>
+              <span className="hr-seg hr-mode" role="group">
+                <button type="button" aria-pressed={rule.hours.kind === 'allDay'} onClick={() => rule.hours.kind !== 'allDay' && setRule(i, { ...rule, hours: { kind: 'allDay' } })}>
+                  {t('schedule.allDayMode')}
+                </button>
+                <button type="button" aria-pressed={rule.hours.kind === 'windows'} onClick={() => rule.hours.kind !== 'windows' && setRanges([{ from: '', to: null }])}>
+                  {t('schedule.hoursMode')}
+                </button>
+              </span>
             )}
 
-            {rule.hours.kind === 'windows' && canAddRange(rule.hours.ranges) && (
-              <button
-                type="button"
-                className="hr-link"
-                onClick={() => {
-                  const ranges = (rule.hours as { ranges: Range[] }).ranges
-                  const start = nextWindowStart(ranges.map((x) => ({ from: x.from, to: x.to })))
-                  if (start) setRule(i, { ...rule, hours: { kind: 'windows', ranges: [...ranges, { from: start, to: null }] } })
-                }}
-              >
-                {t('schedule.addRange')}
-              </button>
-            )}
-
-            {rules.length > 1 && (
-              <button type="button" className="hr-x" aria-label={t('schedule.removeRule')} onClick={() => commit(rules.filter((_, k) => k !== i))}>
-                ×
-              </button>
+            {rule.hours.kind === 'windows' && (
+              <div className="hr-ints">
+                {ranges.map((range, k) => (
+                  <div className="hr-int" key={k}>
+                    {/* Заголовок с «убрать» — только когда интервалов больше
+                        одного: единственный интервал убирать некуда. */}
+                    {ranges.length > 1 && (
+                      <div className="hr-int-head">
+                        <p className="hr-int-name">{t('schedule.intervalN').replace('{n}', String(k + 1))}</p>
+                        <button type="button" className="hr-link" onClick={() => setRanges(ranges.filter((_, m) => m !== k))}>
+                          {t('schedule.removeRange')}
+                        </button>
+                      </div>
+                    )}
+                    <RangeEditor
+                      id={`${props.idPrefix}-r${i}-${k}`}
+                      range={range}
+                      // Рейсы — только у единственного интервала: окно с маркером
+                      // должно быть единственным в своём дне (`windowsProblem`,
+                      // 'markerBeside'), так что при двух интервалах кнопки
+                      // «Первый/Последний рейс» вели бы к отказу сервера.
+                      // Зеркало `canAddRange`, которая не даёт добавить второй
+                      // интервал к маркерному.
+                      options={{ ...options, flightBounds: options.flightBounds && ranges.length === 1 }}
+                      // Только последнее правило, только его первый диапазон —
+                      // именно туда переезжает фокус, когда список правил растёт
+                      // (I5, см. эффект выше).
+                      fromRef={i === rules.length - 1 && k === 0 ? lastFromInputRef : undefined}
+                      onChange={(next) => setRanges(ranges.map((x, m) => (m === k ? next : x)))}
+                    />
+                  </div>
+                ))}
+                {canAddRange(ranges) && (
+                  <button
+                    type="button"
+                    className="hr-link hr-add-int"
+                    onClick={() => {
+                      const start = nextWindowStart(ranges.map((x) => ({ from: x.from, to: x.to })))
+                      if (start) setRanges([...ranges, { from: start, to: null }])
+                    }}
+                  >
+                    {t('schedule.addBreak')}
+                  </button>
+                )}
+              </div>
             )}
           </div>
-        </div>
-      ))}
+        )
+      })}
 
       <button type="button" className="hr-link hr-add" onClick={() => commit([...rules, emptyRule([])])}>
         {t('schedule.otherHours')}
