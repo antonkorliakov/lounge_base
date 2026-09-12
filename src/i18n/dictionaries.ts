@@ -262,11 +262,6 @@ export const UI = {
     en: 'This flagged answer cannot be edited on this screen. That is a bug on our side — please tell us, and mention the code below.',
     ru: 'Этот отмеченный ответ нельзя исправить на этом экране. Это ошибка на нашей стороне — сообщите нам и назовите код ниже.',
   },
-  // Текст диапазона в состоянии «круглосуточно» (`HoursRulesEditor`'s
-  // `hr-allday-text`) — единственный оставшийся читатель после Task 5: старая
-  // недельная сетка по дням, которая также показывала этот текст кнопкой
-  // состояния, удалена вместе с быстрыми действиями.
-  'schedule.allDay': { en: '24 hours', ru: '24 часа' },
   // «Убрать интервал» — aria-label «×» у одного окна графика уборки
   // (`CleaningScheduleEditor`, daily/monthly/quarterly): единственный
   // оставшийся читатель после Task 5 — старый редактор списка интервалов

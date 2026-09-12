@@ -162,7 +162,6 @@ export function HoursRulesEditor(props: {
                   }}
                 />
               ))}
-            {rule.hours.kind === 'allDay' && <span className="hr-allday-text">{t('schedule.allDay')}</span>}
 
             {options.allDay && (
               <button
