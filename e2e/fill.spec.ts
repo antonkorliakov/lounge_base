@@ -453,8 +453,8 @@ test('расписание правилами: время на все дни, «
 
   // Одно правило на все дни: ввёл время — итог заполнился на всю неделю.
   await expect(rules).toHaveCount(1)
-  await rules.nth(0).locator('input[type="time"]').nth(0).fill('09:00')
-  await rules.nth(0).locator('input[type="time"]').nth(1).fill('21:00')
+  await rules.nth(0).getByLabel('From', { exact: true }).fill('09:00')
+  await rules.nth(0).getByLabel('To', { exact: true }).fill('21:00')
   await expect(page.getByText('Saved')).toBeVisible()
   await expect(summaryRow('Sunday')).toContainText('09:00–21:00')
 
@@ -472,7 +472,7 @@ test('расписание правилами: время на все дни, «
   // Выходные: с первого рейса до 23:00.
   await rules.nth(1).getByRole('button', { name: 'or first flight' }).click()
   await expect(rules.nth(1).getByText('from first flight')).toBeVisible()
-  await rules.nth(1).locator('input[type="time"]').fill('23:00')
+  await rules.nth(1).getByLabel('To', { exact: true }).fill('23:00')
   await expect(page.getByText('Saved')).toBeVisible()
   await expect(summaryRow('Saturday')).toContainText('first flight–23:00')
 
@@ -504,25 +504,79 @@ test('расписание правилами: ночной график вво�
   const rules = hours.locator('.hr-rule')
   const summaryRow = (day: string) => hours.locator('.hr-sum-row').filter({ hasText: day })
 
-  await rules.nth(0).locator('input[type="time"]').nth(0).fill('02:00')
-  await rules.nth(0).locator('input[type="time"]').nth(1).fill('01:00')
+  await rules.nth(0).getByLabel('From', { exact: true }).fill('02:00')
+  await rules.nth(0).getByLabel('To', { exact: true }).fill('01:00')
   await expect(rules.nth(0).getByText('until 01:00 the next day')).toBeVisible()
   await expect(page.getByText('Saved')).toBeVisible()
   await expect(summaryRow('Monday')).toContainText('02:00–01:00 (next day)')
 
   // Хвост понедельника (00:00–01:00 во вторник) наезжает на свой интервал вторника → отказ виден, правила на месте.
   await summaryRow('Tuesday').getByRole('button', { name: 'change' }).click()
-  await rules.nth(1).locator('input[type="time"]').nth(0).fill('00:30')
-  await rules.nth(1).locator('input[type="time"]').nth(1).fill('10:00')
+  await rules.nth(1).getByLabel('From', { exact: true }).fill('00:30')
+  await rules.nth(1).getByLabel('To', { exact: true }).fill('10:00')
   await expect(page.getByText('Check the schedule: times must run forward and windows must not overlap')).toBeVisible()
   await expect(rules).toHaveCount(2)
-  await rules.nth(1).locator('input[type="time"]').nth(0).fill('02:00')
+  await rules.nth(1).getByLabel('From', { exact: true }).fill('02:00')
   await expect(page.getByText('Saved')).toBeVisible()
 
   await page.reload()
   await clickNext(page, 2)
   await expect(summaryRow('Monday')).toContainText('02:00–01:00 (next day)')
   await expect(summaryRow('Tuesday')).toContainText('02:00–10:00')
+})
+
+/**
+ * Текстовое поле времени (spec 2026-09-12): то, чего `<input type="time">`
+ * не умел. Вставка любого формата (`fill('9.00')` — Playwright кладёт строку
+ * целиком одним событием, как буфер обмена), выделить всё и перепечатать,
+ * недописанные часы достраиваются на blur, негодное подсвечено и в
+ * расписание не попадает. Правила формата закреплены юнитами
+ * (`clockInput.test.ts`); здесь — что они доходят до оператора и до сервера.
+ */
+test('поле времени текстом: вставка «9.00», выделить всё и перепечатать, «21» → «21:00» на blur, «25:00» подсвечено и не сохраняется', async ({ page }) => {
+  const url = seed()
+  await page.goto(url)
+  await clickNext(page, 2)
+  const hours = page.locator('.field').filter({ hasText: 'Lounge Operating Hours' })
+  const rule = hours.locator('.hr-rule').nth(0)
+  const from = rule.getByLabel('From', { exact: true })
+  const to = rule.getByLabel('To', { exact: true })
+  const summaryRow = (day: string) => hours.locator('.hr-sum-row').filter({ hasText: day })
+
+  // Вставка «9.00» → «09:00» сразу, без blur.
+  await from.fill('9.00')
+  await expect(from).toHaveValue('09:00')
+
+  // «21» + Tab → «21:00»: часы без минут достраиваются при уходе из поля.
+  await to.fill('21')
+  await expect(to).toHaveAttribute('aria-invalid', 'true')
+  await expect(page.getByText('Schedule 1: set the time')).toBeVisible()
+  await to.press('Tab')
+  await expect(to).toHaveValue('21:00')
+  await expect(to).not.toHaveAttribute('aria-invalid', 'true')
+  await expect(page.getByText('Saved')).toBeVisible()
+  await expect(summaryRow('Monday')).toContainText('09:00–21:00')
+
+  // Выделить всё и перепечатать — клавишами, как оператор.
+  await from.click()
+  await page.keyboard.press('ControlOrMeta+a')
+  await page.keyboard.type('10:00')
+  await expect(from).toHaveValue('10:00')
+  await expect(summaryRow('Monday')).toContainText('10:00–21:00')
+
+  // Негодное время: подсвечено, границы в расписании нет, черновик жив.
+  await to.fill('25:00')
+  await expect(to).toHaveAttribute('aria-invalid', 'true')
+  await expect(page.getByText('Schedule 1: set the time')).toBeVisible()
+  await to.press('Tab')
+  await expect(to).toHaveValue('25:00')
+  await expect(to).toHaveAttribute('aria-invalid', 'true')
+
+  // Перезагрузка: сервер держит «с 10:00», конца нет — поле «до» пустое.
+  await page.reload()
+  await clickNext(page, 2)
+  await expect(hours.locator('.hr-rule').nth(0).getByLabel('From', { exact: true })).toHaveValue('10:00')
+  await expect(hours.locator('.hr-rule').nth(0).getByLabel('To', { exact: true })).toHaveValue('')
 })
 
 /**
@@ -533,7 +587,8 @@ test('расписание правилами: ночной график вво�
  * `expandRules` layer to lean on. Restoring a short one: the "00:00 as end
  * of day" convention (Critical, Task 5) applies to cleaning intervals too,
  * and the raw `Window` it writes must still read back as `24:00` after a
- * reload, not the internal "00:00" the input box shows.
+ * reload, and the text field shows that same "00:00" whether the operator
+ * typed 00:00 or 24:00.
  */
 test('график уборки: ежедневно, окно до полуночи показывает «до конца дня» и переживает перезагрузку', async ({ page }) => {
   const url = seed()
@@ -543,15 +598,21 @@ test('график уборки: ежедневно, окно до полуно�
   const cleaning = page.locator('.field').filter({ hasText: 'Deep Cleaning Schedule' })
   await cleaning.getByRole('button', { name: 'Daily' }).click()
   await cleaning.getByRole('button', { name: 'Add an interval' }).click()
-  await cleaning.locator('input[type="time"]').first().fill('22:00')
-  await cleaning.locator('input[type="time"]').nth(1).fill('00:00')
+  await cleaning.getByLabel('From', { exact: true }).fill('22:00')
+  // «24:00» набирается текстом (у <input type="time"> такого значения не
+  // было) и значит то же, что «00:00» в «до»: подпись появляется сразу, а
+  // после blur поле показывает «00:00» — то, что лежит в Range и что
+  // покажет перезагрузка (spec 2026-09-12, «Поле»).
+  await cleaning.getByLabel('To', { exact: true }).fill('24:00')
   await expect(cleaning.getByText('until the end of the day')).toBeVisible()
+  await cleaning.getByLabel('To', { exact: true }).press('Tab')
+  await expect(cleaning.getByLabel('To', { exact: true })).toHaveValue('00:00')
   await expect(page.getByText('Saved')).toBeVisible()
 
   await page.reload()
   await clickNext(page, 2)
   const cleaningAgain = page.locator('.field').filter({ hasText: 'Deep Cleaning Schedule' })
-  await expect(cleaningAgain.locator('input[type="time"]').nth(1)).toHaveValue('00:00')
+  await expect(cleaningAgain.getByLabel('To', { exact: true })).toHaveValue('00:00')
 })
 
 test('перезагрузка сохраняет значение, введённое до срабатывания автосохранения', async ({ page }) => {
