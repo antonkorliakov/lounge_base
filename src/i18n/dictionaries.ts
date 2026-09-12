@@ -317,6 +317,8 @@ export const UI = {
   // Возврат к времени — ссылка на том же месте, где стояла «или первый рейс»:
   // строка не меняет ширину при переключении, ничего не прыгает.
   'schedule.useTime': { en: 'or a time', ru: 'или время' },
+  // Имя для экранного диктора: «или время» вне строки ничего не говорит.
+  'schedule.useTimeLabel': { en: 'Enter a time instead', ru: 'Указать время' },
   'schedule.nextDay': { en: 'until {to} the next day', ru: 'до {to} следующего дня' },
   'schedule.endOfDay': { en: 'until the end of the day', ru: 'до конца дня' },
   'schedule.otherHours': { en: 'Other hours for some days', ru: 'Другие часы для части дней' },

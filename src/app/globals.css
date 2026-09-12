@@ -359,7 +359,7 @@ body {
 .hr-part { gap: 6px; }
 /* Маркер «первого рейса» — в той же рамке и той же высоты, что поле времени:
    переключение время ↔ рейс не меняет форму строки. */
-.hr-marker { display: inline-flex; align-items: center; min-height: 36px; min-width: 5.5rem; padding: 6px 8px; border: 1px solid #c9ced6; border-radius: 8px; font-size: 14px; white-space: nowrap; }
+.hr-marker { display: inline-flex; align-items: center; min-height: 36px; min-width: 5.5rem; padding: 6px 8px; border: 1px solid #c9ced6; border-radius: 8px; white-space: nowrap; }
 /* Текстовое поле времени: под пять знаков «ЧЧ:ММ» плюс отступы; табличные
    цифры — чтобы «11:11» и «00:00» были одной ширины и колонки правил не
    дёргались. `.field input { width: 100% }` выше перекрывается по

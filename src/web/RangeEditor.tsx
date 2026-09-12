@@ -57,7 +57,12 @@ export function RangeEditor(props: {
       return (
         <span className="hr-bound">
           <span className="hr-marker">{word}</span>
-          <button type="button" className="hr-link" onClick={() => onChange({ ...range, [key]: key === 'from' ? '' : null })}>
+          <button
+            type="button"
+            className="hr-link"
+            aria-label={t('schedule.useTimeLabel')}
+            onClick={() => onChange({ ...range, [key]: key === 'from' ? '' : null })}
+          >
             {t('schedule.useTime')}
           </button>
         </span>
