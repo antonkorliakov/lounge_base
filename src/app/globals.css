@@ -34,8 +34,10 @@ body {
      carries z-index: 1 (see .avail-toggle below), and a sticky bar with
      z-index: auto loses to that — a pressed "Yes" scrolled under the bar
      painted THROUGH it, over the Submit button (seen in the browser at a
-     short viewport on the fixes screen). 10 keeps it under the step
-     navigator's panel (z-index: 20), which may legitimately drop over it. */
+     short viewport on the fixes screen). 10 keeps it under the sticky
+     header (z-index: 11), whose step-navigator panel may legitimately drop
+     over it — the panel's own z-index: 20 lives inside the header's
+     stacking context, so it is the header's level that settles this. */
   z-index: 10;
 }
 /* The step's primary action (Next; Submit on the review step and the fixes
@@ -54,11 +56,15 @@ body {
 }
 /* Шапка закреплена сверху тем же приёмом, что панель «Далее» снизу
    (sticky, не fixed — место в потоке остаётся своим, ничто под неё не
-   уезжает). Фон непрозрачный: поля прокручиваются под ней. z-index 10 — как у
-   .shell-foot; список шагов (z 20) живёт внутри шапки и поверх неё же.
+   уезжает). Фон непрозрачный: поля прокручиваются под ней. z-index 11 — на
+   один выше .shell-foot (10) НАМЕРЕННО: шапка теперь свой контекст
+   наложения, и z-index 20 списка шагов внутри неё наружу не виден — спор с
+   нижней панелью решает уровень самой шапки. При равных 10 позднейшая в
+   документе панель накрывала бы длинный список шагов на коротком экране и
+   перехватывала бы тапы по его нижним строкам.
    Закреплена целиком, вместе с полосой шагов и названием шага — решение
    Anton (2026-09-13): при прокрутке длинного шага нужно видеть, где ты. */
-.shell-top { position: sticky; top: 0; z-index: 10; background: #fff; border-bottom: 1px solid #e4e6ea; padding-bottom: 4px; }
+.shell-top { position: sticky; top: 0; z-index: 11; background: #fff; border-bottom: 1px solid #e4e6ea; padding-bottom: 4px; }
 .shell-top-row { padding-bottom: 0; }
 /* Паспорт анкеты: название (с многоточием, чтобы шапка не росла), код
    аэропорта плашкой, статус пилюлей. На узком экране плашки переносятся
@@ -72,8 +78,13 @@ body {
 .shell-pill-changes { background: #faeeda; color: #633806; }
 .shell-status { font-size: 13px; opacity: .7; white-space: nowrap; }
 /* Счётчик шагов слева от полосы: полоса и есть его картинка. */
-.shell-bar-row { display: flex; align-items: center; gap: 10px; margin: 8px 16px 0; }
-.shell-progress { font-size: 13px; opacity: .7; white-space: nowrap; }
+/* Ряд ровно 4px высотой — как была сама полоса: геометрия хитбоксов
+   .shell-seg::before (top: -8px упирается в нижний край верхней строки)
+   держится на том, что верх полосы стоит через 8px после строки. Счётчик
+   живёт в 4px-строке и выступает из неё глифами вверх и вниз симметрично —
+   он не интерактивен, накрывать ему нечего. */
+.shell-bar-row { display: flex; align-items: center; gap: 10px; height: 4px; margin: 8px 16px 0; }
+.shell-progress { font-size: 13px; line-height: 4px; opacity: .7; white-space: nowrap; }
 .shell-body { padding: 16px 16px 28px; }
 
 /* The thin progress strip, drawn as 9 discrete segments (one per step,

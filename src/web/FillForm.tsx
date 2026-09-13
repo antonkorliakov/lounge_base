@@ -25,7 +25,7 @@ import {
   submitAction,
 } from '@/app/f/[token]/actions'
 import { useAutosave } from './useAutosave'
-import { FormShell, ShellIdentity, type ShellLounge } from './FormShell'
+import { FormShell, ShellTopRow, type EditableStatus, type ShellLounge } from './FormShell'
 import { FieldInput } from './FieldInput'
 import { IataCorrection } from './IataCorrection'
 import { ServicesPass1 } from './ServicesPass1'
@@ -36,6 +36,10 @@ import { FixesOnly, type Flag } from './FixesOnly'
 /** Отправить можно только из состояний, где форма остаётся открытой
  *  заполняющему — то же множество, что `SUBMITTABLE` в transitions.ts. */
 const EDITABLE_STATUSES: ReadonlySet<SubmissionStatus> = new Set(['draft', 'changes_requested'])
+/** Сужающий предикат поверх того же множества: ниже по функции `props.status`
+ *  уже типа `EditableStatus`, и шапке не приходится «уметь» статусы, при
+ *  которых она не рендерится. */
+const isEditable = (status: SubmissionStatus): status is EditableStatus => EDITABLE_STATUSES.has(status)
 
 /**
  * ПРЕЗЕНТАЦИОННЫЙ порядок четырёх полей паспорта в блоке I — код IATA первым,
@@ -114,7 +118,7 @@ export function FillForm(props: {
    */
   teamEditedKeys: string[]
 }): React.JSX.Element {
-  const { t, pick, locale, setLocale } = useLocale()
+  const { t, pick } = useLocale()
   const [fields, setFields] = useState(props.initialFields)
   const [services, setServices] = useState(props.initialServices)
   const [photos, setPhotos] = useState(props.initialPhotos)
@@ -379,7 +383,7 @@ export function FillForm(props: {
   // `saveServiceValue` already refuse writes in this state server-side (see
   // `assertEditable`). Without this gate the operator got the full form back
   // and, before Critical 2 was fixed, "Saved" for every refused write.
-  if (!EDITABLE_STATUSES.has(props.status)) {
+  if (!isEditable(props.status)) {
     return (
       <div className="shell">
         <main className="shell-body">
@@ -400,17 +404,7 @@ export function FillForm(props: {
     return (
       <div className="shell">
         <header className="shell-top">
-          <div className="shell-top-row">
-            <ShellIdentity lounge={props.lounge} submissionStatus={props.status} />
-            <span className="shell-status">{statusText}</span>
-            <button
-              type="button"
-              className="shell-locale"
-              onClick={() => setLocale(locale === 'en' ? 'ru' : 'en')}
-            >
-              {locale === 'en' ? 'RU' : 'EN'}
-            </button>
-          </div>
+          <ShellTopRow lounge={props.lounge} submissionStatus={props.status} status={statusText} />
         </header>
         <main className="shell-body">
           <FixesOnly

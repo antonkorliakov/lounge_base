@@ -122,7 +122,11 @@ export type ShellLounge = { name: string; iataCode: string | null }
  * остальные (отправлена, принята) форму не открывают вовсе (`FillForm`,
  * `EDITABLE_STATUSES`), так что для них текста нет намеренно.
  */
-export function ShellIdentity(props: { lounge: ShellLounge; submissionStatus: SubmissionStatus }): React.JSX.Element {
+/** Статусы, при которых форма вообще открывается (`FillForm`, `EDITABLE_STATUSES`);
+ *  остальным шапка не нужна — у них экран «анкета закрыта». */
+export type EditableStatus = Extract<SubmissionStatus, 'draft' | 'changes_requested'>
+
+export function ShellIdentity(props: { lounge: ShellLounge; submissionStatus: EditableStatus }): React.JSX.Element {
   const { t } = useLocale()
   const changes = props.submissionStatus === 'changes_requested'
   return (
@@ -134,11 +138,29 @@ export function ShellIdentity(props: { lounge: ShellLounge; submissionStatus: Su
   )
 }
 
+/**
+ * Первая строка шапки целиком: паспорт, состояние автосохранения, язык. Одна
+ * на 9-шаговый проход и на экран правок — раньше строка была скопирована в
+ * оба места и расходилась бы при первой же правке.
+ */
+export function ShellTopRow(props: { lounge: ShellLounge; submissionStatus: EditableStatus; status: string }): React.JSX.Element {
+  const { locale, setLocale } = useLocale()
+  return (
+    <div className="shell-top-row">
+      <ShellIdentity lounge={props.lounge} submissionStatus={props.submissionStatus} />
+      <span className="shell-status">{props.status}</span>
+      <button type="button" className="shell-locale" onClick={() => setLocale(locale === 'en' ? 'ru' : 'en')}>
+        {locale === 'en' ? 'RU' : 'EN'}
+      </button>
+    </div>
+  )
+}
+
 export function FormShell(props: {
   children: (step: Step) => ReactNode
   status: string
   lounge: ShellLounge
-  submissionStatus: SubmissionStatus
+  submissionStatus: EditableStatus
   /** Отправка на проверку — живёт у `FillForm` (единственного вызывающего),
    *  а рендерится здесь: главное действие последнего шага стоит в той же
    *  закреплённой панели, что и «Далее» на всех остальных, — одна панель,
@@ -149,7 +171,7 @@ export function FormShell(props: {
   const [index, setIndex] = useState(0)
   const [navOpen, setNavOpen] = useState(false)
   const navRef = useRef<HTMLDivElement>(null)
-  const { t, pick, locale, setLocale } = useLocale()
+  const { t, pick } = useLocale()
   const step = steps[index]!
 
   /**
@@ -193,17 +215,7 @@ export function FormShell(props: {
   return (
     <div className="shell">
       <header className="shell-top">
-        <div className="shell-top-row">
-          <ShellIdentity lounge={props.lounge} submissionStatus={props.submissionStatus} />
-          <span className="shell-status">{props.status}</span>
-          <button
-            type="button"
-            className="shell-locale"
-            onClick={() => setLocale(locale === 'en' ? 'ru' : 'en')}
-          >
-            {locale === 'en' ? 'RU' : 'EN'}
-          </button>
-        </div>
+        <ShellTopRow lounge={props.lounge} submissionStatus={props.submissionStatus} status={props.status} />
         {/* Ход по форме — 9 сегментов вместо сплошной полосы, чтобы полоса
             читалась как шаги, а не как процент. Каждый сегмент — кнопка
             прыжка на свой шаг, тем же goTo, что у списка шагов: путь
