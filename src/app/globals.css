@@ -52,9 +52,28 @@ body {
   border-color: #2563eb;
   color: #fff;
 }
-.shell-top { border-bottom: 1px solid #e4e6ea; padding-bottom: 4px; }
+/* Шапка закреплена сверху тем же приёмом, что панель «Далее» снизу
+   (sticky, не fixed — место в потоке остаётся своим, ничто под неё не
+   уезжает). Фон непрозрачный: поля прокручиваются под ней. z-index 10 — как у
+   .shell-foot; список шагов (z 20) живёт внутри шапки и поверх неё же.
+   Закреплена целиком, вместе с полосой шагов и названием шага — решение
+   Anton (2026-09-13): при прокрутке длинного шага нужно видеть, где ты. */
+.shell-top { position: sticky; top: 0; z-index: 10; background: #fff; border-bottom: 1px solid #e4e6ea; padding-bottom: 4px; }
 .shell-top-row { padding-bottom: 0; }
-.shell-status { margin-left: auto; font-size: 13px; opacity: .7; }
+/* Паспорт анкеты: название (с многоточием, чтобы шапка не росла), код
+   аэропорта плашкой, статус пилюлей. На узком экране плашки переносятся
+   под название внутри своего блока — «Сохранено» и язык остаются справа. */
+.shell-ident { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; flex: 1; }
+.shell-lounge { font-weight: 600; font-size: 15px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shell-iata { font-size: 12px; letter-spacing: .04em; padding: 2px 7px; border: 1px solid #c9ced6; border-radius: 6px; opacity: .8; }
+.shell-pill { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: #f1efe8; color: #444441; white-space: nowrap; }
+/* «Требуются правки» — жёлтым: это единственный статус формы, который
+   требует действия, и он должен читаться иначе, чем спокойный черновик. */
+.shell-pill-changes { background: #faeeda; color: #633806; }
+.shell-status { font-size: 13px; opacity: .7; white-space: nowrap; }
+/* Счётчик шагов слева от полосы: полоса и есть его картинка. */
+.shell-bar-row { display: flex; align-items: center; gap: 10px; margin: 8px 16px 0; }
+.shell-progress { font-size: 13px; opacity: .7; white-space: nowrap; }
 .shell-body { padding: 16px 16px 28px; }
 
 /* The thin progress strip, drawn as 9 discrete segments (one per step,
@@ -67,7 +86,7 @@ body {
    hitbox on each button, so the strip's geometry in the header does not
    move by a pixel (button boxes keep the exact flex layout the old divs
    had; the global button floor/padding are zeroed out below). */
-.shell-bar { display: flex; gap: 3px; height: 4px; margin: 8px 16px 0; }
+.shell-bar { display: flex; gap: 3px; height: 4px; flex: 1; }
 .shell-seg {
   flex: 1;
   position: relative; /* anchors the ::before hitbox */
@@ -555,7 +574,7 @@ button:disabled { opacity: .4; }
   /* .shell-nav took over .shell-title's side margins (the title now lives
      inside it, with the step-list panel anchored to the same box), so it is
      what centers at the content width here. */
-  .shell-bar,
+  .shell-bar-row,
   .shell-nav { max-width: 648px; margin-left: auto; margin-right: auto; }
   /* The footer draws its own full-width top border, so it cannot take a
      max-width itself — its content is centered by padding instead:
@@ -1113,6 +1132,10 @@ button:disabled { opacity: .4; }
   /* The stuck bar's background must stay opaque on dark too — body's own
      dark color, so scrolling content can't ghost through the buttons. */
   .shell-foot { background: #111317; }
+  .shell-top { background: #111317; }
+  .shell-iata { border-color: #2a2d34; }
+  .shell-pill { background: #2a2d34; color: #d3d1c7; }
+  .shell-pill-changes { background: #412402; color: #fac775; }
   /* Restated, not merely inherited-by-specificity: the accent works as-is
      on dark (same #2563eb the segments keep), and this line is where that
      decision is visible. White on #2563eb is ~4.5:1 on the button itself. */

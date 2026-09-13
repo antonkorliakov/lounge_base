@@ -70,6 +70,7 @@ export default async function FillPage(props: {
         token={token}
         submissionId={resolved.submissionId}
         status={status}
+        lounge={{ name: submissionRow?.name ?? '', iataCode: submissionRow?.iataCode ?? null }}
         flags={flags}
         lockedKeys={lockedKeys}
         initialFields={values.fields}

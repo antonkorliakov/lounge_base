@@ -25,7 +25,7 @@ import {
   submitAction,
 } from '@/app/f/[token]/actions'
 import { useAutosave } from './useAutosave'
-import { FormShell } from './FormShell'
+import { FormShell, ShellIdentity, type ShellLounge } from './FormShell'
 import { FieldInput } from './FieldInput'
 import { IataCorrection } from './IataCorrection'
 import { ServicesPass1 } from './ServicesPass1'
@@ -86,6 +86,9 @@ export function FillForm(props: {
    *  (для submitted/approved) закрытый экран только для просмотра статуса —
    *  форма закрыта заполняющему, см. design spec и `EDITABLE_STATUSES` выше. */
   status: SubmissionStatus
+  /** Название и код аэропорта для закреплённой шапки — из того же запроса
+   *  страницы, что и статус (`src/app/f/[token]/page.tsx`). */
+  lounge: ShellLounge
   /** Незакрытые отметки рецензента (`resolvedAt IS NULL`), если есть. */
   flags: Flag[]
   /** Поля блока I, предзаполненные при заведении лаунжа и показываемые в
@@ -398,6 +401,7 @@ export function FillForm(props: {
       <div className="shell">
         <header className="shell-top">
           <div className="shell-top-row">
+            <ShellIdentity lounge={props.lounge} submissionStatus={props.status} />
             <span className="shell-status">{statusText}</span>
             <button
               type="button"
@@ -443,7 +447,7 @@ export function FillForm(props: {
   }
 
   return (
-    <FormShell status={statusText} onSubmit={submit}>
+    <FormShell status={statusText} lounge={props.lounge} submissionStatus={props.status} onSubmit={submit}>
       {(step) => {
         if (step.kind === 'fields') {
           // Шаг может нести несколько блоков схемы (слитый шаг — см.

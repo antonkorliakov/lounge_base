@@ -197,6 +197,10 @@ export const UI = {
     ru: 'Фото не открывается',
   },
   'fixes.title': { en: 'Changes requested', ru: 'Требуются правки' },
+  // Статус анкеты в закреплённой шапке формы (Anton, 2026-09-13). Других
+  // статусов заполняющий не видит: отправленную и принятую форма не открывает.
+  'form.statusDraft': { en: 'Draft', ru: 'Черновик' },
+  'form.statusChanges': { en: 'Changes requested', ru: 'Требуются правки' },
   'fixes.intro': {
     en: 'The reviewer flagged these answers. Everything else is accepted.',
     ru: 'Проверяющий отметил эти ответы. Остальное принято.',

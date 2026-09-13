@@ -29,7 +29,7 @@ const esc = (s: string) =>
 function renderBar(locale: Locale): string {
   const html = renderToStaticMarkup(
     <LocaleProvider initial={locale}>
-      <FormShell status="" onSubmit={() => {}}>
+      <FormShell status="" lounge={{ name: 'Primeclass Lounge', iataCode: 'IST' }} submissionStatus="draft" onSubmit={() => {}}>
         {() => null}
       </FormShell>
     </LocaleProvider>,
@@ -74,4 +74,33 @@ describe('сегменты полосы хода', () => {
       expect(bar).not.toContain('aria-hidden')
     })
   }
+})
+
+/**
+ * Закреплённая шапка несёт паспорт анкеты (Anton, 2026-09-13): название,
+ * код аэропорта, статус. Два статуса — два текста; без кода плашки нет.
+ */
+describe('шапка формы: паспорт анкеты', () => {
+  const head = (lounge: { name: string; iataCode: string | null }, status: 'draft' | 'changes_requested'): string =>
+    renderToStaticMarkup(
+      <LocaleProvider initial="en">
+        <FormShell status="Saved" lounge={lounge} submissionStatus={status} onSubmit={() => {}}>
+          {() => null}
+        </FormShell>
+      </LocaleProvider>,
+    )
+
+  it('название, код и «Draft» у черновика', () => {
+    const html = head({ name: 'Primeclass Lounge', iataCode: 'IST' }, 'draft')
+    expect(html).toContain('class="shell-lounge">Primeclass Lounge<')
+    expect(html).toContain('class="shell-iata">IST<')
+    expect(html).toContain(`class="shell-pill">${UI['form.statusDraft'].en}<`)
+    expect(html).toContain('class="shell-status">Saved<')
+  })
+
+  it('«Changes requested» — своей пилюлей; без кода аэропорта плашки нет', () => {
+    const html = head({ name: 'Marhaba', iataCode: null }, 'changes_requested')
+    expect(html).toContain(`class="shell-pill shell-pill-changes">${UI['form.statusChanges'].en}<`)
+    expect(html).not.toContain('class="shell-iata"')
+  })
 })

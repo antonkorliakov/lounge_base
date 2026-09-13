@@ -447,6 +447,12 @@ test('расписание правилами: время на все дни, «
   await clickNext(page, 2)
   await expect(page.getByRole('heading', { name: 'Operating Schedule', level: 1 })).toBeVisible()
 
+  // Закреплённая шапка несёт паспорт анкеты: название, код аэропорта, статус
+  // (Anton, 2026-09-13). Код — три заглавные, какой бы лаунж сид ни выбрал.
+  await expect(page.locator('.shell-lounge')).not.toBeEmpty()
+  await expect(page.locator('.shell-iata')).toHaveText(/^[A-Z]{3}$/)
+  await expect(page.locator('.shell-pill')).toHaveText('Draft')
+
   const hours = page.locator('.field').filter({ hasText: 'Lounge Operating Hours' })
   const rules = hours.locator('.hr-rule')
   const summaryRow = (day: string) => hours.locator('.hr-sum-row').filter({ hasText: day })

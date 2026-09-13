@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { BLOCKS, blockOf, type Localized } from '@/form-schema'
 import { UI } from '@/i18n/dictionaries'
 import { useLocale } from '@/i18n/context'
+import type { SubmissionStatus } from '@/db/schema'
 
 export type StepKind = 'fields' | 'services1' | 'services2' | 'photos' | 'review'
 
@@ -110,9 +111,34 @@ export function stepTitle(step: Step): Localized {
   return UI['form.review']
 }
 
+/** Паспорт анкеты в шапке: название лаунжа, код аэропорта, статус. */
+export type ShellLounge = { name: string; iataCode: string | null }
+
+/**
+ * Первая строка закреплённой шапки: кто заполняет и в каком состоянии анкета
+ * (Anton, 2026-09-13). Один компонент на оба вида формы — 9-шаговый проход
+ * (`FormShell`) и экран правок (`FillForm`, ветка `changes_requested`), чтобы
+ * шапка выглядела одинаково, где бы заполняющий ни был. Статусов здесь два:
+ * остальные (отправлена, принята) форму не открывают вовсе (`FillForm`,
+ * `EDITABLE_STATUSES`), так что для них текста нет намеренно.
+ */
+export function ShellIdentity(props: { lounge: ShellLounge; submissionStatus: SubmissionStatus }): React.JSX.Element {
+  const { t } = useLocale()
+  const changes = props.submissionStatus === 'changes_requested'
+  return (
+    <span className="shell-ident">
+      <span className="shell-lounge">{props.lounge.name}</span>
+      {props.lounge.iataCode && <span className="shell-iata">{props.lounge.iataCode}</span>}
+      <span className={changes ? 'shell-pill shell-pill-changes' : 'shell-pill'}>{t(changes ? 'form.statusChanges' : 'form.statusDraft')}</span>
+    </span>
+  )
+}
+
 export function FormShell(props: {
   children: (step: Step) => ReactNode
   status: string
+  lounge: ShellLounge
+  submissionStatus: SubmissionStatus
   /** Отправка на проверку — живёт у `FillForm` (единственного вызывающего),
    *  а рендерится здесь: главное действие последнего шага стоит в той же
    *  закреплённой панели, что и «Далее» на всех остальных, — одна панель,
@@ -168,9 +194,7 @@ export function FormShell(props: {
     <div className="shell">
       <header className="shell-top">
         <div className="shell-top-row">
-          <span className="shell-progress">
-            {index + 1} / {steps.length}
-          </span>
+          <ShellIdentity lounge={props.lounge} submissionStatus={props.submissionStatus} />
           <span className="shell-status">{props.status}</span>
           <button
             type="button"
@@ -193,7 +217,11 @@ export function FormShell(props: {
             Пока открыт список шагов, хитбоксы съёживаются до видимых 4px
             (shell-bar-nav-open): тап «мимо списка, чтобы его закрыть» не
             должен уметь прыгать на шаг, которого никто не выбирал. */}
-        <div className={navOpen ? 'shell-bar shell-bar-nav-open' : 'shell-bar'}>
+        <div className="shell-bar-row">
+          <span className="shell-progress">
+            {index + 1} / {steps.length}
+          </span>
+          <div className={navOpen ? 'shell-bar shell-bar-nav-open' : 'shell-bar'}>
           {steps.map((s, i) => (
             <button
               key={s.key}
@@ -207,6 +235,7 @@ export function FormShell(props: {
               onClick={() => goTo(i)}
             />
           ))}
+          </div>
         </div>
         {/* Заголовок шага и навигатор — одно целое, намеренно: `.shell-title`
             уже называл текущий шаг, так что кнопка «открыть список шагов» с
