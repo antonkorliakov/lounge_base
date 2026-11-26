@@ -10,10 +10,16 @@ import type { Db } from '../types'
 
 const MIGRATIONS = join(process.cwd(), 'src/db/migrations')
 
+// Читается с диска, а не импортом: пакет не выставляет package.json в `exports`.
+const PGLITE_VERSION: string = (
+  JSON.parse(readFileSync(join(process.cwd(), 'node_modules', '@electric-sql', 'pglite', 'package.json'), 'utf8')) as { version: string }
+).version
+
 /**
  * Where the migrated-template tarball is cached on disk, keyed by a hash of
- * the migration files' own contents so a migration change invalidates the
- * cache automatically instead of silently serving a stale schema.
+ * the migration files' own contents plus the PGlite version, so a migration
+ * change or a PGlite upgrade invalidates the cache automatically instead of
+ * silently serving a stale schema or an unreadable dump.
  * `node_modules/.cache` because it is already gitignored, already
  * machine-local, and already expected to be safe to delete at any time.
  */
@@ -44,6 +50,11 @@ async function applyMigrations(client: PGlite, files: string[]): Promise<void> {
 
 function cachePathFor(files: string[]): string {
   const hash = createHash('sha256')
+  // Версия PGlite — часть ключа: дамп каталога данных привязан к формату
+  // той версии, что его писала. Обновление 0.5 → 0.6 с ключом только по
+  // миграциям оставляло старый дамп «валидным», и каждый тест падал на
+  // «PGlite failed to initialize properly».
+  hash.update(PGLITE_VERSION)
   for (const file of files) {
     hash.update(file)
     hash.update(readFileSync(join(MIGRATIONS, file)))
