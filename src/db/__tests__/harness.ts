@@ -17,6 +17,10 @@ const MIGRATIONS = join(process.cwd(), 'src/db/migrations')
  * `node_modules/.cache` because it is already gitignored, already
  * machine-local, and already expected to be safe to delete at any time.
  */
+// Читается с диска, а не импортом: пакет не выставляет package.json в `exports`.
+const PGLITE_VERSION: string = (
+  JSON.parse(readFileSync(join(process.cwd(), 'node_modules', '@electric-sql', 'pglite', 'package.json'), 'utf8')) as { version: string }
+).version
 const CACHE_DIR = join(process.cwd(), 'node_modules', '.cache', 'pglite-template')
 
 /** Loud on purpose — has caught a real "forgot to run `npm run db:generate`"
@@ -44,6 +48,11 @@ async function applyMigrations(client: PGlite, files: string[]): Promise<void> {
 
 function cachePathFor(files: string[]): string {
   const hash = createHash('sha256')
+  // Версия PGlite — часть ключа: дамп каталога данных привязан к формату
+  // той версии, что его писала. Обновление 0.5 → 0.6 с ключом только по
+  // миграциям оставляло старый дамп «валидным», и каждый тест падал на
+  // «PGlite failed to initialize properly».
+  hash.update(PGLITE_VERSION)
   for (const file of files) {
     hash.update(file)
     hash.update(readFileSync(join(MIGRATIONS, file)))
