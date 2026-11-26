@@ -10,17 +10,19 @@ import type { Db } from '../types'
 
 const MIGRATIONS = join(process.cwd(), 'src/db/migrations')
 
-/**
- * Where the migrated-template tarball is cached on disk, keyed by a hash of
- * the migration files' own contents so a migration change invalidates the
- * cache automatically instead of silently serving a stale schema.
- * `node_modules/.cache` because it is already gitignored, already
- * machine-local, and already expected to be safe to delete at any time.
- */
 // Читается с диска, а не импортом: пакет не выставляет package.json в `exports`.
 const PGLITE_VERSION: string = (
   JSON.parse(readFileSync(join(process.cwd(), 'node_modules', '@electric-sql', 'pglite', 'package.json'), 'utf8')) as { version: string }
 ).version
+
+/**
+ * Where the migrated-template tarball is cached on disk, keyed by a hash of
+ * the migration files' own contents plus the PGlite version, so a migration
+ * change or a PGlite upgrade invalidates the cache automatically instead of
+ * silently serving a stale schema or an unreadable dump.
+ * `node_modules/.cache` because it is already gitignored, already
+ * machine-local, and already expected to be safe to delete at any time.
+ */
 const CACHE_DIR = join(process.cwd(), 'node_modules', '.cache', 'pglite-template')
 
 /** Loud on purpose — has caught a real "forgot to run `npm run db:generate`"
